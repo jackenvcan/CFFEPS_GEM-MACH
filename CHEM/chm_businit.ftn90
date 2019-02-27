@@ -1,0 +1,449 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : chm_businit.ftn90
+! Creation       : H. Landry (Janvier 2008)
+! Description    : Initialize chemistry buses by calling gesdict for
+!                  any declared field in the master array of species
+!
+! Extar info     : This s/r should remain independant of any chemical scheme,
+!                  package, emissions or else
+!
+! Arguments: IN
+!              F_ni --> horizontal dimension
+!              F_nk       --> vertical dimension
+!
+!==============================================================================
+!!if_on
+subroutine chm_businit(F_ni, F_nk)
+!!if_off
+   use phy_typedef,          only: phymeta
+   use phygetmetaplus_mod,   only: phymetaplus,phygetmetaplus
+   use chm_utils_mod,        only: chm_lun_out, global_debug
+   use chm_nml_mod,          only: chm_master
+   use chm_species_info_mod, only: nb_species, species_master, unassigned, print_all_species_info
+   implicit none
+
+   external gesdict
+!!if_on
+   integer(kind=4), intent(in) ::  F_ni, F_nk
+!!if_off
+!
+! Local variables
+!
+   logical(kind=4) :: local_dbg
+   integer(kind=4) :: i, bin_nb, istat
+   type(phymetaplus) :: meta1plus
+   type(phymeta) :: meta1
+!
+!  Detect Master switch. If false, NORMAL EXIT WITH MESSAGE 
+!
+   if (.not.chm_master) then
+      write(chm_lun_out, *) 'CHM_BUSINIT -> DETECTED CHEMICAL MASTER KILL'
+      return
+   endif
+!   chm_emis_master = .false.
+!   return
+!
+   local_dbg = (.false. .or. global_debug)
+!
+   if (local_dbg) then
+      write (chm_lun_out, *) "Entering chm_businit"
+      call print_all_species_info(chm_lun_out)
+   end if
+!
+!  Loop over all species, and make space for each one on the
+!  physics buses {dyn,per,vol}
+!
+   do i = 1, nb_species
+      if(local_dbg) then
+         write (chm_lun_out, *) "Species Index: ", i
+      end if
+      species_master(i) % ni = F_ni
+      species_master(i) % nk = F_nk
+
+      if (species_master(i) % out_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,         &
+                         species_master(i) % nk,         &
+                         species_master(i) % OUT_OFFSET, &
+                         species_master(i) % out_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % out_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % out_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+      if (species_master(i) % per_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,         &
+                         species_master(i) % nk,         &
+                         species_master(i) % PER_OFFSET, &
+                         species_master(i) % per_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % per_name, F_npath='O',F_bpath='P',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % per_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+      if (species_master(i) % vol_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,         &
+                         species_master(i) % nk,         &
+                         species_master(i) % VOL_OFFSET, &
+                         species_master(i) % vol_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % vol_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % vol_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+      if (species_master(i) % ae_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,        &
+                         species_master(i) % nk,        &
+                         species_master(i) % AE_OFFSET, &
+                         species_master(i) % ae_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % ae_name, F_npath='O',F_bpath='P',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % ae_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+      if (species_master(i) % be_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,        &
+                         species_master(i) % nk,        &
+                         species_master(i) % BE_OFFSET, &
+                         species_master(i) % be_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % be_name, F_npath='O',F_bpath='P',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % be_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+      if (species_master(i) % bse_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,         &
+                         species_master(i) % nk,         &
+                         species_master(i) % BSE_OFFSET, &
+                         species_master(i) % bse_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bse_name, F_npath='O',F_bpath='P',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % bse_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+
+      if (species_master(i) % bwe_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,         &
+                         species_master(i) % nk,         &
+                         species_master(i) % BWE_OFFSET, &
+                         species_master(i) % bwe_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bwe_name, F_npath='O',F_bpath='P',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % bwe_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+      if (species_master(i) % vd_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,        &
+                         species_master(i) % nk,        &
+                         species_master(i) % VD_OFFSET, &
+                         species_master(i) % vd_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % vd_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % vd_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+      if (species_master(i) % ra_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,        &
+                         species_master(i) % nk,        &
+                         species_master(i) % RA_OFFSET, &
+                         species_master(i) % ra_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % ra_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % ra_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+      if (species_master(i) % rb_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,        &
+                         species_master(i) % nk,        &
+                         species_master(i) % RB_OFFSET, &
+                         species_master(i) % rb_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % rb_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % rb_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+      if (species_master(i) % rc_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,        &
+                         species_master(i) % nk,        &
+                         species_master(i) % RC_OFFSET, &
+                         species_master(i) % rc_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % rc_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % rc_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+      if (species_master(i) % dd_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,        &
+                         species_master(i) % nk,        &
+                         species_master(i) % DD_OFFSET, &
+                         species_master(i) % dd_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % dd_name, F_npath='O',F_bpath='P',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % dd_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+      if (species_master(i) % wd_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,        &
+                         species_master(i) % nk,        &
+                         species_master(i) % WD_OFFSET, &
+                         species_master(i) % wd_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % wd_name, F_npath='O',F_bpath='P',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % wd_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+      if (species_master(i) % a3d_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,         &
+                         species_master(i) % nk,         &
+                         species_master(i) % A3D_OFFSET, &
+                         species_master(i) % a3d_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % a3d_name, F_npath='O',F_bpath='P',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % a3d_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+      if (species_master(i) % a2d_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,         &
+                         species_master(i) % nk,         &
+                         species_master(i) % A2D_OFFSET, &
+                         species_master(i) % a2d_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % a2d_name, F_npath='O',F_bpath='P',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % a2d_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+#if defined(MACH_TENDENCIES)
+      if (species_master(i) % td_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,        &
+                         species_master(i) % nk,        &
+                         species_master(i) % TD_OFFSET, &
+                         species_master(i) % td_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % td_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % td_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+      if (species_master(i) % tp_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,        &
+                         species_master(i) % nk,        &
+                         species_master(i) % TP_OFFSET, &
+                         species_master(i) % tp_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % tp_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % tp_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+
+      if (species_master(i) % tg_name /= UNASSIGNED) then
+         call    gesdict(species_master(i) % ni,        &
+                         species_master(i) % nk,        &
+                         species_master(i) % TG_OFFSET, &
+                         species_master(i) % tg_string  )
+         istat = phygetmetaplus(meta1plus,F_name=species_master(i) % tg_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+         meta1 = meta1plus%meta
+         species_master(i) % tg_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+      end if
+#endif
+! Special case for dyn_name here because "binned" species uses
+! the root dyn_name to identify themselves rather than for
+! allocating memory on the buses.  So, we only want to allocate
+! memory on the dynamic bus for species that have only one bin.
+
+      if (species_master(i) % nb_bins <= 1) then
+         if (species_master(i) % dyn_name /= UNASSIGNED) then
+            call gesdict(species_master(i) % ni,         &
+                         species_master(i) % nk,         &
+                         species_master(i) % DYN_OFFSET, &
+                         species_master(i) % dyn_string  )
+            istat = phygetmetaplus(meta1plus,F_name=species_master(i) % dyn_name, F_npath='O',F_bpath='D',F_quiet=.true.,F_shortmatch=.false.)
+            meta1 = meta1plus%meta
+            species_master(i) % dyn_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+         end if
+      else
+         do bin_nb = 1, species_master(i) % nb_bins
+            if (species_master(i) % bins_array(bin_nb) % dyn_name /= UNASSIGNED) then
+               call     gesdict(species_master(i) % ni,                              &
+                                species_master(i) % nk,                              &
+                                species_master(i) % bins_array(bin_nb) % DYN_OFFSET, &
+                                species_master(i) % bins_array(bin_nb) % dyn_string  )
+               istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bins_array(bin_nb) % dyn_name, F_npath='O',F_bpath='D',F_quiet=.true.,F_shortmatch=.false.)
+               meta1 = meta1plus%meta
+               species_master(i) % bins_array(bin_nb) % dyn_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+            end if
+
+            if (species_master(i) % bins_array(bin_nb) % out_name /= UNASSIGNED) then
+               call     gesdict(species_master(i) % ni,                              &
+                                species_master(i) % nk,                              &
+                                species_master(i) % bins_array(bin_nb) % OUT_OFFSET, &
+                                species_master(i) % bins_array(bin_nb) % out_string  )
+            istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bins_array(bin_nb) % out_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+            meta1 = meta1plus%meta
+            species_master(i) % bins_array(bin_nb) % out_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+            end if
+
+            if (species_master(i) % bins_array(bin_nb) % per_name /= UNASSIGNED) then
+               call     gesdict(species_master(i) % ni,                              &
+                                species_master(i) % nk,                              &
+                                species_master(i) % bins_array(bin_nb) % PER_OFFSET, &
+                                species_master(i) % bins_array(bin_nb) % per_string  )
+            istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bins_array(bin_nb) % per_name, F_npath='O',F_bpath='P',F_quiet=.true.,F_shortmatch=.false.)
+            meta1 = meta1plus%meta
+            species_master(i) % bins_array(bin_nb) % per_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+            end if
+
+            if (species_master(i) % bins_array(bin_nb) % vol_name /= UNASSIGNED) then
+               call     gesdict(species_master(i) % ni,                              &
+                                species_master(i) % nk,                              &
+                                species_master(i) % bins_array(bin_nb) % VOL_OFFSET, &
+                                species_master(i) % bins_array(bin_nb) % vol_string  )
+            istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bins_array(bin_nb) % vol_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+            meta1 = meta1plus%meta
+            species_master(i) % bins_array(bin_nb) % vol_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+            end if
+
+            if (species_master(i) % bins_array(bin_nb) % ae_name /= UNASSIGNED) then
+               call     gesdict(species_master(i) % ni,                             &
+                                species_master(i) % nk,                             &
+                                species_master(i) % bins_array(bin_nb) % AE_OFFSET, &
+                                species_master(i) % bins_array(bin_nb) % ae_string  )
+            istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bins_array(bin_nb) % ae_name, F_npath='O',F_bpath='P',F_quiet=.true.,F_shortmatch=.false.)
+            meta1 = meta1plus%meta
+            species_master(i) % bins_array(bin_nb) % ae_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+            end if
+
+            if (species_master(i) % bins_array(bin_nb) % be_name /= UNASSIGNED) then
+               call     gesdict(species_master(i) % ni,                             &
+                                species_master(i) % nk,                             &
+                                species_master(i) % bins_array(bin_nb) % BE_OFFSET, &
+                                species_master(i) % bins_array(bin_nb) % be_string  )
+            istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bins_array(bin_nb) % be_name, F_npath='O',F_bpath='P',F_quiet=.true.,F_shortmatch=.false.)
+            meta1 = meta1plus%meta
+            species_master(i) % bins_array(bin_nb) % be_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+            end if
+
+            if (species_master(i) % bins_array(bin_nb) % bse_name /= UNASSIGNED) then
+               call     gesdict(species_master(i) % ni,                              &
+                                species_master(i) % nk,                              &
+                                species_master(i) % bins_array(bin_nb) % BSE_OFFSET, &
+                                species_master(i) % bins_array(bin_nb) % bse_string  )
+            istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bins_array(bin_nb) % bse_name, F_npath='O',F_bpath='P',F_quiet=.true.,F_shortmatch=.false.)
+            meta1 = meta1plus%meta
+            species_master(i) % bins_array(bin_nb) % bse_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+            end if
+
+            if (species_master(i) % bins_array(bin_nb) % bwe_name /= UNASSIGNED) then
+               call     gesdict(species_master(i) % ni,                              &
+                                species_master(i) % nk,                              &
+                                species_master(i) % bins_array(bin_nb) % BWE_OFFSET, &
+                                species_master(i) % bins_array(bin_nb) % bwe_string  )
+            istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bins_array(bin_nb) % bwe_name, F_npath='O',F_bpath='P',F_quiet=.true.,F_shortmatch=.false.)
+            meta1 = meta1plus%meta
+            species_master(i) % bins_array(bin_nb) % bwe_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+            end if
+
+            if (species_master(i) % bins_array(bin_nb) % vd_name /= UNASSIGNED) then
+               call     gesdict(species_master(i) % ni,                             &
+                                species_master(i) % nk,                             &
+                                species_master(i) % bins_array(bin_nb) % VD_OFFSET, &
+                                species_master(i) % bins_array(bin_nb) % vd_string  )
+            istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bins_array(bin_nb) % vd_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+            meta1 = meta1plus%meta
+            species_master(i) % bins_array(bin_nb) % vd_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+            end if
+
+            if (species_master(i) % bins_array(bin_nb) % ra_name /= UNASSIGNED) then
+               call     gesdict(species_master(i) % ni,                             &
+                                species_master(i) % nk,                             &
+                                species_master(i) % bins_array(bin_nb) % RA_OFFSET, &
+                                species_master(i) % bins_array(bin_nb) % ra_string  )
+            istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bins_array(bin_nb) % ra_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+            meta1 = meta1plus%meta
+            species_master(i) % bins_array(bin_nb) % ra_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+            end if
+
+            if (species_master(i) % bins_array(bin_nb) % rb_name /= UNASSIGNED) then
+               call     gesdict(species_master(i) % ni,                             &
+                                species_master(i) % nk,                             &
+                                species_master(i) % bins_array(bin_nb) % RB_OFFSET, &
+                                species_master(i) % bins_array(bin_nb) % rb_string  )
+            istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bins_array(bin_nb) % rb_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+            meta1 = meta1plus%meta
+            species_master(i) % bins_array(bin_nb) % rb_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+            end if
+
+            if (species_master(i) % bins_array(bin_nb) % rc_name /= UNASSIGNED) then
+               call     gesdict(species_master(i) % ni,                             &
+                                species_master(i) % nk,                             &
+                                species_master(i) % bins_array(bin_nb) % RC_OFFSET, &
+                                species_master(i) % bins_array(bin_nb) % rc_string  )
+            istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bins_array(bin_nb) % rc_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+            meta1 = meta1plus%meta
+            species_master(i) % bins_array(bin_nb) % rc_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+            end if
+#if defined(MACH_TENDENCIES)
+         if (species_master(i) % bins_array(bin_nb) % td_name /= UNASSIGNED) then
+            call    gesdict(species_master(i) % bins_array(bin_nb) % ni,        &
+                            species_master(i) % bins_array(bin_nb) % nk,        &
+                            species_master(i) % bins_array(bin_nb) % TD_OFFSET, &
+                            species_master(i) % bins_array(bin_nb) % td_string  )
+            istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bins_array(bin_nb) % td_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+            meta1 = meta1plus%meta
+            species_master(i) % bins_array(bin_nb) % td_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+         end if
+
+         if (species_master(i) % bins_array(bin_nb) % tp_name /= UNASSIGNED) then
+            call    gesdict(species_master(i) % bins_array(bin_nb) % ni,        &
+                            species_master(i) % bins_array(bin_nb) % nk,        &
+                            species_master(i) % bins_array(bin_nb) % TP_OFFSET, &
+                            species_master(i) % bins_array(bin_nb) % tp_string  )
+            istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bins_array(bin_nb) % tp_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+            meta1 = meta1plus%meta
+            species_master(i) % bins_array(bin_nb) % tp_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+         end if
+
+         if (species_master(i) % bins_array(bin_nb) % tg_name /= UNASSIGNED) then
+            call    gesdict(species_master(i) % bins_array(bin_nb) % ni,        &
+                            species_master(i) % bins_array(bin_nb) % nk,        &
+                            species_master(i) % bins_array(bin_nb) % TG_OFFSET, &
+                            species_master(i) % bins_array(bin_nb) % tg_string  )
+            istat = phygetmetaplus(meta1plus,F_name=species_master(i) % bins_array(bin_nb) % tg_name, F_npath='O',F_bpath='V',F_quiet=.true.,F_shortmatch=.false.)
+            meta1 = meta1plus%meta
+            species_master(i) % bins_array(bin_nb) % tg_size = meta1%esp * meta1%fmul * (meta1%mosaic + 1)
+         end if
+#endif
+         end do ! on nb_bins
+      end if
+
+   end do ! on nb_species
+!
+   call chm_getphybus_struct()
+
+end subroutine chm_businit

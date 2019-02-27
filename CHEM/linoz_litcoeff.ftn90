@@ -1,0 +1,86 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+!copyright (C) 2001  MSC-RPN COMM  %%%RPNPHY%%%
+!**s/r linoz_litcoeff  -- Perform the actual reading and organization of 
+!                   the data in the ozone file
+!
+!!if_on
+subroutine linoz_litcoeff( )
+!!if_off
+   use linoz_mod
+! 
+   implicit none  
+!
+!Author
+!          J. de Grandpre
+!
+!But:  lecture de la table des coefficients pour la chimie linearize
+!
+      integer(kind=4)    :: istatus,mi,mj,mk,m,ntotal,fj
+      integer(kind=4)    :: fstinf,fstluk,fnom,fclos,fstouv,fstfrm
+      integer(kind=4)    :: iun1, ilir1
+      integer(kind=4)    :: my_pe
+      character(len=512) :: p_basedir, p_file 
+      character(len=4),dimension(jpcoeff) :: nomvar= (/'O3  ','TT  ','O3DU','PL  ','DPDO','DPDT', &
+                                             'DPDC','LN2O','LCH4','LF11','LF12','LNOY','PNOY','LRAT'/)
+
+!-----------------------------------------------------------------   
+
+      call rpn_comm_rank ('GRID', my_pe, istatus)
+
+      istatus = 0
+      ntotal = jplat*jplev*jptime*jpcoeff
+ 
+      IF_PE0: if(my_pe == 0) then
+
+         write(6,*)'in litcoeff'
+
+         iun1=0
+         p_basedir='/fs/dev/aqd/s1/arqj/jdg/in_frozen/linoz3'
+!        p_basedir='/local/drive1/armn/armnsyg/test_global/linoz3'
+         p_file=trim(p_basedir)//'/clim_linoz3.std'
+         call chm_fst_openfile(iun1,p_file,'STD+OLD+R/O', 'RND',ilir1)
+         if (ilir1 < 0) go to 999
+
+         do fj=1,jpcoeff
+            do m=1,jptime
+              ilir1 = fstinf (iun1,mi,mj,mk,-1,' ',-1,-1,m,' ',nomvar(fj))
+              if (ilir1 < 0) then
+                 exit
+              else
+                 ilir1 = fstluk (coeff_table(1,1,m,fj),ilir1,mi,mj,mk)
+              endif
+            end do
+            if (ilir1 < 0) then
+               write(6,*) '*** problem with read of ', nomvar(fj)
+            else
+               write(6,*) '*** ', nomvar(fj), ' read successfully'
+            endif
+            istatus = min(istatus,ilir1)
+         enddo
+         call chm_fst_closefile(iun1)
+ 999     istatus = min(istatus,ilir1)
+      endif IF_PE0
+
+      call handle_error(istatus,'linoz_litcoeff','linoz_litcoeff')
+      call RPN_COMM_bcast (coeff_table,ntotal,"MPI_REAL",0,"grid",istatus)
+
+      return
+      end

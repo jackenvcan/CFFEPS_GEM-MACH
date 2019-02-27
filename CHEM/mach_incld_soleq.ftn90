@@ -1,0 +1,247 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_incld_soleq.ftn90
+! Creation       : S. Menard, W. Gong, S. Gravel, B. Pabla, GEM-MACH, June 2008
+! Description    : Central operator aqueous phase chemical mechanism
+!
+! Extra info     : See chemical reactions below
+!
+! Arguments  IN
+!               b       --> Aqueous variable coefficients
+!               q1      --> cloudwater conc (g-w/m3 air)
+!               q2      --> Ice/Snow conc (g-w/m3 air)
+!               t       --> Temperature (K)
+!               ti      --> Inverse temperature (1/K)
+!               rt      --> TEMP*RGAS/WDEN
+!               rad1    --> CW droplet radii   (m)
+!               nptsnz  --> Total number of grids to integrate
+!               n1      --> Memory adress of snow grids only
+!               n2      --> Memory adress of CW+ snow grids
+!               n3      --> Memory adress of CW grids only
+!
+!            INOUT
+!               GAZ_CONC--> Gas/Part species conc (ppm)
+!               AQ1     --> Aq. species conc in cloudwater(m/l)
+!               PGSCAV  --> Gas/part scavenging (or diffusion)
+!
+!=============================================================================
+!
+!!if_on
+subroutine mach_incld_soleq (b, GAZ_CONC, aq1, q1, q2, t, ti, rt, pgscav, rad1, nptsnz, n1, n2, n3)
+   use mach_cam_utils_mod,     only: maxnsg, maxnsaq
+!!if_off
+   use mach_incld_headers_mod, only: mach_incld_upaqr2, mach_incld_funeq, mach_incld_findh, mach_incld_concmp
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: nptsnz
+   integer(kind=4), intent   (in) :: n1
+   integer(kind=4), intent   (in) :: n2
+   integer(kind=4), intent   (in) :: n3
+   real(kind=4),    intent(inout) :: b       (nptsnz,5,2)
+   real(kind=4),    intent(inout) :: gaz_conc(nptsnz,maxnsg)
+   real(kind=4),    intent(inout) :: aq1     (nptsnz,maxnsaq)
+   real(kind=4),    intent   (in) :: q1      (nptsnz)
+   real(kind=4),    intent   (in) :: q2      (nptsnz)
+   real(kind=4),    intent   (in) :: t       (nptsnz)
+   real(kind=4),    intent   (in) :: ti      (nptsnz)
+   real(kind=4),    intent   (in) :: rt      (nptsnz)
+   real(kind=4),    intent(inout) :: pgscav  (nptsnz,maxnsg,2)
+   real(kind=4),    intent   (in) :: rad1    (nptsnz)
+!!if_off
+!
+! Local variables
+!
+   integer(kind=4)                     :: idummy
+   integer(kind=4)                     :: nleft, nright, ivec
+   real(kind=4)                        :: tot1, tot2, tot3, dch1, resid
+   real(kind=4), dimension(nptsnz, 12) :: c
+   real(kind=4), dimension(nptsnz, 5)  :: tcmp
+   real(kind=4)                        :: r(nptsnz, 25, 2)
+
+!    CENTRAL OPERATOR AQUEOUS PHASE CHEMICAL MECHANISM
+!
+!                 SPECIES LIST
+!       AQUEOUS                    GAS/PART.
+!       -------                    ---------
+!       1.  HSO3-                  1.  SO2G
+!       2.  H202                   2.  HPXG
+!       3.  ROOH                   3.  RPXG
+!       4.  SO4=                   4.  H2SO4 = SO4P1
+!       5.  NO3-                   5.  NH4HSO4 = SO4P2
+!       6.  NH4+                   6.  (NH4)2SO4 = SO4P3
+!       7.  CAT1                   7.  HNO3G
+!       8.  HCO3-                  8.  NH3G
+!       9.  H+                     9.  NH4NO3 = NNO3P
+!      10.  OH-                   10.  DUST
+!      11.  FEMN                  11.  O3G
+!      12.  O3                    12.  CO2G (CONSTANT)
+!      13.  H2OA (CONSTANT)
+!
+!              EQUILIBRIUM  REACTION LIST
+!              --------------------------
+!
+!  1.     1.SO4P           -->    B1*SO4= +   B3*H+   (WITH K= 0)
+!  2.     1.SO2G           -->    B1*HSO3 +   B1*H+
+!  3.     1.HSO3 +  1.H+   -->    B2*SO2G
+!  4.     1.O3G            -->    B1*O3
+!  5.     1.O3             -->    B2*O3G
+!  6.     1.HPXG           -->    B1*H2O2
+!  7.     1.H2O2           -->    B2*HPXG
+!  8.     1.HNO3           -->    B1*NO3- +   B1*H+
+!  9.     1.NO3- +  1.H+   -->    B2*HNO3
+! 10.     1.RPXG           -->    B1*ROOH
+! 11.     1.ROOH           -->    B2*RPXG
+! 12.     1.NH3G           -->    B1*NH4+ +   B1*OH-
+! 13.     1.NH4+ +  1.OH-  -->    B2*NH3G
+! 14.     1.DUST           -->    B5*FEMN +   B4*HCO3 + B4*CAT1+ (K = 0)
+! 15.     1.CO2G           -->    B1*HCO3 +   B1*H+
+! 16.     1.HCO3 +  1.H+   -->    B2*CO2G
+! 17.     1.H+   +  1.OH-  -->   1.00H2OA
+! 18.     1.H2OA           -->   1.00H+   +  1.00OH-
+! 19.     1.SO4P2          -->    B1*SO4= +   B1*H+ + B1*NH4+
+! 20.     1.SO4P3          -->    B1*SO4= + B3*NH4+
+! 21.     1.NNO3P          -->    B1*NO3- + B1*NH4+
+!
+!   SPECIES LIST USED BY EQUILIBRIUM SOLVER
+!
+! 01    SO2 GAS                 SO2G
+! 02    NITRIC ACID GAS         HNO3
+! 03    NH3 GAS                 NH3G
+! 04    CO2 GAS                 CO2G
+! 05    AQ PROTONS              H+
+! 06    AQ BISULFITE            HSO3
+! 07    AQ NITRATE              NO3-
+! 08    AQ AMMONIUM             NH4+
+! 09    AQ BICARBONATE          HCO3
+! 10    AQ HYDROXIDE            OH-
+! 11    AQ SULFATE              SO4=
+! 12    AQ CATIONS              CAT1
+!
+
+   idummy = 0
+   nleft = n2
+   nright = nptsnz
+
+!  pack local array of aq & gas species for equilibrium solution
+
+   do ivec = nleft, nright
+      c(ivec, 1) = gaz_conc(ivec, 1)
+      c(ivec, 2) = gaz_conc(ivec, 7)
+      c(ivec, 3) = gaz_conc(ivec, 8)
+      c(ivec, 4) = gaz_conc(ivec, 12)
+      c(ivec, 5) = aq1(ivec, 9)
+      c(ivec, 6) = aq1(ivec, 1)
+      c(ivec, 7) = aq1(ivec, 5)
+      c(ivec, 8) = aq1(ivec, 6)
+      c(ivec, 9) = aq1(ivec, 8)
+      c(ivec, 10) = aq1(ivec, 10)
+      c(ivec, 11) = aq1(ivec, 4)
+      c(ivec, 12) = aq1(ivec, 7)
+   end do
+
+!  get rate constants for cloudwater at t & q1
+   call mach_incld_upaqr2(AQ1, PGSCAV, Q1, Q2, RAD1, T, TI, RT,            &
+                          R, B, GAZ_CONC, nleft, nright, nptsnz, n2, n3)
+
+   do ivec = nleft, nright
+!  o3 equilibrium
+      tot1 = gaz_conc(ivec, 11) + b(ivec, 2, 1) * aq1(ivec, 12)
+      aq1(ivec, 12) = ((r(ivec, 4, 1) / (r(ivec, 4, 1) + r(ivec, 5, 1)))   &
+                         / b(ivec, 2, 1)) * tot1
+      gaz_conc(ivec, 11) = tot1 - b(ivec, 2, 1) * aq1(ivec, 12)
+!  h2o2 equilibrium
+      tot2 = gaz_conc(ivec, 2) + b(ivec, 2, 1) * aq1(ivec, 2)
+      aq1(ivec, 2) = ((r(ivec, 6, 1) / (r(ivec, 6, 1) + r(ivec, 7, 1)))    &
+                        / b(ivec, 2, 1)) * tot2
+      gaz_conc(ivec, 2) = tot2 - b(ivec, 2, 1) * aq1(ivec, 2)
+!  rooh equilibrium
+      tot3 = gaz_conc(ivec, 3) + b(ivec, 2, 1) * aq1(ivec, 3)
+      aq1(ivec, 3) = ((r(ivec, 10, 1) / (r(ivec, 10, 1) + r(ivec, 11, 1))) &
+                        / b(ivec, 2, 1)) * tot3
+      gaz_conc(ivec, 3) = tot3 - b(ivec, 2, 1) * aq1(ivec, 3)
+   end do
+
+!  initial component totals
+   call mach_incld_funeq(TCMP, C, B(:, :, 1), nleft, nright, nptsnz)
+
+!  find proton concentration
+!  Add [HCO3-] for initial H+ estimate to avoid unrealistically large H+
+!  estimate when [SO4=], [NO3-], and [NH4+] are very small
+!  use initial estimate of H+ (charge balance of major ions)
+!  for [HCO3-] evaluation:
+
+   do ivec = nleft, nright
+      C(ivec, 5) = C(ivec, 5) + R(ivec, 15, 1) * TCMP(ivec, 4) / B(ivec, 2, 1) /   &
+                  (R(ivec, 15, 1) + R(ivec, 16, 1) * C(ivec, 5))
+!  setting a lower limit for proton concentration
+      C(ivec, 5) = max(C(ivec, 5), 3.0e-07)	
+   end do
+
+   call mach_incld_findh(TCMP, C, R(:, :, 1), B(:, :, 1), nleft, nright, nptsnz)
+
+!  find other species concentrations
+   call mach_incld_concmp(TCMP, C, R, B, nleft, nright, nptsnz)
+
+   do ivec = nleft, nright
+!  unpack local c array into  aq1 & g arrays
+!  cloudwater
+      aq1(ivec, 1) = c(ivec, 6)
+      aq1(ivec, 5) = c(ivec, 7)
+      aq1(ivec, 6) = c(ivec, 8)
+      aq1(ivec, 8) = c(ivec, 9)
+      aq1(ivec, 9) = c(ivec, 5)
+      aq1(ivec, 10) = c(ivec, 10)
+!  gases
+      gaz_conc(ivec, 1) = c(ivec, 1)
+      gaz_conc(ivec, 7) = c(ivec, 2)
+      gaz_conc(ivec, 8) = c(ivec, 3)
+!  insure charge balance / adjust protons as needed
+      dch1 = -2.0 * aq1(ivec, 4) - aq1(ivec, 1) - aq1(ivec, 5) &
+                    - aq1(ivec, 8) - aq1(ivec, 10) &
+                    + aq1(ivec, 6) + aq1(ivec, 9) + aq1(ivec, 7)
+      aq1(ivec, 9) = aq1(ivec, 9) - dch1
+   end do
+
+   do ivec = nleft, nright
+!  added to avoid negative proton concentrations.
+      if (aq1(ivec, 9) <= 0.0) then
+!  add residual to oh
+         resid = 1.0e-7 - aq1(ivec, 9)
+         aq1(ivec, 9) = 1.0e-7
+         aq1(ivec, 10) = resid
+      else
+         resid = 0.0
+      end if
+   end do
+
+   return
+end

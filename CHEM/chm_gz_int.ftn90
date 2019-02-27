@@ -1,0 +1,119 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : chm_gz_int.ftn90
+! Creation       : Verica Savic-Jovcic, GEM-MACH, November 2015
+! Description    : Integrate geopotential height of thermodynamic GEM vertical levels 
+!
+! Arguments:  IN/OUT
+!                GZ -> Altitude above surface in meters of tracers levels (ie thermodyanmic)
+!                tv -> Virtual temperature at thermodynamic levels
+!                sigt -> sigma coordinate of thermodynamic levels
+!
+!============================================================================
+!!if_on
+subroutine chm_gz_int(GZ,tv,sigt,ni,nk)
+!!if_off
+  use chm_utils_mod, only: global_debug, chm_lun_out
+  use chm_consphychm_mod, only: rgasd
+  implicit none
+
+#include <arch_specific.hf>
+
+! Variables from sub. arg. list
+!!if_on
+  integer(kind=4) :: ni,nk
+  real(kind=4), intent(out) :: gz(ni,nk)
+  real(kind=4), intent(in) :: tv(ni,nk), sigt(ni,nk)
+!!if_off
+! Local variables
+  integer(kind=4) :: i, k
+  real(kind=4) :: q0, q1, q2, q3, q4, q5, q6, q7, q8, q2i, q2n
+  real(kind=4)    :: srl(ni)
+  real(kind=4)    :: a(ni,nk), b(ni,nk), c(ni,nk)
+  logical(kind=4) :: local_dbg
+! Local constants
+  local_dbg = (.false. .or. global_debug)
+
+  if (local_dbg) then
+     write(chm_lun_out, *) "Entre dans chm_gz_int"
+  endif
+
+! First calculate coeficients for integrating geopotential height in sigma coordinates, and then integrate geopotential height
+
+! Lower boundary (k = nk = chm_nk+1)
+  gz = 0.
+  srl = sigt(:,nk)/sigt(:,nk-1)
+  call vslog(srl,srl,ni)
+  do i = 1, ni
+    q0 = 0.5*(sigt(i,nk)+sigt(i,nk-1))
+    q1 = srl(i)
+    q2 = sigt(i,nk)-sigt(i,nk-1)
+    q3 = (q2-q0*q1)/(q2*q2)
+    q4 = 0.25*q1+q0*q3
+    q5 = 1./(sigt(i,nk)-sigt(i,nk-2))
+    q6 = 1./(sigt(i,nk-1)-sigt(i,nk-2))
+    a(i,nk) = rgasd * (0.25*q1 - q3*(q2+q0) + q4*q6*(sigt(i,nk)-sigt(i,nk-2)))
+    b(i,nk) = rgasd * (0.25*q1 + q3*(q2-q0) + q4*q5*(sigt(i,nk-1)-sigt(i,nk-2)))
+    c(i,nk) = rgasd * (-q2*q2*q4*q5*q6)
+! Geopotential height of the lowest thermodynamic model level (chm_nk)
+    gz(i,nk-1) = a(i,nk)*tv(i,nk-1) + b(i,nk)*tv(i,nk) + c(i,nk)*tv(i,nk-2) + gz(i,nk)
+  end do
+
+! Interior and upper boundary (1 < k < nk == 1 < k <= chm_nk)
+  do k = 2, nk-1
+    srl = sigt(:,k+1)/sigt(:,k-1)
+    call vslog(srl,srl,ni)
+    do i = 1, ni
+      q0 = 0.5*(sigt(i,k+1)+sigt(i,k-1))-sigt(i,k)
+      q1 = srl(i)
+      q2 = sigt(i,k+1)-sigt(i,k-1)
+      q3 = sigt(i,k)*q1/q2-1.
+      a(i,k) = -rgasd*(q0+q3*sigt(i,k+1))/(sigt(i,k-1)-sigt(i,k))
+      c(i,k) = rgasd*(q0+q3*sigt(i,k-1))/(sigt(i,k+1)-sigt(i,k))
+      b(i,k) = rgasd*q1 - a(i,k) - c(i,k)
+    end do
+  end do
+! Geopotential height of thermodynamic model levels, except for the lowest
+  do k = nk-2, 1, -1
+    do i = 1, ni
+      gz(i,k) = a(i,k+1)*tv(i,k) + b(i,k+1)*tv(i,k+1) + c(i,k+1)*tv(i,k+2) + gz(i,k+2)
+    end do
+  end do
+
+  if (local_dbg) then
+     write(chm_lun_out, *) "EXIT chm_gz_int"
+     write(chm_lun_out, *) " "
+  end if
+
+  return
+
+end subroutine

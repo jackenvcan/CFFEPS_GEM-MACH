@@ -1,0 +1,176 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_cam_flux.ftn90
+! Creation       : S. Gravel
+!                  Jun. 2012 
+!
+! Description    : Entry point for aerosol flux calculations
+!
+! Extra info     : Includes calculations of Sea-salt surface flux and/or modulation of Crustal-material flux by meteorological conditions
+!
+! Arguments:  IN 
+!               metvar3d(ix, kz, ...) -> 3D met variables
+!               metvar2d(ix, ...)     -> 2D met variables
+!               fland                 -> Landuse
+!
+!             OUT 
+!               busvol                -> Volatile bus
+!
+!             IN/OUT
+!               busper                -> Permanent bus
+!
+!============================================================================
+!
+!!if_on
+subroutine mach_cam_flux(busper, busvol, busper_size, busvol_size, metvar2d, metvar3d      )
+   use chm_metvar_mod,        only: SIZE_MV2D, SIZE_MV3D
+   use chm_ptopo_grid_mod,    only: chm_ni, chm_nk
+!!if_off
+   use chm_metvar_mod,        only: MV3D_TPLUS, MV2D_UDIAG, MV2D_VDIAG, MV2D_GLSEA, MV2D_DXDY
+   use chm_utils_mod,         only: global_debug, ik, chm_lun_out
+   use chm_ptopo_grid_mod,    only: chm_ni, chm_nk
+   use mach_cam_headers_mod,  only: mach_cam_sfss
+   use mach_headers_mod,      only: mach_fugitive_dust 
+   use chm_nml_mod,           only: chm_seaflux_s, aerosize, chm_fugitive_dust_s
+   use mach_cam_pre_mod,      only: icom, maxngs, gasextr, camextr, aeroname
+   use mach_cam_utils_mod,    only: isize
+   use chm_species_info_mod,  only: sm
+   use chm_species_idx_mod,   only: sp_SS, sp_LU15
+   use mach_gas_chemicbi_mod, only: lucprm
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: busvol_size
+   integer(kind=4), intent   (in) :: busper_size
+   real(kind=4),    intent(inout) :: busper  (busper_size)
+   real(kind=4),    intent(inout) :: busvol  (busvol_size)
+   real(kind=4),    intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+!!if_off
+!
+!  Local variables
+!
+   integer(kind=4)         :: n, l, il1, il2, nn, i, k, this_ik, l_iae1, il
+   integer(kind=4)         :: gn_aerochem
+   real(kind=4), parameter :: kg2g = 1.0e3
+   real(kind=4)            :: udiag, vdiag
+   real(kind=4)            :: dum1     (chm_ni, chm_nk + 1, isize * icom + maxngs + gasextr + camextr)
+   real(kind=4)            :: dum2     (chm_ni, chm_nk)
+   real(kind=4)            :: dum3     (chm_ni)
+   real(kind=4)            :: glsea    (chm_ni)
+   real(kind=4)            :: fland    (chm_ni, lucprm)
+   real(kind=4)            :: surfwd   (chm_ni)
+   real(kind=4)            :: throw    (chm_ni, chm_nk + 1)
+   real(kind=4)            :: aerosize1(2, isize)
+   real(kind=4)            :: rsfrow   (chm_ni, isize)
+   logical(kind=4)         :: local_dbg, flux_L
+
+      local_dbg = (.false. .or. global_debug)
+!
+   if (chm_seaflux_s == 'GONG_MONAHAN_F') then
+
+      aerosize1 = 0.0
+      rsfrow    = 0.0
+      surfwd    = 0.0
+      throw     = 0.0
+
+      gn_aerochem = isize * icom + maxngs + gasextr + camextr
+      l_iae1 = maxngs + gasextr + 1
+!
+      do k = 1, lucprm
+         il = (k - 1) * chm_ni
+         fland(1: chm_ni, k) = busper(sm(sp_LU15) % per_offset + il : sm(sp_LU15) % per_offset + il + chm_ni - 1 )
+      enddo
+
+!     bin size of dry aerosol
+      do n = 1, isize
+         aerosize1(1, n) = aerosize(n)     * 1.e-6
+         aerosize1(2, n) = aerosize(n + 1) * 1.e-6
+      end do
+
+      il1 = 1
+      il2 = chm_ni
+
+!    2D fields
+      do i = 1, chm_ni
+!    for seal-salt
+         udiag     = metvar2d(i, MV2D_UDIAG)
+         vdiag     = metvar2d(i, MV2D_VDIAG)
+         surfwd(i) = sqrt(udiag**2 + vdiag**2)
+         glsea(i)  = metvar2d(i, MV2D_GLSEA)
+      end do
+
+!    3D Fields
+      do k = 1, chm_nk
+         do i = 1, chm_ni
+            this_ik = ik(i, k, chm_ni)
+            throw(i, k+1) = metvar3d(i, k, MV3D_TPLUS)
+         enddo
+      enddo
+
+!     Sea-salt surface flux
+       if(local_dbg) then
+         write (chm_lun_out, *) 'Compute sea-salt surface flux by cam scheme: ', chm_seaflux_s
+       end if
+
+!     Sea-salt surface flux
+       do nn = 1, icom
+          if (aeroname(nn) == 'SEA-SALT') then
+!         dum variables not used when flux_L = .true.
+             call mach_cam_sfss(dum1, dum2, chm_nk + 1,                    &
+                                throw, gn_aerochem, nn,                    &
+                                aerosize1, surfwd, rsfrow, dum3, glsea,    &
+                                fland, il1, il2, l_iae1, .true.            )
+          end if
+       end do
+
+!    Emissions of sea-salt calculated in kg and account for grid area.
+!    Change units and divide by dxdy to harmonize with other area emissions before 
+!    use by diffusion operator
+       do i = 1, chm_ni
+          do k = 1, isize
+             busper(sm(sp_SS) % bins_array(k) % ae_offset + (i - 1)) = rsfrow(i,k) * metvar2d(i, MV2D_DXDY) * kg2g
+          enddo
+       enddo
+
+   end if
+
+   if (chm_fugitive_dust_s /= 'NIL') then
+
+   if (chm_fugitive_dust_s == 'MORAN') then
+      if (local_dbg) then
+         write (chm_lun_out, *) 'Fugitive dust emissions modulated by meteorological conditions ', chm_fugitive_dust_s
+      end if
+         call mach_fugitive_dust(busvol, busvol_size, metvar2d)
+      end if
+   end if
+
+end subroutine mach_cam_flux

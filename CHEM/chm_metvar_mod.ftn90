@@ -1,0 +1,101 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : chm_metvar_mod.ftn90
+! Creation       : H. Landry, Oct. 2011
+! Description    : Defines tables where the meteorological variables are
+!                  dumped into so that they can be easily be accessed from
+!                  within the chemistry.  It also obfuscates the buses below
+!                  chm_exe.
+!
+!============================================================================
+
+module chm_metvar_mod
+   save
+   
+! 2D array
+! Stuff that comes from the dynamic bus
+   integer(kind=4), parameter :: MV2D_PPLUS    = 1  ! Surface pressure
+
+! Stuff that comes from the permanent bus
+   integer(kind=4), parameter :: MV2D_DXDY     = 2  ! Area of grid square
+   integer(kind=4), parameter :: MV2D_TSURF    = 3  ! Area averaged surface temperature
+   integer(kind=4), parameter :: MV2D_UDIAG    = 4  ! Screen level X component of wind
+   integer(kind=4), parameter :: MV2D_VDIAG    = 5  ! Screen level Y component of wind
+   integer(kind=4), parameter :: MV2D_TDIAG    = 6  ! Screen level specific humidity
+   integer(kind=4), parameter :: MV2D_QDIAG    = 7  ! Screen level specific humidity
+   integer(kind=4), parameter :: MV2D_GLSEA    = 8  ! Sea ice fraction
+   integer(kind=4), parameter :: MV2D_SNODP    = 9  ! Snow Depth
+   integer(kind=4), parameter :: MV2D_H        =10  ! Boundary layer height
+   integer(kind=4), parameter :: MV2D_DLAT     =11  ! Latitude
+   integer(kind=4), parameter :: MV2D_DLON     =12  ! Longitude
+   integer(kind=4), parameter :: MV2D_FLUSOLIS =13  ! VIS flux towards ground
+   integer(kind=4), parameter :: MV2D_MT       =14  ! Topography
+   integer(kind=4), parameter :: MV2D_ILMO     =15  ! Aggregated Inverse of Monin-Obukhov length
+
+! Stuff that comes from the volatile bus
+   integer(kind=4), parameter :: MV2D_UE       = 16 ! Friction velocity u* from surface momentum flux
+   integer(kind=4), parameter :: MV2D_KCL      = 17 ! 1st level in the PBL
+   integer(kind=4), parameter :: MV2D_CANG     = 18 !  Cosine of solar zenith
+   integer(kind=4), parameter :: MV2D_RAINRATE = 19 ! liquid precip. rate
+
+   integer(kind=4), parameter :: SIZE_MV2D     = 19 
+!
+! 3D array
+! Stuff that comes from the dynamic bus
+   integer(kind=4), parameter :: MV3D_TPLUS    = 1 ! Temperature
+   integer(kind=4), parameter :: MV3D_UPLUS    = 2 ! Wind speed along X at t+dt(dynamics)
+   integer(kind=4), parameter :: MV3D_VPLUS    = 3 ! Wind speed along Y at t+dt(dynamics)
+   integer(kind=4), parameter :: MV3D_HUPLUS   = 4 ! Specific humidty at t+dt(dynamics)
+   integer(kind=4), parameter :: MV3D_QCPLUS   = 5 ! Cloud water/ice at t+dt(dynamics)
+   integer(kind=4), parameter :: MV3D_ZPLUS    = 6 ! Height abouve ground at t+dt
+   integer(kind=4), parameter :: MV3D_SIGM     = 7 ! local sigma values for momentum levels
+   integer(kind=4), parameter :: MV3D_SIGT     = 8 ! local sigma values for thermodynamic levels
+   integer(kind=4), parameter :: MV3D_WPLUS    = 9 ! dz/dt (vertical velocity)
+
+! Stuff that comes from the permanent bus
+   integer(kind=4), parameter :: MV3D_FTOT     = 10 ! Total cloud (0-1)
+   integer(kind=4), parameter :: MV3D_FXP      = 11 ! Stratiform cloud (0-1)
+   integer(kind=4), parameter :: MV3D_FDC      = 12 ! Deep Convective cloud fraction
+
+! Stuff that comes from the volatile bus
+   integer(kind=4), parameter :: MV3D_KT       = 13 ! Thermal vertical diffusion coefficient
+   integer(kind=4), parameter :: MV3D_AT2M     = 14 ! Interpolation coefficients from thermo to momentum levels
+
+! Stuff that comes from both volatile and permanent bus
+   integer(kind=4), parameter :: MV3D_RNFLX    = 15 ! Liquid precipitation flux (stratiform + convective)
+   integer(kind=4), parameter :: MV3D_SNOFLX   = 16 ! Solid precipitation flux (stratiform + convective)
+   integer(kind=4), parameter :: MV3D_PEVP     = 17 ! Evap. of precip (stratiform + convective)
+   integer(kind=4), parameter :: MV3D_PPRO     = 18 ! Cloud to rain collection tendency (stratiform + convective)
+
+   integer(kind=4), parameter :: SIZE_MV3D     = 18
+!  
+end module chm_metvar_mod

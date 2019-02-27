@@ -1,0 +1,59 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : linoz_mod.ftn90
+! Creation       : J. de Grandpre
+! Description    : Module contains information for linoz parameterization
+!                  coeff_table table of ozone climatological fields (12 months)
+!
+! Extra info     :
+!
+!============================================================================
+
+module linoz_mod
+   save
+
+!     Linoz coefficients  
+
+      integer(kind=4), parameter   ::  jplat  =18
+      integer(kind=4), parameter   ::  jplev  =25
+      integer(kind=4), parameter   ::  jptime =12
+      integer(kind=4), parameter   ::  jpcoeff=14
+      
+      real(kind=4), dimension(jplat,jplev,jptime,jpcoeff)  :: coeff_table
+
+   real(kind=4) :: p_linoz   = 0.1000000000000e+05 !pressure level for stratospheric linoz ozone Pa  (100 hPa)
+   real(kind=4) :: hu_linoz  = 0.1000000000000e+02 !water vapour level for Linoz stratospheric ozone ppmv (10 ppmv)
+   real(kind=4) :: p_top_clim= 0.4000000000000e+05 !pressure level to relax Linoz O3 to Fortuin-Kelder O3 climatology Pa   (400 hPa)
+
+  integer(kind=4), parameter   :: nk_start_linoz = 1 !top level for stratospheric O3
+
+end module linoz_mod

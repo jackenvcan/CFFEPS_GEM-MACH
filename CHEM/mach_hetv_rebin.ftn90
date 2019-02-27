@@ -1,0 +1,262 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_hetv_rebin.ftn90
+! Creation       : V. Bouchet, S. Menard, P. Makar, S. Gravel, B. pabla
+! Description    : Rebinning of the heterogeneous chemistry
+! Extra info     :
+!
+! Arguments  IN
+!
+!            OUT
+!
+!=============================================================================
+! Note           : variables gamma and sum have been renamed to hgamma and hsum
+
+!!if_on
+subroutine mach_hetv_rebin (het , dhet_chem, tempk, zpres, aerosize, binnum, npts, maxcnz, &
+                  maxnsz, maxhet, kount, jlat                                              )
+!!if_off
+   use chm_consphychm_mod, only: mwt_air, kboltz, avno, pi
+
+   implicit none
+!!if_on
+    integer(kind=4), intent   (in) :: maxhet
+    integer(kind=4), intent   (in) :: maxnsz
+    integer(kind=4), intent   (in) :: maxcnz
+    integer(kind=4), intent   (in) :: npts
+    integer(kind=4), intent   (in) :: kount
+    integer(kind=4), intent   (in) :: jlat
+    real(kind=4),    intent(inout) :: het      (npts,maxhet,maxcnz,maxnsz)
+    real(kind=4),    intent(inout) :: dhet_chem(npts,maxhet,maxcnz)
+    real(kind=4),    intent   (in) :: tempk    (npts,maxcnz)
+    real(kind=4),    intent   (in) :: zpres    (npts,maxcnz)
+    real(kind=4),    intent   (in) :: aerosize (2,maxnsz)
+    real(kind=4),    intent   (in) :: binnum   (npts,maxcnz,maxnsz)
+!!if_off
+!
+! Local variables
+!
+   integer(kind=4), parameter      :: nsp = 3
+   integer(kind=4), parameter      :: itermax = 10
+   real(kind=4), parameter         :: sslppa = 101325.0   ! standard sea-level pressure (Pa)
+   integer(kind=4)                 :: i, k, l, n, in, iter
+   real(kind=4), dimension(nsp)    :: mwt = (/98.0795, 63.0128, 17.03056/) ! H2SO4     HNO3     NH3
+   real(kind=4), dimension(nsp)    :: hgamma = (/1.0, 0.1, 0.4/)           ! H2SO4     HNO3     NH3
+   real(kind=4) :: dg, kn, lim, maxlim
+   real(kind=4) :: totav, totap, delta, orgmass, dhet_temp
+   real(kind=4) :: het_temp, delta_temp
+   real(kind=4) :: radius(maxnsz), ki(npts, maxcnz, maxnsz, maxhet)
+   real(kind=4) :: diff(npts, maxcnz, maxhet), hsum(npts, maxcnz, maxhet)
+   real(kind=8) :: totapdp, ffrac
+!  new variables added, makar dec 2008 revision:
+   real(kind=8) :: mass_to_be_removed, mass_available
+   real(kind=8) :: delm, totfrac
+   real(kind=8) :: mass_lost_total, mass_lost_bin
+   real(kind=8) :: mass_to_be_removed_initial
+
+   external qqexit
+
+!  Convert to the right units radius (m to cm), press (mb to atm)
+!  Average radius of each bin
+   do n = 1, maxnsz
+      radius(n) = 0.5 * 100.0 * (aerosize(1, n) + aerosize(2, n))
+   end do
+
+!  Calculate the diffusivity and ki
+   do l = 1, nsp
+      do k = 1, maxcnz
+         do i = 1, npts
+            dg = 0.36855513 * mwt(l) + 6.2869566
+            diff(i, k, l) = sqrt((mwt_air + mwt(l)) / (mwt_air * mwt(l)))
+            diff(i, k, l) = diff(i, k, l) * 1.0e-3 * tempk(i, k) ** 1.75
+            diff(i, k, l) = diff(i, k, l) / (20.1 ** (1.0 / 3.0) + dg ** (1.0 / 3.0)) ** 2
+            diff(i, k, l) = diff(i, k, l) / (zpres(i, k) / sslppa)
+         end do
+      end do
+   end do
+
+   do l = 1, nsp
+      do n = 1, maxnsz
+         do k = 1, maxcnz
+            do i = 1, npts
+               kn = sqrt(8 * kboltz * tempk(i, k) / (pi * mwt(l) / avno))
+               kn = 3 * diff(i, k, l) / (radius(n) * kn)
+               ki(i, k, n, l) = (1 + (4 * kn / 3 * hgamma(l)) * (1 - 0.47 * hgamma(l) / (1 + kn)))
+               ki(i, k, n, l) = 4 * pi * radius(n) * diff(i, k, l) / ki(i, k, n, l)
+            end do
+         end do
+      end do
+   end do
+!  calculate sum of kiNi
+   do l = 1, nsp
+      do k = 1, maxcnz
+         do i = 1, npts
+            hsum(i, k, l) = 0.0
+            do n = 1, maxnsz
+               hsum(i, k, l) = hsum(i, k, l) + ki(i, k, n, l) * binnum(i, k, n)
+            end do
+         end do
+      end do
+   end do
+
+!  Chose how to redistribute
+!  Redistribute
+   do l = 1, nsp
+      do k = 1, maxcnz
+         do i = 1, npts
+            totav = 0.0
+            do n = 1, maxnsz
+               totav = totav + het(i, l, k, n)
+            end do
+
+            if (dhet_chem(i, l, k) >= 0.0) then
+               totap = 0.0
+               totapdp = 0.d0
+               do n = 1, maxnsz
+!  Precision problems with summation at single precision
+                  ffrac = dble(dhet_chem(i, l, k)) * dble(ki(i, k, n, l)) * dble( binnum(i, k, n)) / dble(hsum(i, k, l))
+                  totapdp = totapdp + dble(het(i, l, k, n))+ffrac
+                  het(i, l, k, n) = het(i, l, k, n) + real(ffrac)
+               end do
+               totap = real(totapdp)
+               orgmass = (totav + dhet_chem(i, l, k)) * 1.0e-3
+               delta = totap - (totav + dhet_chem(i, l, k))
+
+               if(totap > 1.001*(totav + dhet_chem(i, l, k)) .or. totap < 0.999 * (totav + dhet_chem(i, l, k))) then
+                  write(0, *) '### Error in mach_hetv_rebin ###'
+                  write(0, *) '# mass balance pb ', i, l, k, kount, jlat
+                  write(0, *) '#', totav, totap, dhet_chem(i, l, k)
+                  write(0, *) '#', delta, orgmass
+                  write(0, *) '# rebin>0 '
+                  write(0, *) '###         ABORT         ###'
+                  call qqexit(1)
+               end if
+            else
+
+!  This branch is taken if the effect of the bulk-calculated inorganic heterogeneous
+!  chemistry was to remove particle mass.
+
+               totav = 0.
+               do n = 1, maxnsz
+                  totav = totav + het(i, l, k, n)
+               end do
+
+!  Determine the bulk mass that is to be removed from the particle phase
+!  for the current horizontal gridpoint (i), vertical gridpoint (k), and
+!  chemical species (l), across all bins (n):
+               mass_available = 0.0d0
+               do n = 1, maxnsz
+                  mass_available = mass_available + dble(het(i, l, k, n))
+               end do
+
+!  The mass available for removal is that in the particle phase
+!  in the previous time step prior to the application of
+!  the inorganic chemistry partitioning code (i.e. "het" is
+!  the value before the inorganic chemistry partitioning code
+!  was called, and the sum of het over all bins is the total
+!  particle mass that may be removed for the given species).
+!  The mass checks in the inorganic chemistry partitioning code
+!  are assumed to conserve mass, and the bulk amount of mass lost
+!  from the particle phase, calculated from that code, is
+!  dhet_chem.  mass_available, as calculated above, therefore
+!  should be .ge. abs(dhet_chem).  Round off errors
+!  may make the mass being removed greater than the mass available:
+!  the following min statement prevents this from happening.
+               delm = mass_available + dble(dhet_chem(i, l, k))
+               mass_to_be_removed = min(mass_available, -dble(dhet_chem(i, l, k)))
+               mass_to_be_removed_initial = mass_to_be_removed
+
+!  Iterative loop:  mass is removed from the larger bins first
+               iter = 0
+4000   continue
+               iter = iter + 1
+!  For the current iteration, for the particle bins which have non-zero mass
+!  (i.e. are available for mass removal), calculate the
+!  ratios of mass that should go to each bin based on gas diffusion:
+               totfrac = 0.d0
+               do n = maxnsz, 1, -1
+                  if(het(i, l, k, n) > 0.) then
+                     totfrac = totfrac + dble(ki(i, k, n, l)) * dble(binnum(i, k, n))
+                  end if
+               end do
+
+!  Zero the amount of mass to be lost during the current iteration for this species:
+               mass_lost_total = 0.d0
+
+!  Determine the fraction of mass to be lost from each bin considering diffusive transfer of gas alone:
+               do n = maxnsz, 1, -1
+                  mass_lost_bin = 0.d0
+                  if(het(i, l, k, n) > 0) then
+                     mass_lost_bin = min( (dble(ki(i, k, n, l)) * dble(binnum(i, k, n)) &
+                                       / totfrac * mass_to_be_removed), &
+                                       dble(het(i, l, k, n)))
+                  end if
+
+!  Reduce the mass in the bin, applying a zero minimum to avoid round-off error
+                  het(i, l, k, n) = max(real(dble(het(i, l, k, n))-mass_lost_bin), 0.)
+
+!  Increment the total amount of mass lost from the particle phase for the given species:
+                  mass_lost_total = mass_lost_total + mass_lost_bin
+
+!  Repeat the process for the next bin.
+               end do
+
+!  If mass_lost_total is < mass_to_be_removed, some of the bins in the above iteration were totally depleted of
+!  mass, and the remaining mass must be taken from another pass through the iteration.
+!  Increment the amount of mass to be removed, employing a max statement to avoid zero round-off:
+               mass_to_be_removed = max(mass_to_be_removed-mass_lost_total, 0.d0)
+               if(mass_to_be_removed > 0.d0 .and. iter < itermax) go to 4000
+
+!  Determine the fraction of mass to be removed that still remains:
+               totfrac = mass_to_be_removed/mass_to_be_removed_initial
+
+!  Either more than 5 iterations were required to re-sort the mass, or there's no mass left to sort
+!  (a round off error of 1e-6 is allowed). If the iteration limit was reached, stop the code with an error message:
+               if(totfrac .gt. 1.d-6 .and. iter > itermax+1) then
+                  write(0, *) '### Error in mach_hetv_rebin ###'
+                  write(0, *) '# Maximum number of iterations exceeded #'
+                  write(0, *) '#Mass available in array het: ', mass_available
+                  write(0, *) '#Mass to be removed in dhet: ', dhet_chem(i, l, k)
+                  write(0, *) '#Mass still to be removed after ', itermax+1, ' iterations: ', mass_to_be_removed
+                  write(0, *) '#Initial mass to be removed and ratio: ', mass_to_be_removed_initial, totfrac
+                  write(0, *) '###         ABORT         ###'
+                  call qqexit(1)
+               end if
+
+!  The mass has been successfully redistributed over the bins.  Continue with
+!  the next horizontal level(i), vertical level(k), and bulk species (l)
+            end if
+         end do
+      end do
+   end do
+return
+end

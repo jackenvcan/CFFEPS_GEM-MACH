@@ -1,0 +1,317 @@
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_gas_strato.ftn90
+! Creation       : J. de Grandpre ; Feb 2013 
+! Description    : Call to Stratospheric Ozone Chemistry (LINOZ)
+!
+! Extra info     :  Type of bus
+! -----------
+!                     ** dynamic bus
+!                            advected variables, change every time step, needed by Physics every
+!                            time step
+!                     ** permanant bus
+!                           variables on this bus keep constant values throughout model integration
+!                           steps unless you change those at
+!                           any model time step
+!                     ** volatile bus
+!                           variables stay throughout model time steps, but their values change
+!                           every time step e.g.
+!                     ** Entry bus
+!                          variables on this bus are very short lived e.g. only model step 0.
+!                          Hence these variables can be inputted/outputted at step 0.
+!
+! Arguments:
+!            IN
+!               busdyn_size  -> Dimension of busdyn
+!               busvol_size  -> Dimension of busvol
+!               busdyn        -> Dynamic bus for physics
+!               busvol        -> Volatile bus for physics
+!
+!               p2d            -> Pressure (Pa) on thermodynamic levels
+!               metvar3d(i, k, MV3D_TPLUS)         ->  Temperature (K)
+!               metvar3d(i, k, MV3D_SIGM)          ->  Local sigma values on momentum levels
+!               metvar2d(i, MV2D_PPLUS)            ->  Surface Pressure
+!               rho            -> 3-D air density array (kg/m^3)
+!               step         -> Flag for first chem. step in current
+
+!
+!           IN/OUT
+!               busvol        -> Volatile bus for chemistry
+!               lino3_new     -> Updated Stratospheric Linoz ozone at all levels (ug/kg)
+!
+!================================================================================================
+!!if_on
+subroutine mach_gas_strato(busdyn     , busvol     , &
+                           busdyn_size, busvol_size, &
+                           metvar3d, metvar2d                   , &
+                           rho, step, lino3_new ) 
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_metvar_mod    , only: SIZE_MV2D,SIZE_MV3D
+!!if_off
+   use chm_utils_mod
+   use chm_consphychm_mod
+   use chm_nml_mod,            only: chm_diag_colum_l, chm_step_factor 
+   use mach_gas_chemicbi_mod
+   use chm_species_info_mod
+   use chm_species_idx_mod
+   use chm_phyvar_mod
+   use chm_datime_mod
+   use chm_metvar_mod        , only: MV2D_MT, MV3D_ZPLUS, MV3D_TPLUS, MV3D_SIGM, MV2D_PPLUS, MV2D_DLAT, MV2D_DLON
+   use mach_linoz_headers_mod, only: mach_linoz_interp, mach_strato_tend, &
+                                     mach_linoz_xcol  , mach_strato_xcol
+   use linoz_mod 
+
+   implicit none
+!
+!  Declaration of subroutine arguments
+!
+!!if_on
+   integer(kind=4), intent(in)    :: step
+   integer(kind=4), intent(in)    :: busdyn_size
+   integer(kind=4), intent(in)    :: busvol_size
+   real   (kind=4), intent(in)    :: busdyn   (busdyn_size)
+   real   (kind=4), intent(inout) :: busvol   (busvol_size)
+   real   (kind=4), intent(in)    :: metvar2d (chm_ni,         SIZE_MV2D)
+   real   (kind=4), intent(in)    :: metvar3d (chm_ni, chm_nk, SIZE_MV3D)
+   real   (kind=4), intent(in)    :: rho      (chm_ni, chm_nk)  !kg/m3
+   real   (kind=4), intent(out)   :: lino3_new(chm_ni ,chm_nk)  !ug /kg
+!!if_off
+!
+!  Declaration of local variables.
+!
+   logical(kind=4) :: local_dbg
+   integer(kind=4) :: imonth
+   integer(kind=4) :: ierr, part1, part2
+   integer(kind=4) :: i, k, this_ik
+   real   (kind=4) :: ylat, xlon, psurf, p_bot, p_top, o3_over, o3c_over 
+   real   (kind=4) :: ttemp, o3_vmr, o3c_vmr, o3_vmr_new, o3_vmr_tend
+   real   (kind=4) :: o3, o3_tend, o3_new
+   real   (kind=4) :: o3min
+   real   (kind=8) :: date_incr
+   real   (kind=4) :: z_chm(chm_ni,chm_nk)
+   real   (kind=4) :: coeff14(chm_ni,chm_nk,jpcoeff)
+
+   external qqexit
+
+!
+!  Declare external functions
+!
+   real       :: jjulien
+   external   :: jjulien
+
+   integer    :: newdate
+   external   :: newdate
+!
+!  Minimum ozone mmr
+   o3min = 1.0E-6        !ug /kg
+!
+   local_dbg = (.false. .or. global_debug)
+
+   ! Debug LINOZ stratospheric ozone
+!  if (step <= 1 ) local_dbg = (.true.) 
+
+   if(local_dbg) then
+      write (chm_lun_out, *) 'ENTER mach_gas_strato'
+   end if
+
+!   call tmg_start0 ( 65, 'mach_gas_strato')
+
+! ----------------------------------------------------------------------
+!  Interpolate linoz coefficients (time,lat,lev) on the model grid
+! ----------------------------------------------------------------------
+   if(local_dbg) then
+      write (chm_lun_out, *) 'in mach_gas_strato'
+      write (chm_lun_out, *) 'chm_ni, chm_nk ', chm_ni, chm_nk
+   end if
+
+!   Calculate month of year 
+!
+! 'mach_main' calculates 'current_date'
+   date_incr = dble(chm_timestep * step) / ( secondsin1hour * dble(chm_step_factor) )
+   call incdatr(current_date, chm_dttim, date_incr)
+!
+   ierr=newdate(current_date,part1,part2,-3)
+   if(local_dbg) then
+      write(chm_lun_out, *) 'mach_gas_strato: date = ',part1, ' and time = ',part2
+   endif
+   if (ierr == 0) then
+      imonth = mod(part1/100,100)
+   else 
+      write(chm_lun_out,*) 'mach_gas_strato: error in newdate converting date for LINOZ coefficients'
+      call qqexit(1)
+   endif
+
+   if ( imonth < 1 .or. imonth > 12) then
+      write(chm_lun_out,*) 'mach_gas_strato: Invalid month=', imonth, ' for interpolation of LINOZ coefficients'
+      call qqexit(1)
+   end if
+
+
+   do i = 1, chm_ni
+      do k = 1, chm_nk
+
+         ! Height in meters ASL 
+         z_chm(i, k) = metvar3d(i, k, MV3D_ZPLUS) + &
+              max (0.0, (metvar2d(i, MV2D_MT)))
+
+      end do
+   end do
+
+! --------------------
+!  Loop on longitudes
+! -------------------
+   do i = 1, chm_ni
+
+
+          ylat = metvar2d(i, MV2D_DLAT)*180./pi      ! degrees
+          if(local_dbg) then 
+               psurf= metvar2d(i, MV2D_PPLUS)    
+               xlon = metvar2d(i, MV2D_DLON)*180./pi      ! degrees
+               write (chm_lun_out, *) 'ylat, xlon, psurf MF MT=', i, ylat, xlon, psurf, &
+               metvar2d(i, MV2D_MT)
+          endif
+
+         ! Interpolate linoz coefficients onto model grid
+         ! Use 'z_chm' in meters ASL
+         call mach_linoz_interp (z_chm, coeff14, ylat, imonth, i)
+
+         o3_over = 0.
+         o3c_over = 0.
+         o3_new = 0.
+
+! ----------------------------
+! Loop on all vertical levels 
+! ----------------------------
+
+      do k = 1, chm_nk   !1=TOA chm_nk=SFC
+          
+         this_ik  = ik(i, k, chm_ni)
+
+
+         ttemp = metvar3d(i, k, MV3D_TPLUS)         ! Temperature (K) on thermodynamic levels
+
+         p_top = metvar3d(i, k  , MV3D_SIGM) * metvar2d(i, MV2D_PPLUS)    ! Pressure(Pa)  on momentum levels k-1
+         if (k == chm_nk) then
+            p_bot = metvar2d(i, MV2D_PPLUS)    ! Pressure(Pa)  on momentum levels k
+         else
+            p_bot = metvar3d(i, k+1, MV3D_SIGM) * metvar2d(i, MV2D_PPLUS)    ! Pressure(Pa)  on momentum levels k-1
+         endif
+
+
+! Unit conversion ug/kg -> mole/mole (vmr) (T-1)
+!
+         o3c_vmr = coeff14(i,k,1)                                   !mole/mole (vmr)
+
+         o3     = busdyn(sm(sp_O3) % dyn_offset + this_ik)       !ug /kg
+         o3_vmr = o3 * mwt_air/(sm(sp_O3) % mol_wt)*1.E-9                      !mole/mole vmr
+
+         if (local_dbg .and. step <=  1 .and. i == 33) write(chm_lun_out,*) &
+                 'mach_gas_strato: p_top, p_bot (33) =', step, k,           &
+                  p_top, p_bot
+
+!     Compute column ozone from climatology  : o3c_over (DU)
+
+         call mach_linoz_xcol(o3c_vmr, p_bot, p_top, o3c_over)
+         coeff14(i,k,3) = o3c_over
+
+!     Compute column ozone from Linoz tracer : o3_over  (DU)
+!
+         call mach_linoz_xcol(o3_vmr, p_bot, p_top, o3_over)
+
+
+!     Calculate linoz ozone o3_new (ug / kg)
+         call mach_strato_tend ( &
+                        o3            ,ttemp         ,o3_over       , &
+                        coeff14(i,k,1),coeff14(i,k,2),o3c_over      , &
+                        coeff14(i,k,4),coeff14(i,k,5),coeff14(i,k,6), &
+                        coeff14(i,k,7), o3_new )
+
+!     Apply ozone tendency (ug / kg) & (mole/mole)
+         o3_new = amax1 (o3_new, o3min)                               !ug /kg
+
+!     Updated ozone
+         lino3_new (i,k) = o3_new                                  !ug /kg
+
+     IF_DIAG: if(chm_diag_colum_l) then
+
+!     Linoz Ozone tendency (mole/mole/sec)
+             o3_vmr_new = o3_new * mwt_air/(sm(sp_O3) % mol_wt)*1.E-9                 !mole/mole
+             o3_vmr_tend = (o3_vmr_new - o3_vmr) / chm_timestep         !mole/mole/sec
+             !--
+             o3_tend =  (o3_new - o3) / chm_timestep                    !ug /kg /sec
+
+!             if(local_dbg .and i == 33) write(chm_lun_out,*) &
+!                 'o3_vmr, o3_vmr_new, o3_vmr_tend (33) =', k, &
+!                  o3_vmr, o3_vmr_new, o3_vmr_tend
+
+!     LIN1: Ozone vmr Climatology LINOZ 
+             ! busvol(sm(sp_lin1)% vol_offset + this_ik) = o3c_vmr        !mol/mol 
+
+!     LIN2: Ozone vmr Prognostic LINOZ 
+             busvol(sm(sp_lin2)% vol_offset + this_ik) = o3_vmr_new     !mol/mol
+
+!     LIN3: Column Ozone (DU) Climatology LINOZ       -> o3c_over
+             busvol(sm(sp_lin3)% vol_offset + this_ik) = o3c_over       !(DU)
+
+!     LIN4: Column Ozone (DU) Prognostic LINOZ       ->  o3_over
+             busvol(sm(sp_lin4)% vol_offset + this_ik) = o3_over        !(DU)
+
+!     YO3: Column Ozone (DU) Prognostic LINOZ
+             busvol(sm(sp_col_o3) % vol_offset + this_ik) = o3_over
+
+!     3DB1: Column Ozone (DU) Prognostic LINOZ
+      !ATTENTION: conditional use of dbg_3d arrays 
+             if( sm(dbg_3d(1))% vol_name /=  UNASSIGNED ) &
+             busvol(sm(dbg_3d(1)) % vol_offset + this_ik) = o3_over       !(DU)
+
+!     LIN5: Ozone tendency (mole/mole/sec) Prognostic LINOZ 
+
+             ! busvol(sm(sp_lin5)% vol_offset + this_ik) = o3_tend        ! ug/kg/sec
+             !
+             ! busvol(sm(sp_lin5)% vol_offset + this_ik) = o3_vmr_tend       ! mol/mol/sec
+             !
+             ! busvol(sm(sp_lin5)% vol_offset + this_ik) =                  &
+             !         o3_vmr_tend * rho(i,k)*1.E+3 *avno / mwt_air * 1.E-6   ! molecule/cm3/sec <--
+
+!     LIN5: Temporary output z_chm in meters ASL
+             ! busvol(sm(sp_lin5)% vol_offset + this_ik) =  z_chm(i,k)        ! meters ASL
+             ! busvol(sm(sp_lin5)% vol_offset + this_ik) = &
+             !                         metvar3d(i, k, MV3D_ZPLUS)
+             ! 
+             ! if ( k == 1)  busvol(sm(sp_lin5)% vol_offset + this_ik) = &
+             !                   metvar2d(i, MV2D_MT)
+
+!     LIN6: Air density (in kg /m3)
+             ! busvol(sm(sp_lin6)% vol_offset + this_ik) = rho(i,k)              ! kg /m3
+
+!     LIN7: Vertical velocity (m /sec)
+             ! busvol(sm(sp_lin7)% vol_offset + this_ik) = metvar3d(i, k, MV3D_WPLUS)  ! m /sec
+             ! busvol(sm(sp_lin7)% vol_offset + this_ik) = busdyn(wplus     + this_ik)   ! m /sec
+
+
+     endif IF_DIAG
+! -------------------------------
+! End loop on all vertical levels
+! -------------------------------
+      end do  !1=TOA chm_nk=SFC
+
+! ----------------------
+! End loop on longitudes
+! ----------------------
+   end do
+
+   if (local_dbg) then
+      write (chm_lun_out, *) 'EXIT mach_gas_strato'
+   endif
+
+return
+end subroutine mach_gas_strato

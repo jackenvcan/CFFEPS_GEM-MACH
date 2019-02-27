@@ -1,0 +1,122 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+module mach_pkg_misc_mod
+   use chm_nml_mod,          only: chm_get_be_emis_l
+   use chm_utils_mod,        only: pre_increment
+   use chm_species_idx_mod
+   use chm_species_info_mod, only: species_master
+
+   save
+
+   contains
+!============================================================================
+! Name           : pkg_misc_idxinit
+!
+! Description    : Initialize the indices of miscelaneous fields.  Starts with
+!                  the index passed as a dummy argument.
+!
+! Arguments:  IN/OUT
+!                idx  -> index to start from
+!============================================================================
+      integer function pkg_misc_idxinit(idx)
+         implicit none
+
+         integer(kind=4), intent(inout) :: idx ! the index from where to start
+
+         integer(kind=4) start_index, nb_fields
+
+         start_index = idx
+
+         sp_SESN     = pre_increment(idx)
+         sp_LU15     = pre_increment(idx)
+         sp_LAI      = pre_increment(idx)
+         sp_KTN      = pre_increment(idx)
+         sp_AQ25     = pre_increment(idx)
+         sp_AQ10     = pre_increment(idx)
+         sp_density  = pre_increment(idx)
+         sp_pressure = pre_increment(idx)
+         sp_tend_o3  = pre_increment(idx)
+         sp_FMET     = pre_increment(idx)
+
+         nb_fields = idx - start_index
+         pkg_misc_idxinit = nb_fields
+
+      end function pkg_misc_idxinit
+
+!============================================================================
+! Name           : pkg_misc_metainit
+!
+! Description    : Initialize the meta information for each species
+!
+! Arguments:  None
+!============================================================================
+      subroutine pkg_misc_metainit()
+         implicit none
+
+         species_master(sp_SESN) % per_name   =  "SESN"
+         species_master(sp_SESN) % per_lname  =  "DV_SEASONS"
+         species_master(sp_SESN) % per_string =  "VN=DV_SEASONS; ON=SESN; VD=Seasonal categories for dry dep; VS=row;VB=p0"
+
+         species_master(sp_LU15) % per_name   =  "LU15"
+         species_master(sp_LU15) % per_lname  =  "land_use_15"
+         species_master(sp_LU15) % per_string =  "VN=land_use_15; ON=LU15; VD=15 category land use for dry dep; VS=ROW*15;VB=p0"
+         species_master(sp_LU15) % ra_name    =  "LURA"
+         species_master(sp_LU15) % ra_lname   =  "AERO_RESIST"
+         species_master(sp_LU15) % ra_string  =  "VN=AREO_RESIST; ON=LURA; VD=aerodynamic resistance (s/m); VS=ROW*15;VB=v0"
+
+         if ( chm_get_be_emis_l ) then
+            species_master(sp_LAI) % per_name    =  "LAIK"
+            species_master(sp_LAI) % per_lname   =  "LAI_per_std"
+            species_master(sp_LAI) % per_string  =  "VN=LAI_per_std; ON=LAIK; VD=Leaf Area index for BEIS3; VS=ROW;VB=p1"
+         endif
+
+         species_master(sp_KTN) % vol_name    =  "KTN"
+         species_master(sp_KTN) % vol_lname   =  "KTN_vol_std"
+         species_master(sp_KTN) % vol_string  =  "VN=KTN_vol_std; ON=KTN; VD=KT new for vert diff; VS=SLC;VB=v0"
+
+         species_master(sp_AQ25) % out_name    =  "AQ25"
+         species_master(sp_AQ25) % out_lname   =  "AQ25_vol_std"
+         species_master(sp_AQ25) % out_string  =  "VN=AQ25_vol_std; ON=AQ25; VD= Air Quality index 2.5 ; VS=SLC;VB=v0"
+
+         species_master(sp_AQ10) % out_name    =  "AQ10"
+         species_master(sp_AQ10) % out_lname   =  "AQ10_vol_std"
+         species_master(sp_AQ10) % out_string  =  "VN=AQ10_vol_std; ON=AQ10; VD= Air Quality index 10.0; VS=SLC;VB=v0"
+
+         species_master(sp_pressure) % vol_name    =  "PRES"
+         species_master(sp_pressure) % vol_lname   =  "sp_pressure"
+         species_master(sp_pressure) % vol_string  =  "VN=pressure; ON=PRES; VD=air pressure; VS=SLC;VB=v0"
+
+         species_master(sp_density) % vol_name    =  "RHO"
+         species_master(sp_density) % vol_lname   =  "sp_density"
+         species_master(sp_density) % vol_string  =  "VN=c_density; ON=RHO; VD=chem air density; VS=SLC;VB=v0"
+
+         species_master(sp_tend_o3) % vol_name    =  "TGO3"
+         species_master(sp_tend_o3) % vol_lname   =  "phytd_to3"
+         species_master(sp_tend_o3) % vol_string  =  "VN=phytd_to3; ON=TGO3; VD=OZONE TENDENCY GAS-PHASE (ug /kg/ sec) ; VS=SLC;VB=v0"
+
+         species_master(sp_FMET) % vol_name    =  "FMET"
+         species_master(sp_FMET) % vol_lname   =  "FMET_vol_std"
+         species_master(sp_FMET) % vol_string  =  "VN=FMET_vol_std; ON=FMET; VD=Modulation factor for fugitive dust emissions; VS=ROW;VB=v0"
+
+      end subroutine pkg_misc_metainit
+
+end module mach_pkg_misc_mod
+

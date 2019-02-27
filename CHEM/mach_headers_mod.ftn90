@@ -1,0 +1,310 @@
+!begin trap head
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_headers_mod.ftn90
+! Creation       : H. Landry, S. Menard, Mai 2008
+! Description    : Modules defining explicit interfaces for mach subroutines
+!
+! Extra info     :
+!
+!============================================================================
+
+module mach_headers_mod
+   interface
+!end trap head
+
+subroutine mach_biog_emissions(par, pardb, pardif, cosine_solar_p,                                             &
+                                    summer_no_std_p, summer_isop_std_p, summer_mono_std_p, summer_voc_std_p,   &
+                                    winter_no_std_p, winter_isop_std_p, winter_mono_std_p, winter_voc_std_p,   &
+                                    lai_p, seasons , metvar3d         ,                                        &
+                                    EMISSBIO_NO_P  , EMISSBIO_VOC_P   , EMISSBIO_ISOP_P  , EMISSBIO_MONO_P     )
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_metvar_mod,     only: SIZE_MV3D, MV3D_TPLUS
+   real(kind=4), intent (in) :: par              (chm_ni)      !--|    photosynthetically 
+   real(kind=4), intent (in) :: pardb            (chm_ni)      !  |--> active radiation
+   real(kind=4), intent (in) :: pardif           (chm_ni)      !--|    direct beam, diffuse
+   real(kind=4), intent (in) :: cosine_solar_p   (chm_ni)      ! cosine of solar angle
+   real(kind=4), intent (in) :: summer_no_std_p  (chm_ni)      !--|
+   real(kind=4), intent (in) :: summer_isop_std_p(chm_ni)      !  |
+   real(kind=4), intent (in) :: summer_mono_std_p(chm_ni)      !  |
+   real(kind=4), intent (in) :: summer_voc_std_p (chm_ni)      !  |
+   real(kind=4), intent (in) :: winter_no_std_p  (chm_ni)      !  |--> Standard emission (without correction)
+   real(kind=4), intent (in) :: winter_isop_std_p(chm_ni)      !  |
+   real(kind=4), intent (in) :: winter_mono_std_p(chm_ni)      !  |
+   real(kind=4), intent (in) :: winter_voc_std_p (chm_ni)      !--|
+   real(kind=4), intent (in) :: lai_p            (chm_ni)      ! Leaf area index
+   real(kind=4), intent (in) :: seasons          (chm_ni)      ! seasons field (5 seasons defined)
+   real(kind=4), intent (in) :: metvar3d         (chm_ni,chm_nk,SIZE_MV3D) ! Met. vars
+!     * emissions values before being influenced by biogenics emissions and beis3 correction
+   real(kind=4), intent(out) :: emissbio_no_p    (chm_ni)      ! NO emissions
+   real(kind=4), intent(out) :: emissbio_voc_p   (chm_ni)      ! VOC emissions
+   real(kind=4), intent(out) :: emissbio_isop_p  (chm_ni)      ! Isopropene emissions
+   real(kind=4), intent(out) :: emissbio_mono_p  (chm_ni)      ! Monoterpene emissions 
+end subroutine mach_biog_emissions
+
+subroutine mach_biog_main(busper,busper_size, metvar2d, metvar3d )
+   use chm_metvar_mod,       only: SIZE_MV2D, SIZE_MV3D
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   integer(kind=4), intent   (in) :: busper_size
+   real(kind=4),    intent(inout) :: busper  (busper_size)
+   real(kind=4),    intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+end subroutine mach_biog_main
+
+subroutine mach_biog_parcalc(cosine_solar_p, PAR, PARDB, PARDIF, metvar2d)
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_metvar_mod,     only: SIZE_MV2D
+   real(kind=4), intent (in) :: cosine_solar_p(chm_ni)           ! cosine of solar angle
+   real(kind=4), intent(out) :: par           (chm_ni)           !! 
+   real(kind=4), intent(out) :: pardb         (chm_ni)           !! PAR, PAR direct beam, PAR diffuse
+   real(kind=4), intent(out) :: pardif        (chm_ni)           !!
+   real(kind=4), intent (in) :: metvar2d      (chm_ni,SIZE_MV2D) ! Met. variables
+end subroutine mach_biog_parcalc
+
+subroutine mach_calc_diag (busdyn,busvol,busper,busdyn_size,busvol_size,busper_size,step,slab_index)
+   integer(kind=4), intent(in)    :: step, slab_index
+   integer(kind=4), intent(in)    :: busdyn_size, busvol_size, busper_size
+   real   (kind=4), intent(inout) :: busdyn(busdyn_size)
+   real   (kind=4), intent(inout) :: busvol(busvol_size)
+   real   (kind=4), intent(inout) :: busper(busper_size)
+end subroutine mach_calc_diag
+
+subroutine mach_calc_season(busper, busper_size, iday, metvar2d)
+   use chm_ptopo_grid_mod,   only: chm_ni
+   use chm_metvar_mod,       only: SIZE_MV2D
+   integer(kind=4), intent   (in) :: iday
+   integer(kind=4), intent   (in) :: busper_size
+   real(kind=4),    intent(inout) :: busper  (busper_size)
+   real(kind=4),    intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+end subroutine mach_calc_season
+
+subroutine mach_diffusion(busdyn     , busper     , busvol     , &
+                          busdyn_size, busvol_size, busper_size, &
+                          diffused_species, nsp_diff, nb_bins  , &
+                          metvar2d, metvar3d                     )
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   use chm_metvar_mod,       only: SIZE_MV2D, SIZE_MV3D
+   integer(kind=4), intent   (in) :: busdyn_size
+   integer(kind=4), intent   (in) :: busper_size
+   integer(kind=4), intent   (in) :: busvol_size
+   real(kind=4),    intent(inout) :: busdyn          (busdyn_size)
+   real(kind=4),    intent(inout) :: busper          (busper_size)
+   real(kind=4),    intent(inout) :: busvol          (busvol_size)
+   integer(kind=4), intent   (in) :: nb_bins
+   integer(kind=4), intent   (in) :: nsp_diff
+   integer(kind=4), intent   (in) :: diffused_species(nsp_diff)
+   real(kind=4),    intent   (in) :: metvar2d        (chm_ni,SIZE_MV2D)
+   real(kind=4),    intent   (in) :: metvar3d        (chm_ni,chm_nk,SIZE_MV3D)
+end subroutine mach_diffusion
+
+subroutine mach_diff_boundary(CONC, emissions, vd, ubf, kt, rho, ni_net, n_diff, zf, zh, metvar2d )
+   use chm_utils_mod,      only: chm_timestep, chm_lun_out, global_debug
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_metvar_mod,     only: SIZE_MV2D
+   integer(kind=4), intent   (in) :: n_diff
+   integer(kind=4), intent   (in) :: ni_net
+   real(kind=4),    intent(inout) :: conc     (ni_net,chm_nk)
+   real(kind=4),    intent   (in) :: emissions(ni_net)
+   real(kind=4),    intent   (in) :: vd       (ni_net)
+   real(kind=4),    intent   (in) :: ubf      (ni_net)
+   real(kind=4),    intent   (in) :: kt       (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: rho      (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: zf       (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: zh       (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: metvar2d (chm_ni,SIZE_MV2D)
+end subroutine mach_diff_boundary
+
+subroutine mach_diff_flux(CONC, emissions, vd, ubf, kt, rho, ni_net, n_diff, zf, zh, metvar2d)
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_metvar_mod,     only: SIZE_MV2D
+   integer(kind=4), intent   (in) :: n_diff
+   integer(kind=4), intent   (in) :: ni_net
+   real(kind=4),    intent(inout) :: conc     (ni_net,chm_nk)
+   real(kind=4),    intent   (in) :: emissions(ni_net)
+   real(kind=4),    intent   (in) :: vd       (ni_net)
+   real(kind=4),    intent   (in) :: ubf      (ni_net)
+   real(kind=4),    intent   (in) :: kt       (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: rho      (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: zf       (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: zh       (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: metvar2d (chm_ni,SIZE_MV2D)
+end subroutine mach_diff_flux
+
+subroutine mach_diff_rpnphy (CONC, emissions, vd, ubf, kt, ni_net, n_diff, metvar2d, metvar3d )
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_metvar_mod,     only: SIZE_MV2D, SIZE_MV3D
+   integer(kind=4), intent   (in) :: ni_net
+   integer(kind=4), intent   (in) :: n_diff
+   real(kind=4),    intent(inout) :: conc(ni_net,chm_nk)
+   real(kind=4),    intent   (in) :: emissions(ni_net)
+   real(kind=4),    intent   (in) :: vd(ni_net)
+   real(kind=4),    intent   (in) :: ubf(ni_net)
+   real(kind=4),    intent   (in) :: kt(chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+end subroutine mach_diff_rpnphy
+
+subroutine mach_fugitive_dust (busvol, busvol_size, metvar2d )
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   use chm_metvar_mod,       only: SIZE_MV2D
+   integer(kind=4), intent   (in) :: busvol_size
+   real(kind=4),    intent(inout) :: busvol  (busvol_size)
+   real(kind=4),    intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+end subroutine mach_fugitive_dust
+
+subroutine mach_input_check(busvol, busvol_size, metvar2d, metvar3d)
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   use chm_metvar_mod,       only: SIZE_MV2D, SIZE_MV3D
+   integer(kind=4), intent   (in) :: busvol_size
+   real(kind=4),    intent(inout) :: busvol  (busvol_size)
+   real(kind=4),    intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+end subroutine mach_input_check
+
+subroutine mach_landuse (busper, busper_size, metvar_vegf)
+   use chm_ptopo_grid_mod,    only: chm_ni
+  integer(kind=4), intent   (in) :: busper_size
+  real(kind=4),    intent(inout) :: busper(busper_size)
+  real(kind=4),    intent   (in) :: metvar_vegf(chm_ni,26)
+end subroutine mach_landuse
+
+subroutine mach_main(busdyn     , busper     , busvol     ,           &
+                     busdyn_size, busper_size, busvol_size,           &
+                     metvar2d, metvar3d, metvar_vegf, metvar_glacier, &
+                     slab_index, step)
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_metvar_mod,     only: SIZE_MV2D, SIZE_MV3D
+   integer(kind=4), intent   (in) :: slab_index
+   integer(kind=4), intent   (in) :: step
+   integer(kind=4), intent   (in) :: busvol_size
+   integer(kind=4), intent   (in) :: busper_size
+   integer(kind=4), intent   (in) :: busdyn_size
+   real(kind=4),    intent(inout) :: busdyn        (busdyn_size)
+   real(kind=4),    intent(inout) :: busper        (busper_size)
+   real(kind=4),    intent(inout) :: busvol        (busvol_size)
+   real(kind=4),    intent   (in) :: metvar2d      (chm_ni,SIZE_MV2D)
+   real(kind=4),    intent   (in) :: metvar3d      (chm_ni,chm_nk,SIZE_MV3D)
+   real(kind=4),    intent   (in) :: metvar_vegf   (chm_ni,26)
+   real(kind=4),    intent   (in) :: metvar_glacier(chm_ni,2)
+end subroutine mach_main
+
+subroutine mach_output(busdyn     , busper     , busvol,      &
+                       busdyn_size, busper_size, busvol_size, &
+                       metvar2d, step                               )
+                       
+   use chm_ptopo_grid_mod,   only: chm_ni
+   use chm_metvar_mod,       only: SIZE_MV2D
+   integer(kind=4), intent   (in) :: busvol_size
+   integer(kind=4), intent   (in) :: busper_size
+   integer(kind=4), intent   (in) :: busdyn_size
+   real(kind=4),    intent   (in) :: busdyn(busdyn_size)
+   real(kind=4),    intent(inout) :: busper(busper_size)
+   real(kind=4),    intent(inout) :: busvol(busvol_size)
+   real(kind=4),    intent   (in) :: metvar2d(chm_ni, SIZE_MV2D)
+   integer, intent(in) :: step
+end subroutine mach_output
+
+subroutine mach_plumerise (busdyn     , busvol     , &
+                           busdyn_size, busvol_size, &
+                           metvar2d   , metvar3d   , slab_index   )
+   use chm_metvar_mod,          only: SIZE_MV2D, SIZE_MV3D
+   use chm_ptopo_grid_mod,      only: chm_ni, chm_nk
+   integer(kind=4), intent   (in) :: busdyn_size
+   integer(kind=4), intent   (in) :: busvol_size
+   integer(kind=4), intent   (in) :: slab_index
+   real(kind=4),    intent(inout) :: busdyn  (busdyn_size)
+   real(kind=4),    intent(inout) :: busvol  (busvol_size)
+   real(kind=4),    intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+end subroutine mach_plumerise
+
+subroutine mach_plumerise_apply(FCONC, emiss_rate, weight, rho, metvar2d, stack_i)
+   use chm_metvar_mod,     only: SIZE_MV2D 
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+              integer(kind=4), intent(in) :: stack_i
+              real(kind=4), intent   (in) :: emiss_rate
+              real(kind=4), intent(inout) :: fconc   (chm_ni,chm_nk)
+              real(kind=4), intent   (in) :: weight  (chm_nk)
+              real(kind=4), intent   (in) :: rho     (chm_ni,chm_nk)
+              real(kind=4), intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+end subroutine mach_plumerise_apply
+
+subroutine mach_plumerise_weight (cur_source, z_magl , index_above_boundlayer_height, &
+                                  safe_inv_mo_length, WEIGHT,                         &
+                                  metvar2d  , metvar3d                                 )
+   use chm_ptopo_grid_mod,      only: chm_ni, chm_nk
+   use chm_metvar_mod,          only: SIZE_MV2D, SIZE_MV3D
+   integer(kind=4), intent (in) :: cur_source
+   real(kind=4),    intent (in) :: z_magl (chm_ni,chm_nk)
+   real(kind=4),    intent(out) :: weight  (chm_nk)
+   real(kind=4),    intent (in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+   integer(kind=4), intent (in) :: index_above_boundlayer_height(chm_ni)
+   real(kind=4),    intent (in) :: safe_inv_mo_length          (chm_ni)
+end subroutine mach_plumerise_weight
+
+subroutine mach_plumerise_weight4fire(cur_source, z_magl, index_above_boundlayer_height, &
+                                      safe_inv_mo_length, WEIGHT, metvar2d, rho)
+   use chm_ptopo_grid_mod,      only: chm_ni, chm_nk
+   use chm_metvar_mod,          only: SIZE_MV2D
+   integer(kind=4), intent (in) :: cur_source
+   real(kind=4),    intent (in) :: z_magl (chm_ni,chm_nk)
+   integer(kind=4), intent (in) :: index_above_boundlayer_height(chm_ni)
+   real(kind=4),    intent (in) :: safe_inv_mo_length           (chm_ni)
+   real(kind=4),    intent(out) :: weight  (chm_nk)
+   real(kind=4),    intent (in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent (in) :: rho(chm_ni,chm_nk)
+end subroutine mach_plumerise_weight4fire
+
+subroutine mach_pressure(busvol, busvol_size, metvar2d, metvar3d)
+   use chm_metvar_mod,       only: SIZE_MV2D, SIZE_MV3D
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   integer(kind=4), intent   (in) :: busvol_size
+   real(kind=4),    intent(inout) :: busvol  (busvol_size)
+   real(kind=4),    intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+end subroutine mach_pressure
+
+subroutine mach_tridiag (a, b, c, r, bet, gam, u, ni_net)
+   use chm_ptopo_grid_mod, only: chm_nk
+   integer(kind=4), intent   (in) :: ni_net
+   real(kind=4),    intent   (in) :: a  (ni_net,chm_nk)
+   real(kind=4),    intent   (in) :: b  (ni_net,chm_nk)
+   real(kind=4),    intent   (in) :: c  (ni_net,chm_nk)
+   real(kind=4),    intent   (in) :: r  (ni_net,chm_nk)
+   real(kind=4),    intent  (out) :: bet(ni_net)
+   real(kind=4),    intent  (out) :: gam(ni_net,chm_nk)
+   real(kind=4),    intent(inout) :: u  (ni_net,chm_nk)
+end subroutine mach_tridiag
+
+end interface
+end module mach_headers_mod

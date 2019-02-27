@@ -1,0 +1,341 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_output.ftn90
+! Creation       : S. Menard  ,  GEM-MACH, April 2008.
+! Description    : 1) Units conversion for gases          (ug/kg) --> (ppb)
+!                  2) Units conversion for speciated PM   (ug/kg) --> (ug/m3)
+!                  3) Compute PM2.5 (AF) and PM10 (AC)    (ug/m3)
+!                  4) Compute AQHI25 and AQHI10           (no unit)
+!                  5) Compute dry deposition for NOy
+!                  6) Add density to diagnostic level
+!
+! Extra info     : AQHI formulations
+! -----------
+!                  aqhi(pm2.5) = 10/10.4 * ( 100 * (exp(0.000871 * no2) - 1 + exp(0.000537 * o3) - 1 +
+!                              exp(0.000487 * pm2.5) - 1) )
+!                  aqhi(pm10)  = 10/11.7 * ( 100 * (exp(0.000871 * no2) - 1 + exp(0.000537 * o3) - 1 +
+!                              exp(0.000297 * pm10)   -1) )
+! Arguments:
+!            IN
+!
+!               busdyn     -> Chemistry dynamic bus
+!
+!            OUT
+!               busvol     -> Chemistry volatile bus
+!
+!==============================================================================================
+!
+!!if_on
+subroutine mach_output(busdyn     , busper     , busvol,      &
+                       busdyn_size, busper_size, busvol_size, &
+                       metvar2d, step                          )
+                       
+   use chm_ptopo_grid_mod,   only: chm_ni
+   use chm_metvar_mod,       only: SIZE_MV2D
+!!if_off
+   use chm_ptopo_grid_mod,   only: chm_nk
+   use chm_metvar_mod,       only: MV2D_PPLUS,MV2D_TDIAG,MV2D_QDIAG
+   use chm_utils_mod,        only: ik, chm_lun_out, global_debug
+   use chm_consphychm_mod,   only: mwt_air,rgasd,delta
+   use chm_nml_mod,          only: aerosize, chm_aqhi_l, chm_pkg_pm_s, chm_diag_drydep_l
+   use chm_species_info_mod, only: sm, unassigned, print_species_info
+   use chm_species_idx_mod
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: busvol_size
+   integer(kind=4), intent   (in) :: busper_size
+   integer(kind=4), intent   (in) :: busdyn_size
+   real(kind=4),    intent   (in) :: busdyn(busdyn_size)
+   real(kind=4),    intent(inout) :: busper(busper_size)
+   real(kind=4),    intent(inout) :: busvol(busvol_size)
+   real(kind=4),    intent   (in) :: metvar2d(chm_ni, SIZE_MV2D)
+   integer, intent(in) :: step
+!!if_off
+!
+!  Local variables.
+!
+   integer(kind=4)            :: i, k , ibin, sp_index, nb_bins, score_count
+   integer(kind=4), parameter :: nsp_out_list_AF_AC = 7
+   integer(kind=4)            :: list_out_AF_AC(nsp_out_list_AF_AC)
+   integer(kind=4), parameter :: nsp_out_gas = 4
+   integer(kind=4)            :: list_out_gas(nsp_out_gas)
+   integer(kind=4), parameter :: nsp_out_pm  = 8
+   integer(kind=4)            :: list_out_pm(nsp_out_pm)
+   integer(kind=4), parameter :: nsp_out_list_NOy = 6
+   integer(kind=4)            :: list_out_NOy(nsp_out_list_NOy)
+   logical(kind=4)            :: local_dbg
+   real(kind=4),    parameter :: maxradius_pm25 = 1.280, maxradius_pm10 = 5.120, N_mwt = 14.
+   real(kind=4)               :: dryflx(chm_ni)
+   real(kind=4)               :: factor
+
+   external qqexit
+
+   local_dbg = (.false. .or. global_debug)
+
+   if(local_dbg) then
+      write (chm_lun_out, *) 'Entering mach_output'
+   end if
+
+!  Gas species list for units conversion
+   list_out_gas(1:nsp_out_gas)    = (/ sp_O3, sp_NO, sp_NO2, sp_SO2 /)
+!  PM species list for units conversion
+   list_out_pm (1:nsp_out_pm)     = (/ sp_OC, sp_PC, sp_SU, sp_CM, sp_EC, sp_SS, sp_NI, sp_AM /)
+!  PM species to be used to compute AF and AC
+   list_out_AF_AC(1:nsp_out_list_AF_AC)  = (/ sp_OC, sp_PC, sp_SU, sp_CM, sp_EC, sp_NI, sp_AM/)
+!  NO species to be used to compute NOy
+   list_out_NOy(1:nsp_out_list_NOy) = (/ sp_NO, sp_NO2, sp_HNO3, sp_PAN, sp_HONO, sp_RNO3/)
+
+   busvol(sm(sp_NOy)% out_offset:sm(sp_NOy)% out_offset + sm(sp_NOy)% out_size - 1) = 0.0
+
+! Testing if everything that should be declared really is
+
+   do sp_index = 1, nsp_out_gas
+      if (sm(list_out_gas(sp_index)) % out_name == UNASSIGNED) then
+         write(0, *) '### Error in mach_output ###'
+         write(0, *) '# No bus memory allocation made for this species: '
+         call print_species_info(list_out_pm(sp_index), 0)
+         write(0, *) '###         ABORT         ###'
+         call qqexit(1)
+      end if
+   end do
+
+! 1) Units conversion for gases     (ug/kg) --> (ppb)
+! =======================================================================================================
+!NOy 
+   do sp_index = 1, nsp_out_list_NOy
+      factor = mwt_air / (sm(list_out_NOy(sp_index)) % mol_wt)
+      do k = 1, chm_nk
+         do i = 1, chm_ni
+            busvol(sm(sp_NOy) % out_offset + ik(i, k, chm_ni)) =                                     &
+                       busvol(sm(sp_NOy) % out_offset + ik(i, k, chm_ni))   +                        &
+                      (busdyn(sm(list_out_NOy(sp_index)) % dyn_offset + ik(i, k, chm_ni))) * factor
+         end do
+      end do
+   end do
+!  Diagnostic level
+     busvol(sm(sp_NOy) % out_offset + chm_nk * chm_ni:                                               &
+                                          sm(sp_NOy) % out_offset + ik(chm_ni, chm_nk+1 , chm_ni)) = &
+               busvol(sm(sp_NOy) % out_offset + (chm_nk-1) * chm_ni:                                 &
+                                          sm(sp_NOy) % out_offset + ik(chm_ni, chm_nk, chm_ni))
+! =======================================================================================================
+ do sp_index = 1, nsp_out_gas
+      do k = 1, chm_nk
+         do i = 1, chm_ni
+            busvol(sm(list_out_gas(sp_index)) % out_offset + ik(i, k, chm_ni)) =                     &
+           (busdyn(sm(list_out_gas(sp_index)) % dyn_offset + ik(i, k, chm_ni))) * mwt_air /          &
+           (sm(list_out_gas(sp_index)) % mol_wt)
+!  Diagnostic level          
+            if (k == chm_nk) then
+               busvol(sm(list_out_gas(sp_index)) % out_offset + ik(i, k + 1, chm_ni)) =              &
+               busvol(sm(list_out_gas(sp_index)) % out_offset + ik(i, k    , chm_ni))
+           endif 
+         end do
+      end do
+   end do
+
+  if (chm_pkg_pm_s == 'CAM2BINS' .or. chm_pkg_pm_s == 'CAM12BINS') then
+      nb_bins = sm(list_out_pm(1)) % nb_bins
+      busvol(sm(sp_AF) % out_offset:sm(sp_AF) % out_offset + sm(sp_AF) % out_size - 1) = 0.0
+      busvol(sm(sp_AC) % out_offset:sm(sp_AC) % out_offset + sm(sp_AC) % out_size - 1) = 0.0
+
+      if(local_dbg) then
+         write (chm_lun_out, *) 'Validating memory allocation'
+         write (chm_lun_out, *) 'nb_bins = ', nb_bins
+         write (chm_lun_out, *) 'nsp_out_pm = ', nsp_out_pm
+      end if
+      do sp_index = 1, nsp_out_pm
+         do ibin = 1, nb_bins
+            if (sm(list_out_pm(sp_index)) % bins_array(ibin) % out_name == UNASSIGNED) then
+               write(0, *) '### Error in mach_output ###'
+               write(0, *) '# No bus memory allocation made for this species: '
+               call print_species_info(list_out_pm(sp_index), 0)
+               write(0, *) '# for the bin # ', ibin
+               write(0, *) '###         ABORT         ###'
+               call qqexit(1)
+            end if
+         end do
+      end do
+
+! 2) Units conversion for particles (ug/kg) --> (ug/m3)
+! =======================================================================================================
+      do sp_index = 1, nsp_out_pm
+         do k = 1, chm_nk
+            do i = 1, chm_ni
+               do ibin = 1, nb_bins
+                  busvol(sm(list_out_pm(sp_index)) % bins_array (ibin) % out_offset + ik(i, k, chm_ni))  =        &
+                 (busdyn(sm(list_out_pm(sp_index)) % bins_array (ibin) % dyn_offset + ik(i, k, chm_ni))) *        &
+                  busvol(sm(sp_density) % vol_offset + ik(i, k, chm_ni))
+!  Diagnostic level          
+                  if (k == chm_nk) then
+                     busvol(sm(list_out_pm(sp_index)) % bins_array (ibin) % out_offset + ik(i, k + 1, chm_ni)) =  &
+                     busvol(sm(list_out_pm(sp_index)) % bins_array (ibin) % out_offset + ik(i, k    , chm_ni))   
+                  endif 
+               end do
+            end do
+         end do
+      end do
+
+! 3) Compute PM2.5 (AF) and PM10 (AC)
+! =======================================================================================================
+!  a) AF = PM2.5
+!  b) AC = PM10.0
+
+      do sp_index = 1, nsp_out_list_AF_AC
+         do k = 1, chm_nk
+            do i = 1, chm_ni
+               do ibin = 1, nb_bins
+
+
+! aerosize = 0.005, 0.010, 0.020, 0.040, 0.080, 0.160, 0.320, 0.640, 1.280, 2.560, 5.120, 10.240, 20.480
+! aerosize = 0.005, 1.280, 5.12
+!  a) PM2.5 (AF)
+                  if (aerosize(ibin + 1) <= maxradius_pm25)   then
+                     ! PM2.5 (AF)
+                     busvol(sm(sp_AF) % out_offset + ik(i, k, chm_ni)) =                                             &
+                        busvol(sm(sp_AF) % out_offset + ik(i, k, chm_ni)) +                                          &
+                        (busdyn(sm(list_out_AF_AC(sp_index)) % bins_array (ibin) % dyn_offset + ik(i, k, chm_ni))) * &
+                        busvol(sm(sp_density) % vol_offset + ik(i, k, chm_ni))
+!  Diagnostic level      
+                     if (k == chm_nk) then
+                        busvol(sm(sp_AF) % out_offset + ik(i, k + 1, chm_ni)) =                                      &
+                        busvol(sm(sp_AF) % out_offset + ik(i, k    , chm_ni)) 
+                     endif
+
+                  else if ((aerosize(ibin + 1) > maxradius_pm25) .and. (aerosize(ibin + 1) <= maxradius_pm10)) then
+                     !  This is PM10 -PM2.5 (AC - AF)
+                     busvol(sm(sp_AC) % out_offset + ik(i, k, chm_ni)) =                                             &
+                        busvol(sm(sp_AC) % out_offset + ik(i, k, chm_ni)) +                                          &
+                        (busdyn(sm(list_out_AF_AC(sp_index)) % bins_array (ibin) % dyn_offset + ik(i, k, chm_ni))) * &
+                        busvol(sm(sp_density) % vol_offset + ik(i, k, chm_ni))
+!  Diagnostic level  
+                     if (k == chm_nk) then
+                     !  This is PM10 -PM2.5 (AC - AF)
+                     busvol(sm(sp_AC) % out_offset + ik(i, k + 1, chm_ni)) =                                         &
+                     busvol(sm(sp_AC) % out_offset + ik(i, k    , chm_ni)) 
+                     endif 
+                  else
+                     cycle
+                  end if
+               end do
+            end do
+         end do
+      end do
+!  b) PM10  (AC)
+      busvol(sm(sp_AC) % out_offset : (sm(sp_AC) % out_offset + sm(sp_AC) % out_size - 1)) =                     &
+         busvol(sm(sp_AC) % out_offset : (sm(sp_AC) % out_offset + sm(sp_AC) % out_size - 1)) +                  &
+         busvol(sm(sp_AF) % out_offset : (sm(sp_AF) % out_offset + sm(sp_AF) % out_size - 1))
+
+! 4) Calculation of AQHI25 and AQHI10
+! =======================================================================================================
+!    We must first ensure that NO2, O3, AC and AF has been converted to the proper unit (ug/m3 for PM, ppb for gases)
+
+      if (chm_aqhi_l) then
+         score_count = 0
+         do sp_index = 1, nsp_out_gas
+            if (list_out_gas(sp_index) == sp_O3) then
+               score_count = score_count + 1
+            else if (list_out_gas(sp_index) == sp_NO2) then
+               score_count = score_count + 1
+            end if
+         end do
+         if (score_count < 2) then
+            write(0, *) '### Error in mach_output ###'
+            write(0, *) '# Before computing AQHI, O3 and NO2 units must be converted to ppb'
+            write(0, *) '# At least one is missing '
+            write(0, *) '###         ABORT         ###'
+            call qqexit(1)
+         end if
+         do k = 1, chm_nk
+            do i = 1, chm_ni
+               busvol(sm(sp_AQ25) % out_offset + ik(i, k, chm_ni)) = (10. / 10.4) * ( 100. * (exp(0.000871 *             &
+                                                                  busvol(sm((sp_NO2)) % out_offset + ik(i, k, chm_ni)))  &
+                                                                  - 1. + exp(0.000537 *                                  &
+                                                                  busvol(sm((sp_O3)) % out_offset + ik(i, k, chm_ni)))   &
+                                                                  - 1. + exp(0.000487 *                                  &
+                                                                  busvol(sm(sp_AF) % out_offset + ik(i, k, chm_ni))) -1.))
+
+               busvol(sm(sp_AQ10) % out_offset + ik(i, k, chm_ni)) = (10. / 11.7) * ( 100. * (exp(0.000871 *             &
+                                                                  busvol(sm((sp_NO2)) % out_offset + ik(i, k, chm_ni)))  &
+                                                                  - 1. + exp(0.000537 *                                  &
+                                                                  busvol(sm((sp_O3)) % out_offset + ik(i, k, chm_ni)))   &
+                                                                  - 1. + exp(0.000297 *                                  &
+                                                                  busvol(sm(sp_AC) % out_offset + ik(i, k, chm_ni))) -1.))
+!  Diagnostic level  
+               if (k == chm_nk) then
+                   busvol(sm(sp_AQ25) % out_offset + ik(i, k + 1, chm_ni)) =  busvol(sm(sp_AQ25) % out_offset + ik(i, k, chm_ni))
+                   busvol(sm(sp_AQ10) % out_offset + ik(i, k + 1, chm_ni)) =  busvol(sm(sp_AQ10) % out_offset + ik(i, k, chm_ni))
+
+               endif 
+            end do
+         end do
+      end if
+   end if
+! 5) Calculation of dry deposition of NOy
+! =======================================================================================================
+   
+   if (chm_diag_drydep_l) then
+      if(local_dbg) then
+         write (chm_lun_out, *) 'chm_diag_drydep_l = ', chm_diag_drydep_l
+      end if
+      if ( sm(sp_NOy) % dd_name /=  UNASSIGNED) then
+         if(local_dbg) then
+            write (chm_lun_out, *) 'sp_NOy = ', sp_NOy
+         end if   
+         dryflx = 0.
+         k = 0
+         do sp_index = 1, nsp_out_list_NOy
+            if (sm(list_out_NOy(sp_index)) % dd_name ==  UNASSIGNED) exit
+            factor = N_mwt / (sm(list_out_NOy(sp_index)) % mol_wt)
+            dryflx(:) = dryflx(:) + factor *                                                              &
+                        busper(sm(list_out_NOy(sp_index)) % dd_offset : sm(list_out_NOy(sp_index)) % dd_offset + chm_ni - 1)
+            k = k+1
+         end do
+         if ( k == nsp_out_list_NOy ) then 
+            busper(sm(sp_NOy) % dd_offset : sm(sp_NOy) % dd_offset + chm_ni - 1) = dryflx(:) +            &
+                                       busper(sm(sp_NOy) % dd_offset : sm(sp_NOy) % dd_offset + chm_ni - 1)
+         endif
+      endif
+   endif
+! 6) Diagnostic level for density
+! ==========================================================================================================
+
+   do i = 1, chm_ni
+      busvol(sm(sp_density) % vol_offset  + ik(i, chm_nk + 1, chm_ni)) = metvar2d(i,MV2D_PPLUS) / &
+                              (rgasd * metvar2d(i,MV2D_TDIAG) * (1.0 + delta * metvar2d(i,MV2D_QDIAG)))
+   end do
+
+   if(local_dbg) then
+      write (chm_lun_out, *) 'Exiting mach_output'
+   end if
+
+   return
+end

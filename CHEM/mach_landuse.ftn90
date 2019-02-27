@@ -1,0 +1,152 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_landuse.ftn90
+! Creation       : S. Menard, A. Kallaur  - August 2007
+! Description    : Convert into 15 landuse categories the original 26 landuse of GEM.
+!                  This is required to do the dry deposition of chemical species.
+!
+! Extra info     : 1) This mapping is also used in the GRAHM model (Ref: D. Davignon, L.P. Crevier / S. Menard)
+!                  2) A bug was found in the mapping and a correction was made in Feb 2012 by A. Robichaud. (see Mantis 2125)
+!                  3) Mantis 2680
+!
+!                  26 landuse (original GEM)    --> 15 landuse (GEM-MACH dry deposition)
+!                  =====================================================================
+!                  1   water                        14  Ocean
+!                  2   ice                          12  Ice caps and glaciers
+!                  3   inland lake                  13  Inland water
+!                  4   evergreen neddleleaf trees    1  Evergreen needleleaf forest
+!                  5   evergreen broadleaf trees     2  Evergreen broadleaf forest
+!                  6   deciduous neddleleaf trees    2  Evergreen broadleaf forest
+!                  7   deciduous broadleaf trees     3  Deciduous needleleaf forest
+!                  8   tropical broadleaf trees      4  Deciduous broadleaf forest
+!                  9   drought deciduous trees       4  Deciduous broadleaf forest
+!                  10  evergreen broadleaf shrub    10  Dwarf trees, shrubs with ground cover (tundra)
+!                  11  deciduous shrubs             10  Dwarf trees, shrubs with ground cover (tundra)
+!                  12  thorn shrubs                 10  Dwarf trees, shrubs with ground cover (tundra)
+!                  13  short grass and forbs        10  Dwarf trees, shrubs with ground cover (tundra)
+!                  14  long grass                    6  Grassland
+!                  15  crops                         7  Crops, mixed farming
+!                  16  rice                          7  Crops, mixed farming
+!                  17  sugar                         7  Crops, mixed farming
+!                  18  maize                         7  Crops, mixed farming
+!                  19  cotton                        7  Crops, mixed farming
+!                  20  irrigated crops               7  Crops, mixed farming
+!                  21  urban                        15  Urban
+!                  22  tundra                        9  Tundra
+!                  23  swamp                        11  Wet land with plants
+!                  24  desert                        8  Desert
+!                  25  mixed wood forests            5  Mixed forest
+!                  26  mixed shrubs                 10  Dwarf trees, shrubs with ground cover (tundra)
+!
+! Arguments:
+!            IN
+!
+!            OUT
+!              landuse_out  --> 15 landuse for dry deposition
+!
+!==============================================================================
+!
+!!if_on
+subroutine mach_landuse (busper, busper_size, metvar_vegf)
+   use chm_ptopo_grid_mod,    only: chm_ni
+!!if_off
+   use chm_utils_mod,         only: chm_lun_out, global_debug, ik
+   use mach_gas_chemicbi_mod, only: lucprm
+   use chm_species_info_mod,  only: sm
+   use chm_species_idx_mod,   only: sp_LU15
+  implicit none
+!!if_on
+  integer(kind=4), intent   (in) :: busper_size
+  real(kind=4),    intent(inout) :: busper(busper_size)
+  real(kind=4),    intent   (in) :: metvar_vegf(chm_ni,26)
+!!if_off
+!
+! Local variables
+!
+    real(kind=4), dimension(chm_ni, lucprm) :: landuse_out
+    real(kind=4), dimension(chm_ni)         :: sum
+    real(kind=4), parameter                 :: tolerance = 0.01
+    integer(kind=4)                         :: i, j
+    logical(kind=4)                         :: local_dbg
+
+    external qqexit
+
+   local_dbg = (.false. .or. global_debug)
+
+   if(local_dbg) then
+      write (chm_lun_out, *) 'Remapping of 26 landuse types to 15 landuse categories'
+   end if
+
+   do i = 1, chm_ni
+      landuse_out(i,  1) = metvar_vegf(i,  4)
+      landuse_out(i,  2) = metvar_vegf(i,  5) + metvar_vegf(i,  8)
+      landuse_out(i,  3) = metvar_vegf(i,  6)
+      landuse_out(i,  4) = metvar_vegf(i,  7) + metvar_vegf(i,  9)
+      landuse_out(i,  5) = metvar_vegf(i, 25)
+      landuse_out(i,  6) = metvar_vegf(i, 14)
+      landuse_out(i,  7) = metvar_vegf(i, 15) + metvar_vegf(i, 16) + metvar_vegf(i, 17) + metvar_vegf(i, 18) + metvar_vegf(i, 19) + metvar_vegf(i, 20)
+      landuse_out(i,  8) = metvar_vegf(i, 24)
+      landuse_out(i,  9) = metvar_vegf(i, 22)
+      landuse_out(i, 10) = metvar_vegf(i, 10) + metvar_vegf(i, 11) + metvar_vegf(i, 12) + metvar_vegf(i, 13) + metvar_vegf(i, 26)
+      landuse_out(i, 11) = metvar_vegf(i, 23)
+      landuse_out(i, 12) = metvar_vegf(i,  2)
+      landuse_out(i, 13) = metvar_vegf(i,  3)
+      landuse_out(i, 14) = metvar_vegf(i,  1)
+      landuse_out(i, 15) = metvar_vegf(i, 21)
+   end do
+
+! Look if the summation of the 15 landuse_out types equal 1.
+   sum = 0.0
+   do j = 1, lucprm
+      do i = 1, chm_ni
+         sum(i) = sum(i) + landuse_out(i, j)
+      end do
+   end do
+   if(local_dbg) then
+      write (chm_lun_out, *) 'Land use sum', sum
+   end if
+
+   do i = 1, chm_ni
+      if ( abs(1.0 - sum(i)) > tolerance ) then
+         write(0, *) '### Error in mach_landuse ###'
+         write(0, *) '# Summation of vegetation fractions over all landuse is not equal to 1: sum(', i, ') = ', sum(i)
+         write(0, *) '###         ABORT         ###'
+         call qqexit(1)
+      end if
+      do j = 1, lucprm
+         busper(sm(sp_LU15) % per_offset + ik(i, j, chm_ni)) = landuse_out(i, j)
+      end do
+   end do
+
+   return
+
+end subroutine mach_landuse

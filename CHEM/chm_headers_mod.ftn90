@@ -1,0 +1,196 @@
+!begin trap head
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : chm_headers_mod.ftn90
+! Creation       : H. Landry, Mai 2008
+! Description    : Modules defining explicit interfaces for chm s/r
+!
+! Extra info     :
+!
+!============================================================================
+!
+module chm_headers_mod
+
+interface
+!end trap head
+
+subroutine chm_businit(F_ni, F_nk)
+   integer(kind=4), intent(in) ::  F_ni, F_nk
+end subroutine chm_businit
+
+ subroutine chm_chk_met_dgb(busvol,busvol_size, metvar2d, metvar3d)
+  use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+  use chm_metvar_mod
+  integer(kind=4), intent   (in) :: busvol_size
+  real(kind=4),    intent(inout) :: busvol  (busvol_size)
+  real(kind=4),    intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+  real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+end subroutine chm_chk_met_dgb
+
+ subroutine chm_chk_mjpt_dbg(busvol,busvol_size,slab_index,busdyn,busdyn_size)
+  integer(kind=4), intent   (in)  :: busvol_size,busdyn_size,slab_index
+  real(kind=4),    intent(inout)  :: busvol(busvol_size)
+  real(kind=4),    intent(inout)  :: busdyn(busdyn_size)
+end subroutine chm_chk_mjpt_dbg
+
+ subroutine chm_chk_pm_dbg(busvol,busvol_size,slab_index,busdyn,busdyn_size)
+  use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+  integer(kind=4), intent    (in) :: busdyn_size
+  integer(kind=4), intent    (in) :: busvol_size
+  integer(kind=4), intent    (in) :: slab_index
+  real(kind=4),    intent (inout) :: busvol(busvol_size)
+  real(kind=4),    intent (inout) :: busdyn(busdyn_size)
+end subroutine chm_chk_pm_dbg
+
+ subroutine chm_chk_tendencies(busvol,busvol_size)
+  integer(kind=4), intent   (in) :: busvol_size
+  real(kind=4),    intent(inout) :: busvol(busvol_size)
+end subroutine chm_chk_tendencies
+
+subroutine chm_dupl_tracr_lev(busdyn, busdyn_size, ni, nk, nsorc, ndest, slab_index)
+ integer(kind=4),  intent   (in) :: busdyn_size
+ integer(kind=4),  intent   (in) :: ni, nk, nsorc, ndest, slab_index
+ real(kind=4),     intent(inout) :: busdyn(busdyn_size)
+end subroutine chm_dupl_tracr_lev
+
+subroutine chm_exe(busent         , busdyn        , busper        , busvol        , &
+                   busent_size    , busdyn_size   , busper_size   , busvol_size   , &
+                   timestep       , slab_index    , step          , ithread       , &
+                   ni             , nk                                              )
+   integer(kind=4), intent   (in) :: nk, ni
+   integer(kind=4), intent   (in) :: busvol_size, busper_size, busdyn_size, busent_size
+   integer(kind=4), intent   (in) :: slab_index, step, ithread
+   real(kind=4),    intent   (in) :: timestep
+   real(kind=4),    intent(inout) :: busent(busent_size), busdyn(busdyn_size)
+   real(kind=4),    intent(inout) :: busper(busper_size), busvol(busvol_size)
+end subroutine chm_exe
+
+subroutine chm_fst_closefile(file_unit)
+   integer(kind=4), intent(in) :: file_unit
+end subroutine chm_fst_closefile
+
+subroutine chm_fst_openfile(FILE_UNIT, file_name, file_type, options, istatus)
+   integer(kind=4), intent(inout) :: file_unit
+   integer(kind=4), intent  (out) :: istatus
+   character(*),    intent   (in) :: file_name
+   character(*),    intent   (in) :: file_type
+   character(*),    intent   (in) :: options
+end subroutine chm_fst_openfile
+
+subroutine chm_geopot(metvar3d,metvar2d)
+  use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+  use chm_metvar_mod, only: SIZE_MV2D,SIZE_MV3D
+  real(kind=4), intent(in)     :: metvar2d(chm_ni,SIZE_MV2D)
+  real(kind=4), intent(inout)  :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+end subroutine chm_geopot
+
+subroutine chm_getphybus_struct( )
+end subroutine chm_getphybus_struct
+
+subroutine chm_gz_int(GZ,tv,sigt,ni,nk)
+  integer(kind=4) :: ni,nk
+  real(kind=4), intent(out) :: gz(ni,nk)
+  real(kind=4), intent(in) :: tv(ni,nk), sigt(ni,nk)
+end subroutine chm_gz_int
+
+subroutine chm_load_emissions (F_basedir_S, gem_datimeo, i_gem_dt, F_phy_lcl_ni, F_phydim_ni, gem_tstep_num)
+   character(len=*)            :: F_basedir_S  !- base path for input data file
+   integer(kind=4), intent(in) :: i_gem_dt, F_phy_lcl_ni, F_phydim_ni
+   integer(kind=4), intent(in) :: gem_datimeo
+   integer(kind=4), intent(in) :: gem_tstep_num
+end subroutine chm_load_emissions
+
+subroutine chm_load_metvar(busdyn, busdyn_size, busper, busper_size, busvol, busvol_size, &
+                           metvar2d, metvar3d, metvar_vegf, metvar_glacier)
+  use chm_metvar_mod
+  use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+ integer(kind=4), intent (in) :: busvol_size, busper_size, busdyn_size
+ real(kind=4),    intent (in) :: busdyn        (busdyn_size)
+ real(kind=4),    intent (in) :: busper        (busper_size)
+ real(kind=4),    intent (in) :: busvol        (busvol_size)
+ real(kind=4),    intent(out) :: metvar2d      (chm_ni,SIZE_MV2D)
+ real(kind=4),    intent(out) :: metvar3d      (chm_ni,chm_nk,SIZE_MV3D)
+ real(kind=4),    intent(out) :: metvar_vegf   (chm_ni,26)
+ real(kind=4),    intent(out) :: metvar_glacier(chm_ni,2)
+end subroutine chm_load_metvar
+
+subroutine chm_mjrpts_get_emissions(file_unit,Fstack_emis,nb_sources,nb_em_species,mj_names,datev,err)
+   integer(kind=4),   intent (in) :: file_unit, nb_sources,nb_em_species,datev
+   integer(kind=4),   intent(out) :: err
+   character(len=4),  intent (in) :: mj_names(nb_em_species)
+   real(kind=4),      intent(out) :: Fstack_emis(nb_sources,nb_em_species)
+end subroutine chm_mjrpts_get_emissions
+
+subroutine chm_mjrpts_get_plmriseinfo(file_unit, rsmk, zplm, numsrcs, datev, istatus)
+   integer(kind=4), intent (in) :: numsrcs
+   integer(kind=4), intent (in) :: file_unit
+   integer(kind=4), intent (in) :: datev
+   real(kind=4),    intent(out) :: rsmk(numsrcs)
+   real(kind=4),    intent(out) :: zplm(numsrcs)
+   integer(kind=4), intent(out) :: istatus
+end subroutine chm_mjrpts_get_plmriseinfo
+
+subroutine chm_mjrpts_get_size(file_unit, numsrcs,istatus)
+   integer(kind=4), intent (in) :: file_unit
+   integer(kind=4), intent(out) :: numsrcs
+   integer(kind=4), intent(out) :: istatus
+end subroutine chm_mjrpts_get_size
+
+subroutine chm_mjrpts_get_stkinfo(file_unit, lat, lon, hgt, dia, tem, vel, typ, numsrcs, istatus)
+   integer(kind=4), intent (in) :: numsrcs
+   integer(kind=4), intent (in) :: file_unit
+   real(kind=4),    intent(out) :: lat(numsrcs)
+   real(kind=4),    intent(out) :: lon(numsrcs)
+   real(kind=4),    intent(out) :: hgt(numsrcs)
+   real(kind=4),    intent(out) :: dia(numsrcs)
+   real(kind=4),    intent(out) :: tem(numsrcs)
+   real(kind=4),    intent(out) :: vel(numsrcs)
+   real(kind=4),    intent(out) :: typ(numsrcs)
+   integer(kind=4), intent(out) :: istatus
+end subroutine chm_mjrpts_get_stkinfo
+
+subroutine chm_plumerise_prep_emiss (lstack_emis, mj_names, nb_mj )
+   integer(kind=4),         intent(in) :: nb_mj
+   real(kind=4),   pointer, intent(in) :: lstack_emis(:,:)
+   character(len=4),        intent(in) :: mj_names(nb_mj)
+end subroutine chm_plumerise_prep_emiss
+
+logical function chm_pkg_fields_init()
+end function chm_pkg_fields_init
+
+   integer function chm_nml (F_namelist, lun_out)
+   character(len=*), intent(in) :: F_namelist
+   integer(kind=4),  intent(in) :: lun_out
+end function chm_nml
+
+end interface
+end module chm_headers_mod

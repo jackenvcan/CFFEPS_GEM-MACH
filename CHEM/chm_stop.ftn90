@@ -1,0 +1,61 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : chm_stop.ftn90
+! Creation       : A. Kallaur, H.landry, May 2007
+! Description    : Premature stop in chemistry and clean exit in a MPI world.
+!
+! Extra info     : Similar to gem_stop on the GEM side.
+!                  It should not use chm_lun_out, since chm_stop can be called
+!                  when chm_lun_out is not set yet.
+!
+! Arguments:
+!              IN
+!                 F_name_S --> Name of the calling routine
+!                 F_err    --> Error code
+!
+!===========================================================================
+!
+!!if_on
+subroutine chm_stop (F_name_S, F_err)
+!!if_off
+   use chm_utils_mod
+   implicit none
+!!if_on
+   character(len=*),   intent(in) :: F_name_S
+   integer,            intent(in) :: F_err
+!!if_off
+   external                       :: handle_error
+
+   call handle_error (F_err,'ABORT IN CHEMISTRY',F_name_S)
+
+   return
+end subroutine chm_stop

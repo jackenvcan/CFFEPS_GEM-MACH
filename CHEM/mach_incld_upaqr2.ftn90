@@ -1,0 +1,239 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_incld_upaqr2.ftn90
+! Creation       : W. Gong. S. Menard, S. Gravel, B. Pabla, GEM-MACH, June 2008
+! Description    : This is a vectorized version of the ADOM stratus
+!                  aqueous phase chemistry solver.
+!                  Compute reaction rates. Modified from UPAQR.f
+!                  for computing the reaction rates that are a function
+!                  of concentrations (H+ and MNFE), i.e. the oxidation
+!                  reactions (19 - 22).
+!
+! Extra info     : ADOM  VERSION: ADOMIIB(CLEAN)  LEVEL: 06/09/89  STEADY  ENSR(AES)
+!
+! Arguments  IN
+!             b        --> Aqueous variable coefficients
+!             q1       --> cloudwater conc (g-w/m3 air)
+!             q2       --> Ice/Snow conc (g-w/m3 air)
+!             rad1     --> CW droplet radii   (m)
+!             t        --> Temperature (K)
+!             ti       --> Inverse temperature (1/K)
+!             rtw      --> TEMP*RGAS/WDEN
+!             gaz_conc --> Gas/Part species conc (ppm)
+!             nptsnz   --> Total number of grids to integrate
+!             nleft    --> Grids Integration start from nleft in memory
+!             nright   --> Grids Integration end at nright into memory
+!             n2       --> Memory adress of CW+ snow grids
+!             n3       --> Memory adress of CW grids only
+!
+!            OUT
+!              R       --> Rate constants for aqueous-phase
+!
+!            INOUT
+!              AQ      --> Aqueous sp. conc(molar) in cloud water & Ice/Snow
+!              PGSCAV  --> Gas/part scavenging (or diffusion)
+!
+!=============================================================================
+!
+!!if_on
+subroutine mach_incld_upaqr2(AQ, PGSCAV, q1, q2, rad1, t, ti, rtw, R, b, gaz_conc, nleft, nright, nptsnz, n2, n3)
+   use mach_cam_utils_mod, only: maxnsg, maxnsaq
+!!if_off
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: nptsnz
+   integer(kind=4), intent   (in) :: nleft
+   integer(kind=4), intent   (in) :: nright
+   integer(kind=4), intent   (in) :: n2
+   integer(kind=4), intent   (in) :: n3
+   real(kind=4),    intent(inout) :: aq      (nptsnz,maxnsaq)
+   real(kind=4),    intent(inout) :: pgscav  (nptsnz,maxnsg,2)
+   real(kind=4),    intent   (in) :: q1      (nptsnz)
+   real(kind=4),    intent   (in) :: q2      (nptsnz)
+   real(kind=4),    intent   (in) :: rad1    (nptsnz)
+   real(kind=4),    intent   (in) :: t       (nptsnz)
+   real(kind=4),    intent   (in) :: ti      (nptsnz)
+   real(kind=4),    intent   (in) :: rtw     (nptsnz)
+   real(kind=4),    intent  (out) :: r       (nptsnz,25,2)
+   real(kind=4),    intent   (in) :: b       (nptsnz,5,2)
+   real(kind=4),    intent   (in) :: gaz_conc(nptsnz,maxnsg)
+!!if_off
+!
+!  local variables
+!
+   integer(kind=4)                    :: ivec, k, i, nleftk1, nrightk1, nleftk2, nrightk2
+   integer(kind=4)                    :: nraq = 25
+   real(kind=4)                       :: stik = 1.0e-3, gask = 8.314e3, mfpl = 1.0e-07
+   real(kind=4)                       :: tsqi, rndrop, bb, arg, aa, aaa
+   real(kind=4), dimension(nptsnz, 2) :: lrt
+   real(kind=4), dimension(nptsnz)    :: h2a, h2b, h4, h6, h8, h10, h12a, h12b, h15a, h15b, h17
+   real(kind=4), dimension(maxnsg)    :: mwt = (/64.0, 34.0, 62.0, 98.0, 115.0, 132.0, 63.0, 17.0, 80.0, 100.0, 48.0, 44.0/)
+
+!                 SPECIES LIST
+!       AQUEOUS                    GAS/PART.
+!       -
+!       1.  HSO3                   1.  SO2G
+!       2.  H202                   2.  HPXG
+!       3.  ROOH                   3.  RPXG
+!       4.  SO4=                   4.  H2SO4 = SO4P1
+!       5.  NO3-                   5.  NH4HSO4 = SO4P2
+!       6.  NH4+                   6.  (NH4)2SO4 = SO4P3
+!       7.  CAT1                   7.  HNO3G
+!       8.  HCO3-                  8.  NH3G
+!       9.  H+                     9.  NH4NO3 = NNO3P
+!      10.  OH-                   10.  DUST
+!      11.  FEMN                  11.  O3G
+!      12.  O3                    12.  CO2G (CONSTANT)
+!      13.  H2OA (CONSTANT)
+!
+!                  REACTION LIST
+!                  -
+!
+!  1.     1.SO4P1          -->    B1*SO4= +   B3*H+
+!  2.     1.SO2G           -->    B1*HSO3 +   B1*H+
+!  3.     1.HSO3 +  1.H+   -->    B2*SO2G
+!  4.     1.O3G            -->    B1*O3
+!  5.     1.O3             -->    B2*O3G
+!  6.     1.HPXG           -->    B1*H2O2
+!  7.     1.H2O2           -->    B2*HPXG
+!  8.     1.HNO3           -->    B1*NO3- +   B1*H+
+!  9.     1.NO3- +  1.H+   -->    B2*HNO3
+! 10.     1.RPXG           -->    B1*ROOH
+! 11.     1.ROOH           -->    B2*RPXG
+! 12.     1.NH3G           -->    B1*NH4+ +   B1*OH-
+! 13.     1.NH4+ +  1.OH-  -->    B2*NH3G
+! 14.     1.DUST           -->    B5*FEMN +   B4*HCO3 + B4*CAT1+
+! 15.     1.CO2G           -->    B1*HCO3 +   B1*H+
+! 16.     1.HCO3 +  1.H+   -->    B2*CO2G
+! 17.     1.H+   +  1.OH-  -->   1.00H2OA
+! 18.     1.H2OA           -->   1.00H+   +  1.00OH-
+! 19.     1.HSO3 +  1.O3   -->   1.00SO4= +  1.00H+
+! 20.     1.HSO3 +  1.H2O2 -->   1.00SO4= +  1.00H+
+! 21.     1.HSO3 +  1.ROOH -->   1.00SO4= +  1.00H+
+! 22.     1.HSO3    (FEMN) -->   1.00SO4= +  1.00H+
+! 23.     1.SO4P2          -->    B1*SO4= +   B1*H+ + B1*NH4+
+! 24.     1.SO4P3          -->    B1*SO4= + B3*NH4+
+! 25.     1.NNO3P          -->    B1*NO3- + B1*NH4+
+
+!  In this subroutine nleft=n2 and nright=nptsnz
+!
+!  compute lrt's
+   do ivec = nleft, nright
+      lrt(ivec, 1) = q1(ivec) * rtw(ivec)
+      lrt(ivec, 2) = q2(ivec) * rtw(ivec)
+   end do
+
+!  initialize rates
+   do k = 1, 2
+      do i = 1, nraq
+         do ivec = nleft, nright
+            r(ivec, i, k) = 0.0
+         end do
+      end do
+   end do
+!  evaluate necessary henry's law coefficients
+   do ivec = nleft, nright
+      tsqi = ti(ivec) * ti(ivec)
+      h2a(ivec) = 10.0 ** (-10.65 + 1410.0 * ti(ivec))
+      h2b(ivec) = 10.0 ** (-4.84 + 870.0 * ti(ivec))
+      h4(ivec) = 10.0 ** (-11.16 + 1040.0 * ti(ivec))
+      h6(ivec) = 10.0 ** (-11.15 + 2990.0 * ti(ivec))
+      h8(ivec) = 10.0 ** (-12.17 + 3780.0 * ti(ivec))
+      h10(ivec) = exp(5607 * ti(ivec) - 13.41) * 1.0e-6
+      h12a(ivec) = 10.0 ** (-9.50 + 1600.0 * ti(ivec))
+      h12b(ivec) = 10.0 ** (-13.914 + 2730.0 * ti(ivec))
+      h15a(ivec) = 10.0 ** (-10.66 + 760.0 * ti(ivec) + 58000.0 * tsqi)
+      h15b(ivec) = 10.0 ** (-14.25 + 5190.0 * ti(ivec) - 850000.0 * tsqi)
+      h17(ivec) = 10.0 ** (-3.83 - 3030.0 * ti(ivec))
+   end do
+
+!  compute forward mass transfer
+!  rates for gases to cloudwater
+   do ivec = nleft, nright
+!  number of cloudwater drops/m**3 air
+      rndrop = 2.387324146e-7 * q1(ivec) / (rad1(ivec) * rad1(ivec) * rad1(ivec))
+      bb = (0.7 + (1.333333333 * (1.0 - stik) / stik)) * mfpl / rad1(ivec) + 1.0
+      arg = 21171.42715 * t(ivec)
+      aa = 4.188790204 * mfpl * sqrt(arg)
+      aaa = rndrop * aa * rad1(ivec) / bb
+      pgscav(ivec, 1, 1) = aaa / sqrt(mwt(1))
+      pgscav(ivec, 2, 1) = aaa / sqrt(mwt(2))
+      pgscav(ivec, 3, 1) = aaa / sqrt(mwt(3))
+      pgscav(ivec, 7, 1) = aaa / sqrt(mwt(7))
+      pgscav(ivec, 8, 1) = aaa / sqrt(mwt(8))
+      pgscav(ivec, 11, 1) = aaa / sqrt(mwt(11))
+      pgscav(ivec, 12, 1) = aaa / sqrt(mwt(12))
+   end do
+
+!  in the vector code, k=1 and k=2 are done separately.
+!  section with k=1 for q1>0
+
+   nleftk1 = n2
+   nrightk1 = nptsnz
+!  k = 1
+   do ivec = nleftk1, nrightk1
+      r(ivec, 2, 1) = pgscav(ivec, 1, 1)
+      r(ivec, 3, 1) = r(ivec, 2, 1) / (h2a(ivec) * h2b(ivec) * lrt(ivec, 1))
+!  limit forward rate for ozone to reduce round-off error
+      r(ivec, 4, 1) = min(pgscav(ivec, 11, 1), 1.0e-8)
+      r(ivec, 5, 1) = r(ivec, 4, 1) / (h4(ivec) * lrt(ivec, 1))
+!  set ozone concentration to equilibrium value
+      aq(ivec, 12) = b(ivec, 1, 1) * r(ivec, 4, 1) * gaz_conc(ivec, 11) / r(ivec, 5, 1)
+      r(ivec, 6, 1) = pgscav(ivec, 2, 1)
+      r(ivec, 7, 1) = r(ivec, 6, 1) / (h6(ivec) * lrt(ivec, 1))
+      r(ivec, 8, 1) = pgscav(ivec, 7, 1)
+      r(ivec, 9, 1) = r(ivec, 8, 1) / (h8(ivec) * lrt(ivec, 1))
+      r(ivec, 10, 1) = pgscav(ivec, 3, 1)
+      r(ivec, 11, 1) = r(ivec, 10, 1) / (h10(ivec) * lrt(ivec, 1))
+      r(ivec, 12, 1) = pgscav(ivec, 8, 1)
+      r(ivec, 13, 1) = r(ivec, 12, 1) / (h12a(ivec) * h12b(ivec) * lrt(ivec, 1))
+      r(ivec, 15, 1) = min(pgscav(ivec, 12, 1), 1.0e-9)
+      r(ivec, 16, 1) = r(ivec, 15, 1) / (h15a(ivec) * h15b(ivec) * lrt(ivec, 1))
+      r(ivec, 18, 1) = 0.1 * aq(ivec, 9)
+      r(ivec, 17, 1) = r(ivec, 18, 1) / h17(ivec)
+   end do
+
+!  in the vector code, k=1 and k=2 are done separately.
+!  section with k=2 for q2>0 and q1>0
+
+   nleftk2 = n2
+   nrightk2 = n3 - 1
+!  k = 2
+   do ivec = nleftk2, nrightk2
+      r(ivec, 8, 2) = pgscav(ivec, 7, 2)
+      r(ivec, 12, 2) = pgscav(ivec, 8, 2)
+      r(ivec, 15, 2) = 1.0e-9
+      r(ivec, 16, 2) = r(ivec, 15, 2) / (h15a(ivec) * h15b(ivec) * lrt(ivec, 2))
+   end do
+
+   return
+end

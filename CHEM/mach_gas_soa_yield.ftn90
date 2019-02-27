@@ -1,0 +1,592 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_gas_soa_yield.ftn90
+! Creation       : P. Makar, C. Stroud, Feb 2007 for GEM-MACH
+! Description    : Calculates SOA yields for the ADOM speciation using either the Odum approach
+!                  or the Jiang approach.
+!
+! Extra info     : Based on AURAMS chemf.ftn90 code
+!                  SOA calculations, gas-phase chemistry solver.
+!
+! Arguments:  IN
+!	         busdyn         -> dynamical bus 
+!                p2d            -> pressure (pa)
+!                metvar3d(i, k, MV3D_TPLUS)             -> temperature (k)
+!                rho            -> density of air (kg / m3)
+!                tppmg          -> gas-phase species in ppmv units
+!                nst            -> number of gas-phase species!
+!
+!	      OUT	
+!		 BUSVOL         -> volatile bus     
+!
+!============================================================================
+!
+!!if_on
+subroutine mach_gas_soa_yield(busdyn, BUSVOL, busdyn_size, busvol_size, p2d, rho, tppmg, conv1, metvar3d, nst)
+   use chm_metvar_mod,       only: SIZE_MV3D
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+!!if_off
+   use chm_metvar_mod,       only: MV3D_TPLUS
+   use chm_utils_mod,        only: chm_lun_out, global_debug, ik
+   use chm_consphychm_mod,   only: rgasi
+   use chm_nml_mod,          only: nk_start, chm_soa_s
+   use chm_species_info_mod, only: sm
+   use chm_species_idx_mod,  only: sp_NWOC, sp_ALKA, sp_AROM, sp_ALKE, sp_TOLU, sp_OC, sp_PC
+   use mach_cam_utils_mod,   only: isize
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: nst
+   integer(kind=4), intent   (in) :: busvol_size
+   integer(kind=4), intent   (in) :: busdyn_size
+   real(kind=4),    intent   (in) :: busdyn  (busdyn_size)
+   real(kind=4),    intent(inout) :: busvol  (busvol_size)
+   real(kind=4),    intent   (in) :: p2d     (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: rho     (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: tppmg   (chm_ni*chm_nk,nst)
+   real(kind=4),    intent   (in) :: conv1   (chm_ni*chm_nk)
+   real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+!!if_off
+!
+!  Declaration of local variables
+!
+   integer(kind=4)  :: i, k, nn
+   integer(kind=4)  :: ix, kz, nb
+   real(kind=8)     :: x, f, df
+   real(kind=8)     :: m0, p
+   real(kind=8)     :: falka, farom, ftolu, falke1, falke2, falke3
+   real(kind=8)     :: soa(chm_ni, chm_nk), poa(chm_ni, chm_nk)
+   real(kind=8)     :: y1, y2, y3, y4, y5, y6
+   real(kind=8)     :: dydx1, dydx2, dydx3, dydx4, dydx5, dydx6
+   real(kind=8)     :: alpha1a, alpha2a, kom1a, kom2a
+   real(kind=8)     :: alpha1b, alpha2b, kom1b, kom2b
+   real(kind=8)     :: alpha1c, alpha2c, kom1c, kom2c
+   real(kind=8)     :: alpha1d, alpha2d, kom1d, kom2d
+   real(kind=8)     :: alpha1e, alpha2e, kom1e, kom2e
+   real(kind=8)     :: alpha1f, alpha2f, kom1f, kom2f
+   real(kind=8)     :: dena, denb, denc, dend, dene, denf
+   logical(kind=4)  :: local_dbg
+
+   local_dbg = (.false. .or. global_debug)
+
+   poa = 0.0d0
+   soa = 0.0d0
+   if(local_dbg) then
+      write (chm_lun_out, *) 'calculating soa yields'
+   end if
+!  set volatile bus to zero
+
+   busvol(sm(sp_NWOC) % vol_offset : sm(sp_NWOC) % vol_offset + chm_ni*chm_nk-1 ) = 0.0
+!
+!  Calculate the change in concentration for the SOA producing
+!  species, multiply by appropriate conversion factors and yields
+!  to calculate the total SOA mass added.  Note that in this initial
+!  version, the condensable gas produced is assumed to go entirely to
+!  aerosol; the initial condensable gas mixing ratio is assumed to
+!  be the same as the initial SOA mass mixing ratio.  When CAM is
+!  coupled, the initial SOA mas will have to be taken from the
+!  sum of the SOA masses in each bin.
+!  Note that ALL of the condensable gas is removed in CAM; the addition to the
+!  total condensable gas calculated here is that from only the current operator
+!  step.
+!
+!  Add up the particle soa and poa bins into the soa mass space in the master array.
+!
+   do nn = 1, isize
+      do k = nk_start, chm_nk
+         do i = 1, chm_ni
+            soa(i, k) = soa(i, k) + dble(busdyn(sm(sp_OC) % bins_array(nn) % dyn_offset + ik(i, k, chm_ni)))
+         end do
+      end do
+   end do
+!  Add up the particle soa and poa bins into the soa mass space in the master array.
+   do nn = 1, isize
+      do k = nk_start, chm_nk
+         do i = 1, chm_ni
+            poa(i, k) = poa(i, k) + dble(busdyn(sm(sp_PC) % bins_array(nn) % dyn_offset + ik(i, k, chm_ni)))
+         end do
+      end do
+   end do
+   !  Secondary organic aerosol yield loop:
+   nn = (nk_start - 1) * chm_ni
+   do k=nk_start, chm_nk
+      do i = 1, chm_ni
+         nn = nn + 1
+!    Add primary and secondary to give m0. Assign poa to p locally in loop.
+!    convert existing condensable mass (assumed to be entirely aerosol, here)
+!    back to ug / m3 from ug / kg
+!    added p=0 for absorption of SOA into entire OC phase
+         m0 = (soa(i, k) + poa(i, k)) * dble(rho(i, k))
+
+!    The p=0 line changes the IAY formula so that the SOA can partition into both
+!    the SOA and POA. If you want to partition the SOA only into existing SOA
+!    then we use the first line commented out.
+!         p = poa(i, k) * dble(rho(i, k))
+         p = 0.0
+         if(m0 /= 0.0) then
+!  Calculate temperature-dependent factors for K dependence, based on the work of
+!  Sheehan and Bowman (ES&T 35, no 11, 2129-2135, 2001.  Sources for the enthalpy of
+!  vapourization of the different SOA products are given  for each factor.
+!  Measurement t* temperatures were 35C.
+!
+!  H for Alkanes:  using C10 monocarboxylic acid extrapolated from Tao and McMurry,
+!  ES&T 23, 1519-1523, 1989's formula for even numbered monocarboxylic acids.
+            falka = dble(metvar3d(i, k, MV3D_TPLUS)) / 308.15d0 * exp(136.7d+03 / rgasi * (1 / dble(metvar3d(i, k, MV3D_TPLUS))-1. / 308.15d0))
+!  H for Aromatics:  using Sheehan and Bowman's value of 17.5Kcal / mol = 73.3 KJ / mol
+            farom = dble(metvar3d(i, k, MV3D_TPLUS)) / 308.15d0 * exp(73.3d+03 / rgasi * (1 / dble(metvar3d(i, k, MV3D_TPLUS))-1. / 308.15d0))
+!  H for Toluene:  using Sheehan and Bowman's value of 17.5Kcal / mol = 73.3 KJ / mol
+            ftolu = farom
+!  H for alkenes (anth.) : Tao and McMurry for C10 monocarboxylic acids, again:
+            falke1 = falka
+!  H for alkenes (alpha-pinene): using Sheehan and Bowman's pinic acid value of
+!  22.3 Kcal / mol = 93.35 KJ / mol
+            falke2 = dble(metvar3d(i, k, MV3D_TPLUS)) / 308.15d0 * exp(93.35d+03 / rgasi * (1 / dble(metvar3d(i, k, MV3D_TPLUS))-1. / 308.15d0))
+!  H for alkenes (other monoterpenes):  use same value as alpha-pinene:
+            falke3 = falke2
+!  Calculate condensable gas mass mixing ratio in ug / kg, CREATED during the current
+!  time step.  Note that this replaces the total organic mass.  A three-stage
+!  Newton's iteration of the Jiang et al equation is used:
+
+!  Initial guess for new value of m0 = old value:
+            x = m0
+!  Switch for jiang (explicit x and p) or odum soa yield (p=x) formula
+            if (chm_soa_s == 'ODUM') then
+               p = x   ! this line will convert jiang formula to odum formula
+            endif
+!  Define SOA product parameters (Jiang, W. 2003)
+!  For Alkane + OH (Anthro)
+            alpha1a = 0.01d0
+            alpha2a = 0.3d0
+            kom1a   = 0.02d0 * falka
+            kom2a   = 5.0D-04 * falka
+!  For Aromatic + OH
+            alpha1b = 0.038d0
+            alpha2b = 0.167d0
+            kom1b   = 0.042d0 * farom
+            kom2b   = 1.4D-03 * farom
+!  For Toluene + OH
+            alpha1c = 0.071d0
+            alpha2c = 0.138d0
+            kom1c   = 0.053d0 * ftolu
+            kom2c   = 1.9D-03 * ftolu
+!  For Alkene1 + OH (Anthro)
+            alpha1d  = 0.01d0
+            alpha2d  = 0.3d0
+            kom1d    = 0.02d0 * falke1
+            kom2d    = 5.0D-04 * falke1
+!  For Alkene2 + OH (Alpha-Pinene)
+            alpha1e  = 0.038d0
+            alpha2e  = 0.326d0
+            kom1e    = 0.171d0 * falke2
+            kom2e    = 4.0D-03 * falke2
+!  For Alkene3 + OH (Beta-Pinene)
+            alpha1f  = 0.13d0
+            alpha2f  = 0.406d0
+            kom1f    = 0.044d0 * falke3
+            kom2f    = 4.9D-03 * falke3
+!  Define IAY functions for each ROG
+            dena = alpha1a * kom1a * (kom1a * x**2 + p) / (1 + kom1a * x)**2 &
+               + alpha2a * kom2a * (kom2a * x**2 + p) / (1 + kom2a * x)**2
+
+            y1 = (x * (alpha1a * kom1a / (1 + kom1a * x) + alpha2a * kom2a / (1 + kom2a * x)))**2 / dena
+
+            denb = alpha1b * kom1b * (kom1b * x**2 + p) / (1 + kom1b * x)**2 &
+               + alpha2b * kom2b * (kom2b * x**2 + p) / (1 + kom2b * x)**2
+
+            y2 = (x * (alpha1b * kom1b / (1 + kom1b * x) + alpha2b * kom2b / (1 + kom2b * x)))**2 / denb
+
+            denc = alpha1c * kom1c * (kom1c * x**2 + p) / (1 + kom1c * x)**2 &
+               + alpha2c * kom2c * (kom2c * x**2 + p) / (1 + kom2c * x)**2
+
+            y3 = (x * (alpha1c * kom1c / (1 + kom1c * x) + alpha2c * kom2c / (1 + kom2c * x)))**2 / denc
+
+            dend = alpha1d * kom1d * (kom1d * x**2 + p) / (1 + kom1d * x)**2 &
+               + alpha2d * kom2d * (kom2d * x**2 + p) / (1 + kom2d * x)**2
+
+            y4 = (x * (alpha1d * kom1d / (1 + kom1d * x) + alpha2d * kom2d / (1 + kom2d * x)))**2 / dend
+
+            dene = alpha1e * kom1e * (kom1e * x**2 + p) / (1 + kom1e * x)**2 &
+               + alpha2e * kom2e * (kom2e * x**2 + p) / (1 + kom2e * x)**2
+
+            y5 = (x * (alpha1e * kom1e / (1 + kom1e * x) + alpha2e * kom2e / (1 + kom2e * x)))**2 / dene
+
+            denf = alpha1f * kom1f * (kom1f * x**2 + p) / (1 + kom1f * x)**2 &
+               + alpha2f * kom2f * (kom2f * x**2 + p) / (1 + kom2f * x)**2
+
+            y6 = (x * (alpha1f * kom1f / (1 + kom1f * x) + alpha2f * kom2f / (1 + kom2f * x)))**2 / denf
+
+!  Define derivatives of IAY with respect to x for each ROG
+            dydx1 = 2.0d0 * x * (alpha1a * kom1a / (1 + kom1a * x) + alpha2a * kom2a / (1 + kom2a * x))**2 / dena &
+                     + 2.0d0 * x**2 * (alpha1a * kom1a / (1 + kom1a * x) + alpha2a * kom2a / (1 + kom2a * x)) * &
+                     (-1.0d0 * alpha1a * kom1a**2 / (1 + kom1a * x)**2 - alpha2a * kom2a**2 / (1 + kom2a * x)**2) / dena &
+                     -x**2 * (alpha1a * kom1a / (1 + kom1a * x) + alpha2a * kom2a / (1 + kom2a * x))**2 * &
+                     (2.0d0 * alpha1a * kom1a**2 * x / (1 + kom1a * x)**2 - 2.0d0 * alpha1a * kom1a**2 * (kom1a * x**2 + p) / (1 + kom1a * x)**3 &
+                     + 2.0d0 * alpha2a * kom2a**2 * x / (1 + kom2a * x)**2 - 2.0d0 * alpha2a * kom2a**2 * (kom2a * x**2 + p) / (1 + kom2a * x)**3) / dena**2
+!
+            dydx2 = 2.0d0 * x * (alpha1b * kom1b / (1 + kom1b * x) + alpha2b * kom2b / (1 + kom2b * x))**2 / denb &
+                     + 2.0d0 * x**2 * (alpha1b * kom1b / (1 + kom1b * x) + alpha2b * kom2b / (1 + kom2b * x)) * &
+                     (-1.0d0 * alpha1b * kom1b**2 / (1 + kom1b * x)**2 - alpha2b * kom2b**2 / (1 + kom2b * x)**2) / denb &
+                     -x**2 * (alpha1b * kom1b / (1 + kom1b * x) + alpha2b * kom2b / (1 + kom2b * x))**2 * &
+                     (2.0d0 * alpha1b * kom1b**2 * x / (1 + kom1b * x)**2 - 2.0d0 * alpha1b * kom1b**2 * (kom1b * x**2 + p) / (1 + kom1b * x)**3 &
+                     + 2.0d0 * alpha2b * kom2b**2 * x / (1 + kom2b * x)**2 - 2.0d0 * alpha2b * kom2b**2 * (kom2b * x**2 + p) / (1 + kom2b * x)**3) / denb**2
+!
+            dydx3 = 2.0d0 * x * (alpha1c * kom1c / (1 + kom1c * x) + alpha2c * kom2c / (1 + kom2c * x))**2 / denc &
+                     + 2.0d0 * x**2 * (alpha1c * kom1c / (1 + kom1c * x) + alpha2c * kom2c / (1 + kom2c * x)) * &
+                     (-1.0d0 * alpha1c * kom1c**2 / (1 + kom1c * x)**2 - alpha2c * kom2c**2 / (1 + kom2c * x)**2) / denc &
+                     -x**2 * (alpha1c * kom1c / (1 + kom1c * x) + alpha2c * kom2c / (1 + kom2c * x))**2 * &
+                     (2.0d0 * alpha1c * kom1c**2 * x / (1 + kom1c * x)**2 - 2.0d0 * alpha1c * kom1c**2 * (kom1c * x**2 + p) / (1 + kom1c * x)**3 &
+                     + 2.0d0 * alpha2c * kom2c**2 * x / (1 + kom2c * x)**2 - 2.0d0 * alpha2c * kom2c**2 * (kom2c * x**2 + p) / (1 + kom2c * x)**3) / denc**2
+!
+            dydx4 = 2.0d0 * x * (alpha1d * kom1d / (1 + kom1d * x) + alpha2d * kom2d / (1 + kom2d * x))**2 / dend &
+                     + 2.0d0 * x**2 * (alpha1d * kom1d / (1 + kom1d * x) + alpha2d * kom2d / (1 + kom2d * x)) * &
+                     (-1.0d0 * alpha1d * kom1d**2 / (1 + kom1d * x)**2 - alpha2d * kom2d**2 / (1 + kom2d * x)**2) / dend &
+                     -x**2 * (alpha1d * kom1d / (1 + kom1d * x) + alpha2d * kom2d / (1 + kom2d * x))**2 * &
+                     (2.0d0 * alpha1d * kom1d**2 * x / (1 + kom1d * x)**2 - 2.0d0 * alpha1d * kom1d**2 * (kom1d * x**2 + p) / (1 + kom1d * x)**3 &
+                     + 2.0d0 * alpha2d * kom2d**2 * x / (1 + kom2d * x)**2 - 2.0d0 * alpha2d * kom2d**2 * (kom2d * x**2 + p) / (1 + kom2d * x)**3) / dend**2
+!
+            dydx5 = 2.0d0 * x * (alpha1e * kom1e / (1 + kom1e * x) + alpha2e * kom2e / (1 + kom2e * x))**2 / dene &
+                     + 2.0d0 * x**2 * (alpha1e * kom1e / (1 + kom1e * x) + alpha2e * kom2e / (1 + kom2e * x)) * &
+                     (-1.0d0 * alpha1e * kom1e**2 / (1 + kom1e * x)**2 - alpha2e * kom2e**2 / (1 + kom2e * x)**2) / dene &
+                     -x**2 * (alpha1e * kom1e / (1 + kom1e * x) + alpha2e * kom2e / (1 + kom2e * x))**2 * &
+                     (2.0d0 * alpha1e * kom1e**2 * x / (1 + kom1e * x)**2 - 2.0d0 * alpha1e * kom1e**2 * (kom1e * x**2 + p) / (1 + kom1e * x)**3 &
+                     + 2.0d0 * alpha2e * kom2e**2 * x / (1 + kom2e * x)**2 - 2.0d0 * alpha2e * kom2e**2 * (kom2e * x**2 + p) / (1 + kom2e * x)**3) / dene**2
+!
+            dydx6 = 2.0d0 * x * (alpha1f * kom1f / (1 + kom1f * x) + alpha2f * kom2f / (1 + kom2f * x))**2 / denf &
+                     + 2.0d0 * x**2 * (alpha1f * kom1f / (1 + kom1f * x) + alpha2f * kom2f / (1 + kom2f * x)) * &
+                     (-1.0d0 * alpha1f * kom1f**2 / (1 + kom1f * x)**2 - alpha2f * kom2f**2 / (1 + kom2f * x)**2) / denf &
+                     -x**2 * (alpha1f * kom1f / (1 + kom1f * x) + alpha2f * kom2f / (1 + kom2f * x))**2 * &
+                     (2.0d0 * alpha1f * kom1f**2 * x / (1 + kom1f * x)**2 - 2.0d0 * alpha1f * kom1f**2 * (kom1f * x**2 + p) / (1 + kom1f * x)**3 &
+                     + 2.0d0 * alpha2f * kom2f**2 * x / (1 + kom2f * x)**2 - 2.0d0 * alpha2f * kom2f**2 * (kom2f * x**2 + p) / (1 + kom2f * x)**3) / denf**2
+
+!  First Iteration:
+!  Function
+            f = x - m0 - ( &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKA) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKA) % mol_wt - (dble(tppmg(nn, 10))))) *  &
+            7.226D-01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * y1 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_AROM) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_AROM) % mol_wt - (dble(tppmg(nn, 14))))) *  &
+            1.6898D+01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * y2 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_TOLU) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_TOLU) % mol_wt - (dble(tppmg(nn, 13))))) *  &
+            1.14315D+01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * y3 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            5.167D-02 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * y4 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            3.810D+00 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * y5 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            3.810D+00 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS))  * y6 )
+
+!  Derivative of function:
+
+            df = 1.0d0 - ( &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKA) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKA) % mol_wt - (dble(tppmg(nn, 10))))) *  &
+            7.226D-01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx1 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_AROM) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_AROM) % mol_wt - (dble(tppmg(nn, 14))))) *  &
+            1.6898D+01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx2 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_TOLU) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_TOLU) % mol_wt - (dble(tppmg(nn, 13))))) *  &
+            1.14315D+01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx3 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            5.167D-02 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx4 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            3.81D+00 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx5 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            3.81D+00 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx6 )
+!  Next approximation of variable:
+
+              x = x - f / df
+              !
+!  Second Iteration:
+! Switch for jiang (explicit x and p) or odum soa yield (p = x) formula
+            if (chm_soa_s == 'ODUM') then
+               p = x   ! this line will convert jiang formula to odum formula
+            endif
+
+!  Define IAY functions for each ROG
+            dena = alpha1a * kom1a * (kom1a * x**2 + p) / (1 + kom1a * x)**2 &
+               + alpha2a * kom2a * (kom2a * x**2 + p) / (1 + kom2a * x)**2
+            y1 = (x * (alpha1a * kom1a / (1 + kom1a * x) + alpha2a * kom2a / (1 + kom2a * x)))**2 / dena
+!
+            denb = alpha1b * kom1b * (kom1b * x**2 + p) / (1 + kom1b * x)**2 &
+               + alpha2b * kom2b * (kom2b * x**2 + p) / (1 + kom2b * x)**2
+            y2 = (x * (alpha1b * kom1b / (1 + kom1b * x) + alpha2b * kom2b / (1 + kom2b * x)))**2 / denb
+!
+            denc = alpha1c * kom1c * (kom1c * x**2 + p) / (1 + kom1c * x)**2 &
+               + alpha2c * kom2c * (kom2c * x**2 + p) / (1 + kom2c * x)**2
+            y3 = (x * (alpha1c * kom1c / (1 + kom1c * x) + alpha2c * kom2c / (1 + kom2c * x)))**2 / denc
+!
+            dend = alpha1d * kom1d * (kom1d * x**2 + p) / (1 + kom1d * x)**2 &
+               + alpha2d * kom2d * (kom2d * x**2 + p) / (1 + kom2d * x)**2
+            y4 = (x * (alpha1d * kom1d / (1 + kom1d * x) + alpha2d * kom2d / (1 + kom2d * x)))**2 / dend
+!
+            dene = alpha1e * kom1e * (kom1e * x**2 + p) / (1 + kom1e * x)**2 &
+               + alpha2e * kom2e * (kom2e * x**2 + p) / (1 + kom2e * x)**2
+            y5 = (x * (alpha1e * kom1e / (1 + kom1e * x) + alpha2e * kom2e / (1 + kom2e * x)))**2 / dene
+!
+            denf = alpha1f * kom1f * (kom1f * x**2 + p) / (1 + kom1f * x)**2 &
+               + alpha2f * kom2f * (kom2f * x**2 + p) / (1 + kom2f * x)**2
+            y6 = (x * (alpha1f * kom1f / (1 + kom1f * x) + alpha2f * kom2f / (1 + kom2f * x)))**2 / denf
+
+!  Define derivatives of IAY with respect to x for each ROG
+            dydx1 = 2.0d0 * x * (alpha1a * kom1a / (1 + kom1a * x) + alpha2a * kom2a / (1 + kom2a * x))**2 / dena &
+                     + 2.0d0 * x**2 * (alpha1a * kom1a / (1 + kom1a * x) + alpha2a * kom2a / (1 + kom2a * x)) * &
+                     (-1.0d0 * alpha1a * kom1a**2 / (1 + kom1a * x)**2 - alpha2a * kom2a**2 / (1 + kom2a * x)**2) / dena &
+                     -x**2 * (alpha1a * kom1a / (1 + kom1a * x) + alpha2a * kom2a / (1 + kom2a * x))**2 * &
+                     (2.0d0 * alpha1a * kom1a**2 * x / (1 + kom1a * x)**2 - 2.0d0 * alpha1a * kom1a**2 * (kom1a * x**2 + p) / (1 + kom1a * x)**3 &
+                     + 2.0d0 * alpha2a * kom2a**2 * x / (1 + kom2a * x)**2 - 2.0d0 * alpha2a * kom2a**2 * (kom2a * x**2 + p) / (1 + kom2a * x)**3) / dena**2
+!
+            dydx2 = 2.0d0 * x * (alpha1b * kom1b / (1 + kom1b * x) + alpha2b * kom2b / (1 + kom2b * x))**2 / denb &
+                     + 2.0d0 * x**2 * (alpha1b * kom1b / (1 + kom1b * x) + alpha2b * kom2b / (1 + kom2b * x)) * &
+                     (-1.0d0 * alpha1b * kom1b**2 / (1 + kom1b * x)**2 - alpha2b * kom2b**2 / (1 + kom2b * x)**2) / denb &
+                     -x**2 * (alpha1b * kom1b / (1 + kom1b * x) + alpha2b * kom2b / (1 + kom2b * x))**2 * &
+                     (2.0d0 * alpha1b * kom1b**2 * x / (1 + kom1b * x)**2 - 2.0d0 * alpha1b * kom1b**2 * (kom1b * x**2 + p) / (1 + kom1b * x)**3 &
+                     + 2.0d0 * alpha2b * kom2b**2 * x / (1 + kom2b * x)**2 - 2.0d0 * alpha2b * kom2b**2 * (kom2b * x**2 + p) / (1 + kom2b * x)**3) / denb**2
+!
+            dydx3 = 2.0d0 * x * (alpha1c * kom1c / (1 + kom1c * x) + alpha2c * kom2c / (1 + kom2c * x))**2 / denc &
+                     + 2.0d0 * x**2 * (alpha1c * kom1c / (1 + kom1c * x) + alpha2c * kom2c / (1 + kom2c * x)) * &
+                     (-1.0d0 * alpha1c * kom1c**2 / (1 + kom1c * x)**2 - alpha2c * kom2c**2 / (1 + kom2c * x)**2) / denc &
+                     -x**2 * (alpha1c * kom1c / (1 + kom1c * x) + alpha2c * kom2c / (1 + kom2c * x))**2 * &
+                     (2.0d0 * alpha1c * kom1c**2 * x / (1 + kom1c * x)**2 - 2.0d0 * alpha1c * kom1c**2 * (kom1c * x**2 + p) / (1 + kom1c * x)**3 &
+                     + 2.0d0 * alpha2c * kom2c**2 * x / (1 + kom2c * x)**2 - 2.0d0 * alpha2c * kom2c**2 * (kom2c * x**2 + p) / (1 + kom2c * x)**3) / denc**2
+!
+            dydx4 = 2.0d0 * x * (alpha1d * kom1d / (1 + kom1d * x) + alpha2d * kom2d / (1 + kom2d * x))**2 / dend &
+                     + 2.0d0 * x**2 * (alpha1d * kom1d / (1 + kom1d * x) + alpha2d * kom2d / (1 + kom2d * x)) * &
+                     (-1.0d0 * alpha1d * kom1d**2 / (1 + kom1d * x)**2 - alpha2d * kom2d**2 / (1 + kom2d * x)**2) / dend &
+                     -x**2 * (alpha1d * kom1d / (1 + kom1d * x) + alpha2d * kom2d / (1 + kom2d * x))**2 * &
+                     (2.0d0 * alpha1d * kom1d**2 * x / (1 + kom1d * x)**2 - 2.0d0 * alpha1d * kom1d**2 * (kom1d * x**2 + p) / (1 + kom1d * x)**3 &
+                     + 2.0d0 * alpha2d * kom2d**2 * x / (1 + kom2d * x)**2 - 2.0d0 * alpha2d * kom2d**2 * (kom2d * x**2 + p) / (1 + kom2d * x)**3) / dend**2
+!
+            dydx5 = 2.0d0 * x * (alpha1e * kom1e / (1 + kom1e * x) + alpha2e * kom2e / (1 + kom2e * x))**2 / dene &
+                     + 2.0d0 * x**2 * (alpha1e * kom1e / (1 + kom1e * x) + alpha2e * kom2e / (1 + kom2e * x)) * &
+                     (-1.0d0 * alpha1e * kom1e**2 / (1 + kom1e * x)**2 - alpha2e * kom2e**2 / (1 + kom2e * x)**2) / dene &
+                     -x**2 * (alpha1e * kom1e / (1 + kom1e * x) + alpha2e * kom2e / (1 + kom2e * x))**2 * &
+                     (2.0d0 * alpha1e * kom1e**2 * x / (1 + kom1e * x)**2 - 2.0d0 * alpha1e * kom1e**2 * (kom1e * x**2 + p) / (1 + kom1e * x)**3 &
+                     + 2.0d0 * alpha2e * kom2e**2 * x / (1 + kom2e * x)**2 - 2.0d0 * alpha2e * kom2e**2 * (kom2e * x**2 + p) / (1 + kom2e * x)**3) / dene**2
+!
+            dydx6 = 2.0d0 * x * (alpha1f * kom1f / (1 + kom1f * x) + alpha2f * kom2f / (1 + kom2f * x))**2 / denf &
+                     + 2.0d0 * x**2 * (alpha1f * kom1f / (1 + kom1f * x) + alpha2f * kom2f / (1 + kom2f * x)) * &
+                     (-1.0d0 * alpha1f * kom1f**2 / (1 + kom1f * x)**2 - alpha2f * kom2f**2 / (1 + kom2f * x)**2) / denf &
+                     -x**2 * (alpha1f * kom1f / (1 + kom1f * x) + alpha2f * kom2f / (1 + kom2f * x))**2 * &
+                     (2.0d0 * alpha1f * kom1f**2 * x / (1 + kom1f * x)**2 - 2.0d0 * alpha1f * kom1f**2 * (kom1f * x**2 + p) / (1 + kom1f * x)**3 &
+                     + 2.0d0 * alpha2f * kom2f**2 * x / (1 + kom2f * x)**2 - 2.0d0 * alpha2f * kom2f**2 * (kom2f * x**2 + p) / (1 + kom2f * x)**3) / denf**2
+                     !  Function
+            f = x - m0 - ( &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKA) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKA) % mol_wt - (dble(tppmg(nn, 10))))) *  &
+            7.226D-01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * y1  + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_AROM) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_AROM) % mol_wt - (dble(tppmg(nn, 14))))) *  &
+            1.6898D+01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * y2 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_TOLU) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_TOLU) % mol_wt - (dble(tppmg(nn, 13))))) *  &
+            1.14315D+01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * y3 +  &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            5.167D-02 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * y4 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            3.810D+00 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * y5 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            3.810D+00 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS))  * y6  )
+
+!  Derivative of function:
+            df = 1.0d0 - ( &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKA) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKA) % mol_wt - (dble(tppmg(nn, 10))))) *  &
+            7.226D-01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx1 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_AROM) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_AROM) % mol_wt - (dble(tppmg(nn, 14))))) *  &
+            1.6898D+01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx2 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_TOLU) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_TOLU) % mol_wt - (dble(tppmg(nn, 13))))) *  &
+            1.14315D+01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx3 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            5.167D-02 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx4 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            3.81D+00 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx5 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            3.81D+00 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx6 )
+!  Second approximation of variable:
+
+             x = x - f / df
+
+!  Third Iteration:
+!  Switch for jiang (explicit x and p) or odum soa yield (p = x) formula
+            if (chm_soa_s == 'ODUM') then
+               p = x   ! this line will convert jiang formula to odum formula
+            endif
+!  Define IAY functions for each ROG
+            dena = alpha1a * kom1a * (kom1a * x**2 + p) / (1 + kom1a * x)**2 &
+               + alpha2a * kom2a * (kom2a * x**2 + p) / (1 + kom2a * x)**2
+            y1 = (x * (alpha1a * kom1a / (1 + kom1a * x) + alpha2a * kom2a / (1 + kom2a * x)))**2 / dena
+!
+            denb = alpha1b * kom1b * (kom1b * x**2 + p) / (1 + kom1b * x)**2 &
+               + alpha2b * kom2b * (kom2b * x**2 + p) / (1 + kom2b * x)**2
+            y2 = (x * (alpha1b * kom1b / (1 + kom1b * x) + alpha2b * kom2b / (1 + kom2b * x)))**2 / denb
+!
+            denc = alpha1c * kom1c * (kom1c * x**2 + p) / (1 + kom1c * x)**2 &
+               + alpha2c * kom2c * (kom2c * x**2 + p) / (1 + kom2c * x)**2
+            y3 = (x * (alpha1c * kom1c / (1 + kom1c * x) + alpha2c * kom2c / (1 + kom2c * x)))**2 / denc
+!
+            dend = alpha1d * kom1d * (kom1d * x**2 + p) / (1 + kom1d * x)**2 &
+               + alpha2d * kom2d * (kom2d * x**2 + p) / (1 + kom2d * x)**2
+            y4 = (x * (alpha1d * kom1d / (1 + kom1d * x) + alpha2d * kom2d / (1 + kom2d * x)))**2 / dend
+!
+            dene = alpha1e * kom1e * (kom1e * x**2 + p) / (1 + kom1e * x)**2 &
+               + alpha2e * kom2e * (kom2e * x**2 + p) / (1 + kom2e * x)**2
+            y5 = (x * (alpha1e * kom1e / (1 + kom1e * x) + alpha2e * kom2e / (1 + kom2e * x)))**2 / dene
+!
+            denf = alpha1f * kom1f * (kom1f * x**2 + p) / (1 + kom1f * x)**2 &
+               + alpha2f * kom2f * (kom2f * x**2 + p) / (1 + kom2f * x)**2
+            y6 = (x * (alpha1f * kom1f / (1 + kom1f * x) + alpha2f * kom2f / (1 + kom2f * x)))**2 / denf
+            !
+!  Define derivatives of IAY with respect to x for each ROG
+            dydx1 = 2.0d0 * x * (alpha1a * kom1a / (1 + kom1a * x) + alpha2a * kom2a / (1 + kom2a * x))**2 / dena &
+                     + 2.0d0 * x**2 * (alpha1a * kom1a / (1 + kom1a * x) + alpha2a * kom2a / (1 + kom2a * x)) * &
+                     (-1.0d0 * alpha1a * kom1a**2 / (1 + kom1a * x)**2 - alpha2a * kom2a**2 / (1 + kom2a * x)**2) / dena &
+                     -x**2 * (alpha1a * kom1a / (1 + kom1a * x) + alpha2a * kom2a / (1 + kom2a * x))**2 * &
+                     (2.0d0 * alpha1a * kom1a**2 * x / (1 + kom1a * x)**2 - 2.0d0 * alpha1a * kom1a**2 * (kom1a * x**2 + p) / (1 + kom1a * x)**3 &
+                     + 2.0d0 * alpha2a * kom2a**2 * x / (1 + kom2a * x)**2 - 2.0d0 * alpha2a * kom2a**2 * (kom2a * x**2 + p) / (1 + kom2a * x)**3) / dena**2
+!
+            dydx2 = 2.0d0 * x * (alpha1b * kom1b / (1 + kom1b * x) + alpha2b * kom2b / (1 + kom2b * x))**2 / denb &
+                     + 2.0d0 * x**2 * (alpha1b * kom1b / (1 + kom1b * x) + alpha2b * kom2b / (1 + kom2b * x)) * &
+                     (-1.0d0 * alpha1b * kom1b**2 / (1 + kom1b * x)**2 - alpha2b * kom2b**2 / (1 + kom2b * x)**2) / denb &
+                     -x**2 * (alpha1b * kom1b / (1 + kom1b * x) + alpha2b * kom2b / (1 + kom2b * x))**2 * &
+                     (2.0d0 * alpha1b * kom1b**2 * x / (1 + kom1b * x)**2 - 2.0d0 * alpha1b * kom1b**2 * (kom1b * x**2 + p) / (1 + kom1b * x)**3 &
+                     + 2.0d0 * alpha2b * kom2b**2 * x / (1 + kom2b * x)**2 - 2.0d0 * alpha2b * kom2b**2 * (kom2b * x**2 + p) / (1 + kom2b * x)**3) / denb**2
+!
+            dydx3 = 2.0d0 * x * (alpha1c * kom1c / (1 + kom1c * x) + alpha2c * kom2c / (1 + kom2c * x))**2 / denc &
+                     + 2.0d0 * x**2 * (alpha1c * kom1c / (1 + kom1c * x) + alpha2c * kom2c / (1 + kom2c * x)) * &
+                     (-1.0d0 * alpha1c * kom1c**2 / (1 + kom1c * x)**2 - alpha2c * kom2c**2 / (1 + kom2c * x)**2) / denc &
+                     -x**2 * (alpha1c * kom1c / (1 + kom1c * x) + alpha2c * kom2c / (1 + kom2c * x))**2 * &
+                     (2.0d0 * alpha1c * kom1c**2 * x / (1 + kom1c * x)**2 - 2.0d0 * alpha1c * kom1c**2 * (kom1c * x**2 + p) / (1 + kom1c * x)**3 &
+                     + 2.0d0 * alpha2c * kom2c**2 * x / (1 + kom2c * x)**2 - 2.0d0 * alpha2c * kom2c**2 * (kom2c * x**2 + p) / (1 + kom2c * x)**3) / denc**2
+!
+            dydx4 = 2.0d0 * x * (alpha1d * kom1d / (1 + kom1d * x) + alpha2d * kom2d / (1 + kom2d * x))**2 / dend &
+                     + 2.0d0 * x**2 * (alpha1d * kom1d / (1 + kom1d * x) + alpha2d * kom2d / (1 + kom2d * x)) * &
+                     (-1.0d0 * alpha1d * kom1d**2 / (1 + kom1d * x)**2 - alpha2d * kom2d**2 / (1 + kom2d * x)**2) / dend &
+                     -x**2 * (alpha1d * kom1d / (1 + kom1d * x) + alpha2d * kom2d / (1 + kom2d * x))**2 * &
+                     (2.0d0 * alpha1d * kom1d**2 * x / (1 + kom1d * x)**2 - 2.0d0 * alpha1d * kom1d**2 * (kom1d * x**2 + p) / (1 + kom1d * x)**3 &
+                     + 2.0d0 * alpha2d * kom2d**2 * x / (1 + kom2d * x)**2 - 2.0d0 * alpha2d * kom2d**2 * (kom2d * x**2 + p) / (1 + kom2d * x)**3) / dend**2
+!
+            dydx5 = 2.0d0 * x * (alpha1e * kom1e / (1 + kom1e * x) + alpha2e * kom2e / (1 + kom2e * x))**2 / dene &
+                     + 2.0d0 * x**2 * (alpha1e * kom1e / (1 + kom1e * x) + alpha2e * kom2e / (1 + kom2e * x)) * &
+                     (-1.0d0 * alpha1e * kom1e**2 / (1 + kom1e * x)**2 - alpha2e * kom2e**2 / (1 + kom2e * x)**2) / dene &
+                     -x**2 * (alpha1e * kom1e / (1 + kom1e * x) + alpha2e * kom2e / (1 + kom2e * x))**2 * &
+                     (2.0d0 * alpha1e * kom1e**2 * x / (1 + kom1e * x)**2 - 2.0d0 * alpha1e * kom1e**2 * (kom1e * x**2 + p) / (1 + kom1e * x)**3 &
+                     + 2.0d0 * alpha2e * kom2e**2 * x / (1 + kom2e * x)**2 - 2.0d0 * alpha2e * kom2e**2 * (kom2e * x**2 + p) / (1 + kom2e * x)**3) / dene**2
+!
+            dydx6 = 2.0d0 * x * (alpha1f * kom1f / (1 + kom1f * x) + alpha2f * kom2f / (1 + kom2f * x))**2 / denf &
+                     + 2.0d0 * x**2 * (alpha1f * kom1f / (1 + kom1f * x) + alpha2f * kom2f / (1 + kom2f * x)) * &
+                     (-1.0d0 * alpha1f * kom1f**2 / (1 + kom1f * x)**2 - alpha2f * kom2f**2 / (1 + kom2f * x)**2) / denf &
+                     -x**2 * (alpha1f * kom1f / (1 + kom1f * x) + alpha2f * kom2f / (1 + kom2f * x))**2 * &
+                     (2.0d0 * alpha1f * kom1f**2 * x / (1 + kom1f * x)**2 - 2.0d0 * alpha1f * kom1f**2 * (kom1f * x**2 + p) / (1 + kom1f * x)**3 &
+                     + 2.0d0 * alpha2f * kom2f**2 * x / (1 + kom2f * x)**2 - 2.0d0 * alpha2f * kom2f**2 * (kom2f * x**2 + p) / (1 + kom2f * x)**3) / denf**2
+
+!     Define Function
+            f = x - m0 - ( &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKA) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKA) % mol_wt - (dble(tppmg(nn, 10))))) *  &
+            7.226D-01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * y1 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_AROM) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_AROM) % mol_wt - (dble(tppmg(nn, 14))))) *  &
+            1.6898D+01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * y2 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_TOLU) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_TOLU) % mol_wt - (dble(tppmg(nn, 13))))) *  &
+            1.14315D+01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * y3 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            5.167D-02 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * y4 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            3.810D+00 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * y5 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            3.810D+00 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS))  * y6  )
+
+!  Derivative of function:
+            df = 1.0d0 - ( &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKA) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKA) % mol_wt - (dble(tppmg(nn, 10))))) *  &
+            7.226D-01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx1 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_AROM) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_AROM) % mol_wt - (dble(tppmg(nn, 14))))) *  &
+            1.6898D+01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx2 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_TOLU) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_TOLU) % mol_wt - (dble(tppmg(nn, 13))))) *  &
+            1.14315D+01 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx3 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            5.167D-02 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx4 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            3.81D+00 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx5 + &
+            dmax1(0.0d0, &
+            (dble(busdyn(sm(sp_ALKE) % dyn_offset + ik(i, k, chm_ni))) * dble(conv1(nn)) / sm(sp_ALKE) % mol_wt - (dble(tppmg(nn, 12))))) *  &
+            3.81D+00 * dble(p2d(i, k)) / dble(metvar3d(i, k, MV3D_TPLUS)) * dydx6 )
+
+!  Third approximation of variable:
+             x = x - f / df
+!        write(chm_lun_out, *) '3rd iteration f df x: ', f, df, x
+!  'x' is the new value of M0 at the current time.  What's needed for later size apportionment
+!  in CAM is the change in M0 values:  Assign this to "ma" and convert back to ug/kg:
+!
+            busvol(sm(sp_NWOC) % vol_offset + ik(i, k, chm_ni)) = real(dmax1(x - m0, 0.0d0)) / rho(i, k)
+
+         end if
+      end do
+   end do
+
+   return
+end
+
+
+
+
+
+
+
+
+
+

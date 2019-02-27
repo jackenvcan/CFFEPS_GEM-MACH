@@ -1,0 +1,87 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+!
+!!if_on
+ subroutine chm_chk_tendencies(busvol,busvol_size)
+!!if_off
+  use chm_utils_mod,        only: ik
+  use chm_nml_mod,          only: chm_diag_colum_l
+  use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+  use chm_species_idx_mod,  only: sp_tend_o3, sp_diff_o3, &
+    sp_col_o3   , sp_col_no2  , sp_col_no  , sp_col_hu  , &
+    sp_tcol_o3  , sp_tcol_no2 , sp_tcol_no , sp_tcol_pan, &
+    sp_tcol_hno3, sp_tcol_n2o5, sp_tcol_so2, sp_tcol_so4, &
+    sp_tcol_co  , sp_tcol_hcho, sp_tcol_isop
+  use chm_species_info_mod, only: sm
+  implicit none
+!!if_on
+  integer(kind=4), intent   (in) :: busvol_size
+  real(kind=4),    intent(inout) :: busvol(busvol_size)
+!!if_off
+! 
+! Local variables 
+! 
+  integer(kind=4) :: i,j,k
+
+  if( .not. chm_diag_colum_l ) return
+
+   do k = 1, chm_nk
+      do i = 1, chm_ni
+         busvol(sm(sp_tend_o3) % vol_offset + ik(i, k, chm_ni)) = 0.0
+         busvol(sm(sp_diff_o3) % vol_offset + ik(i, k, chm_ni)) = 0.0
+
+! 3D total columns
+         busvol(sm(sp_col_o3)  % vol_offset + ik(i, k, chm_ni)) = 0.0
+
+         busvol(sm(sp_col_no2) % vol_offset + ik(i, k, chm_ni)) = 0.0
+
+         busvol(sm(sp_col_no)  % vol_offset + ik(i, k, chm_ni)) = 0.0
+
+         busvol(sm(sp_col_hu)  % vol_offset + ik(i, k, chm_ni)) = 0.0
+
+      end do
+   end do
+
+! 2D total columns
+   do i = 1, chm_ni
+      busvol(sm(sp_tcol_o3)   % vol_offset + i - 1 ) = 0.0
+
+      busvol(sm(sp_tcol_no2)  % vol_offset + i - 1 ) = 0.0
+
+      busvol(sm(sp_tcol_no)   % vol_offset + i - 1 ) = 0.0
+
+      busvol(sm(sp_tcol_pan)  % vol_offset + i - 1 ) = 0.0
+
+      busvol(sm(sp_tcol_hno3) % vol_offset + i - 1 ) = 0.0
+
+      busvol(sm(sp_tcol_n2o5) % vol_offset + i - 1 ) = 0.0
+
+      busvol(sm(sp_tcol_so2)  % vol_offset + i - 1 ) = 0.0
+
+      busvol(sm(sp_tcol_so4)  % vol_offset + i - 1 ) = 0.0
+
+      busvol(sm(sp_tcol_co)   % vol_offset + i - 1 ) = 0.0
+
+      busvol(sm(sp_tcol_hcho) % vol_offset + i - 1 ) = 0.0
+
+      busvol(sm(sp_tcol_isop) % vol_offset + i - 1 ) = 0.0
+   end do
+!
+ end subroutine chm_chk_tendencies

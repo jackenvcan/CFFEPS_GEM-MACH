@@ -1,0 +1,590 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : chm_load_emissions.ftn90
+! Creation       : A. Kallaur (MSC/ARQI), Octobre 2006
+! Description    : Read from file (if need be) for major point sources.
+!                  
+! Modification1   : December 2010 (A. Kallaur)
+!                   Adaptation to GEM4.4.0+ new interface.
+!                   Chemical buses no longer exist, so all emissions data
+!                   is written to the permanent Physics bus.
+!
+! 
+!  modified Oct 2016 Jack Chen
+!   if (chm_get_fire_emis_l=.true.) open separate mjr-point file specific 
+!    for fire emissions
+!   read CFFEPS output including new hourly plumeirse parameters
+!
+!==============================================================================
+!!if_on
+subroutine chm_load_emissions (F_basedir_S, gem_datimeo, i_gem_dt, F_phy_lcl_ni, F_phydim_ni, gem_tstep_num)
+!!if_off
+   use ISO_C_BINDING
+   use chm_utils_mod,   only: global_debug, chm_lun_out
+   use chm_nml_mod,     only: chm_master, chm_emis_master, chm_get_mj_emis_l, chm_do_mjpts_l, em_nesdt, chm_step_factor, &
+                              chm_get_fire_emis_l
+   use chm_species_info_mod, only: nb_species, species_master, unassigned
+   use chm_datime_mod,  only: chm_dttim, inv_secondsin1hour
+   use chm_mjrpts_sortinfo_mod
+   use chm_headers_mod, only: chm_mjrpts_get_stkinfo, chm_mjrpts_get_size, &
+                              chm_plumerise_prep_emiss, chm_mjrpts_get_emissions, chm_fst_openfile, chm_fst_closefile, &
+                              chm_mjrpts_get_plmriseinfo
+! new:
+   use ezgrid_mod,      only: ezgrid_find_ij0
+   use hgrid_wb,        only: hgrid_wb_get
+
+   implicit none
+   include 'RPN_COMM.inc'
+!!if_on
+   character(len=*)            :: F_basedir_S  !- base path for input data file
+   integer(kind=4), intent(in) :: i_gem_dt, F_phy_lcl_ni, F_phydim_ni
+   integer(kind=4), intent(in) :: gem_datimeo
+   integer(kind=4), intent(in) :: gem_tstep_num
+!!if_off
+#include <WhiteBoard.hf>
+ interface mapmod2phy
+    function mapmod2phy(ix,jx,lcl_ni,dim_ni)
+    integer(kind=4) :: ix,jx,lcl_ni,dim_ni
+    integer(kind=4), dimension(2) :: mapmod2phy
+    end function mapmod2phy
+ end interface mapmod2phy
+!
+   external newdate
+   integer(kind=4) newdate
+!
+! Local variables
+!
+   character(len=512)                             :: Major_point_file, Fire_point_file
+   character(len=50)                              :: mesg
+   real(kind=8)                                   :: gem_dt_8
+   integer(kind=4)                                :: datev, ier, err, int_x, int_y, istatus, ij(2)
+   integer(kind=4)                                :: l_zplm, l_rsmk
+   real(kind=8)                                   :: nhours
+   real(kind=4), save                             :: nsec = 0.
+   real(kind=4)                                   :: nsec_tmp, last_read
+   logical(kind=4)                                :: local_dbg, did_stack_info, init_done
+   logical(kind=4),save                           :: print_once=.true.
+   integer(kind=4),parameter                      :: maxtr3d=250
+   integer(kind=4)                                :: mjp_unf !Major_point_file unit number
+   integer(kind=4)                                :: fir_unf !Fire_point_file unit number
+   integer(kind=4)                                :: i, il, bin_nb
+   integer(kind=4)                                :: lphy_gid, global_gid
+   integer(kind=4)                                :: i0, j0, lni, lnj
+   integer(kind=4)                                :: lx_lbound, lx_ubound, ly_lbound, ly_ubound
+   integer(kind=4),save                           :: my_pe
+   integer(kind=4)                                :: numproc 
+   integer(kind=4)                                :: lnb_sources_x
+   integer(kind=4),save                           :: na_sources ! input mjrpt file sources
+   integer(kind=4),save                           :: nf_sources ! input fire sources
+   integer(kind=4),save                           :: nb_sources, nb_me_species
+   integer(kind=4), dimension(:), allocatable     :: pe_info, loc_src
+   integer(kind=4), dimension(:,:), allocatable   :: pi0_j0, rpi0_j0
+   real(kind=4), dimension(:), allocatable        :: lat,lon,hgt,dia,tem,vel,typ,lat2x,lon2y
+   real(kind=4), dimension(:), allocatable        :: zplm,rsmk   !!time dept. fire plume rise parameters from CFFEPS
+   real(kind=4), dimension(:,:), allocatable      :: Stack_Info, Stack_Emis
+   real(kind=4), dimension(:,:), allocatable      :: Stack_Emis_a, Stack_Emis_f
+   type(rpncomm_context), save                    :: mjr_context=NULL_rpncomm_context
+   character(len=4),dimension(maxtr3d)            :: build_em_names
+   integer(kind=4)                                :: dum1,dum2
+   character(len=4),dimension(:),allocatable,save :: mj_names
+!
+!  Declaration of external functions and subroutines
+   integer(kind=4), external                      :: gdxyfll
+
+! Set debug switch
+
+   local_dbg = ((.true. .or. global_debug) .and. (chm_lun_out > 0))
+
+   if (local_dbg) then
+      write(chm_lun_out,*) 'Inside chm_load_emissions'
+   endif
+!
+!
+!  Detect Master switch. If false, NORMAL EXIT WITH MESSAGE 
+!
+   if (.not.chm_master) then
+      if(print_once) then
+         write(chm_lun_out, *) &
+           'CHM_LOAD_EMISSIONS -> DETECTED CHEMICAL MASTER KILL: NO EMISSIONS, NORMAL EXIT'
+         print_once = .false.
+      endif
+      return
+   endif
+!
+   chm_dttim = gem_datimeo
+!
+!  Detect EMISSIONS Master switch. If false, NORMAL EXIT WITH MESSAGE -> NO EMISSIONS READ IN
+!
+   if (.not.chm_emis_master) then
+      if(print_once) then
+         write(chm_lun_out, *) &
+           'CHM_LOAD_EMISSIONS -> DETECTED EMISSIONS MASTER KILL: NO EMISSIONS, NORMAL EXIT'
+         print_once = .false.
+      endif
+      return
+   endif
+!
+!  Detect if Major Points Emissions switch
+!
+   if (.not.chm_get_mj_emis_l) then
+      if(print_once) then
+         write(chm_lun_out, *) &
+           'CHM_LOAD_EMISSIONS -> DETECTED NO MAJOR POINTS EMISSIONS, NORMAL EXIT'
+         print_once = .false.
+      endif
+      return
+   else
+      Major_point_file   = trim(F_basedir_S)//'/MODEL_INPUT/Mjrpts_emissions.fst'
+      if(print_once) then
+         write(chm_lun_out, *) &
+           'CHM_LOAD_EMISSIONS -> MAJOR POINTS EMISSIONS FILE is ', Major_point_file
+         print_once = .false.
+      endif
+   endif
+!
+!   Detect if get fire emissions as major point source
+!
+   if (chm_get_fire_emis_l) then
+      Fire_point_file = trim(F_basedir_S)//'/MODEL_INPUT/Mjrpts_fire_emissions.fst'
+      write(chm_lun_out, *) 'CHM_LOAD_EMISSIONS -> MAJOR POINTS __FIRE__ EMISSIONS ', Fire_point_file
+   endif
+
+
+!
+  istatus = 0
+  mesg = ''
+  did_stack_info = .false. 
+  IF_FIRST: if ( RPN_COMM_is_null(mjr_context)) then
+
+     did_stack_info = .true. 
+     err = WB_OK
+ 
+     err = min(hgrid_wb_get('model/Hgrid/global' ,global_gid ),err)
+     err = min(hgrid_wb_get('model/Hgrid/lclphy' ,lphy_gid ),err)
+     if (.not.WB_IS_OK(err)) istatus = -1
+     call chm_stop('chm_load_emissions wb_get',istatus)
+
+     nullify(Lstack_info)
+
+     call rpn_comm_rank ('GRID', my_pe, err)
+     call rpn_comm_size ('GRID', numproc, err)
+     allocate (pi0_j0(ndata,numproc),rpi0_j0(ndata,numproc))
+!
+     pi0_j0(:,:) = 0
+     rpi0_j0(:,:) = 0
+
+     err = ezgrid_find_ij0(lphy_gid,global_gid,i0,j0,lni,lnj)
+
+     pi0_j0(1,my_pe+1) = i0
+     pi0_j0(2,my_pe+1) = j0
+     pi0_j0(3,my_pe+1) = lni
+     pi0_j0(4,my_pe+1) = lnj
+     pi0_j0(5,my_pe+1) = my_pe
+     call rpn_comm_reduce(pi0_j0, rpi0_j0, ndata*numproc, "MPI_INTEGER", "MPI_SUM", 0, "grid", err)
+     
+     IF_PE0: if(my_pe == 0) then
+
+        if (local_dbg) then
+         write(chm_lun_out, *) ' '
+         write(chm_lun_out, *) '-------BEGINNING of TIME=0 setup of chm_load_emissions ------- '
+         write(chm_lun_out, *) '==============================================================='
+        endif
+
+        mjp_unf=0
+        call chm_fst_openfile(mjp_unf, Major_point_file, 'RND+OLD', 'RND',ier)
+        if (ier < 0 ) then
+           mesg='problem with Major_point_file'
+           go to 999
+        endif
+        if ( chm_get_fire_emis_l ) then
+           fir_unf=12
+           call chm_fst_openfile(fir_unf, Fire_point_file, 'RND+OLD', 'RND',ier)
+           if (ier < 0 ) call chm_stop('problem with open Fire_point_file' ,-1)
+        endif
+
+        call chm_mjrpts_get_size(mjp_unf, na_sources,istatus)
+        if (istatus < 0 ) then
+           mesg='problem with chm_mjrpts_get_size'
+           go to 999
+        endif
+        if (local_dbg) write(chm_lun_out, *) 'number of mjr-pt sources:', na_sources
+
+        if ( chm_get_fire_emis_l ) then
+           call chm_mjrpts_get_size(fir_unf, nf_sources,istatus)
+           if (istatus < 0) call chm_stop('error getting fire mjr pt sources' ,istatus)
+           if (local_dbg) write(chm_lun_out, *) 'number of FIRE mjr-pt source:', nf_sources
+        else
+           nf_sources = 0
+        endif
+
+        nb_sources = na_sources + nf_sources
+
+        if (local_dbg) then
+           write(chm_lun_out, *) ' '
+           write(chm_lun_out, *) 'number of majr pt source index: ', 1, na_sources
+           if ( chm_get_fire_emis_l ) &
+              write(chm_lun_out, *) 'number of fire pt source index: ', na_sources+1, nf_sources
+           write(chm_lun_out, *) 'Total number of sources: ', nb_sources
+        endif
+
+        allocate (lat(nb_sources),lon(nb_sources),hgt(nb_sources), dia(nb_sources),&
+                  tem(nb_sources),vel(nb_sources),typ(nb_sources))
+        allocate (lat2x(nb_sources),lon2y(nb_sources))
+
+        if ( .not. chm_get_fire_emis_l ) then
+           call chm_mjrpts_get_stkinfo(mjp_unf,lat,lon,hgt,dia,tem,vel,typ,nb_sources,istatus)
+           if (istatus < 0) call chm_stop('error getting stkinfo',istatus)
+        else
+           write(chm_lun_out, *) 'chm_load_emissions: reading majr pt info src::', 1, na_sources
+           call chm_mjrpts_get_stkinfo(mjp_unf,lat(1:na_sources), &
+                                               lon(1:na_sources), &
+                                               hgt(1:na_sources), &
+                                               dia(1:na_sources), &
+                                               tem(1:na_sources), &
+                                               vel(1:na_sources), &
+                                               typ(1:na_sources), &
+                                               na_sources, istatus)
+           if (istatus < 0) call chm_stop('error getting stkinfo',istatus)
+           write(chm_lun_out, *) 'chm_load_emissions: reading fire pt info src:', na_sources+1, nb_sources
+           call chm_mjrpts_get_stkinfo(fir_unf,lat(na_sources+1:nb_sources), &
+                                                 lon(na_sources+1:nb_sources), &
+                                                 hgt(na_sources+1:nb_sources), &
+                                                 dia(na_sources+1:nb_sources), &
+                                                 tem(na_sources+1:nb_sources), &
+                                                 vel(na_sources+1:nb_sources), &
+                                                 typ(na_sources+1:nb_sources), &
+                                                 nf_sources, istatus)
+           if (istatus < 0) call chm_stop('error getting fire stkinfo',istatus)
+           write(chm_lun_out, *) 'chm_load_emissions: overriding "TYP=500" for fire sources', na_sources+1, nb_sources
+           typ(na_sources+1:nb_sources) = 500.
+        endif
+
+        if (istatus < 0 ) then
+           mesg='problem with chm_mjrpts_get_stkinfo'
+           go to 999
+        endif
+        if (local_dbg) then
+         write(chm_lun_out, *) ' '
+         write(chm_lun_out, *) 'stack info read        '
+        endif
+
+        do i = 1, nb_sources
+           if (lon(i) < 0) then
+              lon(i) = lon(i) + 360.
+           end if
+        end do
+        ier = gdxyfll(global_gid, lat2x, lon2y, lat, lon, nb_sources)
+
+        allocate (loc_src(numproc))
+        allocate (pe_info(nb_sources))
+        allocate (Stack_Info(nb_sources, ndata))
+        loc_src = 0
+        pe_info = -1
+        Stack_Info = -1.0
+        do i = 1, nb_sources
+!          Round to the nearest i-j point
+           int_x = nint(lat2x(i))
+           int_y = nint(lon2y(i))
+!
+           do il = 1,numproc
+             lx_lbound = rpi0_j0(1,il)                      ! i0 
+             lx_ubound = rpi0_j0(1,il)+ rpi0_j0(3,il) -1    ! in
+             ly_lbound = rpi0_j0(2,il)                      ! j0
+             ly_ubound = rpi0_j0(2,il)+ rpi0_j0(4,il) -1    ! jn
+
+             if ( int_x .ge. lx_lbound .and. int_x .le. lx_ubound  .and. &
+                  int_y .ge. ly_lbound .and. int_y .le. ly_ubound ) then
+                  pe_info(i)            = rpi0_j0(5,il) ! pe
+                  loc_src(il) = loc_src(il)+1
+             endif
+           enddo
+
+           Stack_Info(i,i_gilc)= real(int_x)        ! i-index on full physics grid
+           Stack_Info(i,i_gjlc)= real(int_y)        ! j-index on full physics grid
+           Stack_Info(i,i_hgt )= hgt(i)             ! height of stack
+           Stack_Info(i,i_dia )= dia(i)             ! diameter of stack
+           Stack_Info(i,i_tem )= tem(i)             ! exit temperature of stack plume
+           Stack_Info(i,i_vel )= vel(i)             ! exit velocity of stack plume
+           Stack_Info(i,i_typ )= typ(i)             ! flag for forest fire (fire=500, others=100)
+           Stack_Info(i,i_ptlat)= lat(i)
+           Stack_Info(i,i_ptlon)= lon(i)
+        enddo
+        if (local_dbg) then
+         write(chm_lun_out,*)' -- for each of the ', numproc ,' processors, respective local sources are ',loc_src
+           do il = 1,numproc
+             lx_lbound = rpi0_j0(1,il)                      ! i0 
+             lx_ubound = rpi0_j0(1,il)+ rpi0_j0(3,il) -1    ! in
+             ly_lbound = rpi0_j0(2,il)                      ! j0
+             ly_ubound = rpi0_j0(2,il)+ rpi0_j0(4,il) -1    ! jn
+             write(chm_lun_out,*)' -- for processor ', il-1 ,' g_i0, g_in, g_j0, g_jn are ',lx_lbound,lx_ubound,ly_lbound,ly_ubound
+           enddo
+        endif
+        call chm_fst_closefile(mjp_unf)
+        if ( chm_get_fire_emis_l ) call chm_fst_closefile(fir_unf)
+
+        deallocate (lat,lon, hgt, dia,tem,vel,lat2x,lon2y)
+        deallocate (loc_src)
+ 999    continue
+     else ! IF_PE0:
+        allocate (pe_info(1))          
+        allocate (Stack_Info(1,1))          
+     endif IF_PE0
+
+     call chm_stop(mesg,istatus) 
+     deallocate (pi0_j0,rpi0_j0)
+ 
+     err = RPN_COMM_spread_context(mjr_context,'GRID',0,pe_info,nb_sources)
+     if ( err /= 0 ) istatus = -1
+     call chm_stop('problem chm_load_emissions spread_context',istatus)
+
+     if (local_dbg) then
+       if ( .not. RPN_COMM_is_null(mjr_context)) then
+         write(chm_lun_out,*)'pointer mjr_context is now associated '
+       endif
+     endif
+
+!    From global array Stack_Info of dimension (nb_sources,ndata) obtain
+!         local POINTER Lstack_Info for dimension (ndata,lnb_sources)
+!         since some sources may not be part of the domain Sum(lnb_sources) /= nb_sources
+
+     lnb_sources = RPN_COMM_spread(mjr_context,Stack_Info,nb_sources,ndata,Lstack_info)
+     if (local_dbg) then
+       if(associated(Lstack_info)) then
+         write(chm_lun_out,*)'Lstack_info is now associated with dimension ',shape(Lstack_info)
+       endif
+     endif
+
+     call chm_stop('chm_load_emissions rpn_comm_spread',lnb_sources)
+     if ( lnb_sources > 0 ) then
+       chm_do_mjpts_l = .true.
+     endif
+     if (local_dbg) then
+        write(chm_lun_out,*)' -- for processor ', my_pe ,' chm_do_mjpts_l is ', chm_do_mjpts_l
+        write(chm_lun_out,*)' -- for processor ', my_pe ,' RPN_COMM_spread returned ',lnb_sources , ' sources'
+     endif
+
+     deallocate(pe_info)
+     deallocate(Stack_Info)
+
+!    remap global i/j indices to local indices
+
+     do i = 1, lnb_sources
+        int_x = int(lstack_info(i_gilc,i))-i0+1
+        int_y = int(lstack_info(i_gjlc,i))-j0+1
+        ij = mapmod2phy(int_x,int_y,F_phy_lcl_ni,F_phydim_ni)
+        lstack_info(i_gilc,i) = real(ij(1))
+        lstack_info(i_gjlc,i) = real(ij(2))
+     enddo
+!    insure stack height is at least 0.8m
+     lstack_info(i_hgt,:) = max(lstack_info(i_hgt,:), 0.8)
+
+!  Number of major point species to be read
+
+     nb_me_species = 0
+     do i = 1, nb_species
+        if (species_master(i) % nb_bins <= 1) then
+           if (species_master(i) % me_name /= UNASSIGNED) then
+              nb_me_species = nb_me_species + 1
+              build_em_names(nb_me_species)= species_master(i) % me_name
+           end if
+        else
+           do bin_nb = 1, species_master(i) % nb_bins
+              if (species_master(i) % bins_array(bin_nb) % me_name /= UNASSIGNED) then
+                 nb_me_species = nb_me_species + 1
+                 build_em_names(nb_me_species)= species_master(i) % bins_array(bin_nb) % me_name
+              end if
+           end do
+        end if
+     end do
+     allocate(mj_names(nb_me_species))
+     mj_names(1:nb_me_species) = build_em_names(1:nb_me_species)
+
+     if (local_dbg) then
+      write(chm_lun_out,*)'found ',nb_me_species,' mjr point emissions types to read '
+      write(chm_lun_out,*)' mjr point emissions types are '
+      do i = 1, nb_me_species
+         write(chm_lun_out,*)' ',i, mj_names(i)
+      enddo
+     endif
+!
+      nullify(Vstack_info)
+      nullify(Lstack_Emis)
+      if (local_dbg) then
+      write(chm_lun_out, *) ' '
+      write(chm_lun_out, *) '-------END of TIME=0 setup of chm_load_emissions ------- '
+      write(chm_lun_out, *) '============================================================'
+      endif
+
+  endif IF_FIRST
+
+  init_done = .false. 
+  nsec_tmp = real(gem_tstep_num) * real(i_gem_dt)
+  if ( nsec_tmp < nsec ) init_done = .true.
+  nsec = nsec_tmp
+
+! read emissions at em_nesdt interval. Except for restart when we may have to read previous emissions.
+
+  IF_READ : if ( mod(nsec,em_nesdt) == 0 .or. did_stack_info .or. init_done ) then
+     if (local_dbg) then
+       write(chm_lun_out, *) ' '
+       write(chm_lun_out, *) '-------BEGINNING of emission read in chm_load_emissions ------- '
+       write(chm_lun_out, *) '-------for step ', gem_tstep_num
+       write(chm_lun_out, *) '==============================================================='
+       if(associated(Lstack_emis)) then
+          write(chm_lun_out,*)'Lstack_emis is already associated with dimension ',shape(Lstack_emis)
+          write(chm_lun_out,*)'We have been here before Dorothy....'
+       endif
+       if(associated(Vstack_info)) write(chm_lun_out,*)'Vstack_info is already associated with dimension ',shape(Vstack_info)
+     endif
+     
+     err = 0 
+     if(my_pe == 0) then
+         Major_point_file   = trim(F_basedir_S)//'/MODEL_INPUT/Mjrpts_emissions.fst'
+         mjp_unf=0
+         call chm_fst_openfile(MJP_UNF, Major_point_file, 'RND+OLD', 'RND',ier)
+         if ( chm_get_fire_emis_l ) then
+            Fire_point_file = trim(F_basedir_S)//'/MODEL_INPUT/Mjrpts_fire_emissions.fst'
+            fir_unf=12
+            call chm_fst_openfile(fir_unf, Fire_point_file, 'RND+OLD', 'RND',ier)
+            if (local_dbg) write(chm_lun_out, *) '---opened fire emissions file:',Fire_point_file
+         endif
+         gem_dt_8 = dble(i_gem_dt)
+         nhours = dble(gem_tstep_num) * gem_dt_8 * inv_secondsin1hour
+         call incdatr(datev, gem_datimeo, nhours)
+
+         allocate (Stack_Info(nb_sources,ntvar))
+         allocate (Stack_Emis(nb_sources,nb_me_species))
+         if (local_dbg) then
+            err=newdate(datev,dum1,dum2,-3)
+            write(chm_lun_out, *) ' '
+            write(chm_lun_out, *) '-------reading major point emissions for date = ',dum1, ' and time = ',dum2
+         endif
+         if ( .not. chm_get_fire_emis_l ) then
+            call chm_mjrpts_get_emissions(mjp_unf,Stack_Emis,nb_sources,nb_me_species,mj_names,datev,err)
+         else
+            allocate(Stack_Emis_a(na_sources,nb_me_species))
+            allocate(Stack_Emis_f(nf_sources,nb_me_species))
+            call chm_mjrpts_get_emissions(mjp_unf,Stack_Emis_a,na_sources,nb_me_species,mj_names,datev,err)
+            call chm_mjrpts_get_emissions(fir_unf,Stack_Emis_f,nf_sources,nb_me_species,mj_names,datev,err)
+            Stack_Emis(1:na_sources,:) = Stack_Emis_a(:,:)
+            Stack_Emis(na_sources+1:nb_sources,:) = Stack_Emis_f(:,:)
+            deallocate(Stack_Emis_a, Stack_Emis_f)
+         endif
+
+         if ( err < 0 .and. (did_stack_info .or. init_done) ) then
+            if ( mod(nsec,em_nesdt) /= 0 ) then
+               last_read = floor(nsec/em_nesdt)
+               nhours = real(last_read) * em_nesdt * inv_secondsin1hour
+               call incdatr(datev, gem_datimeo, nhours)
+               if (local_dbg) then
+                  err=newdate(datev,dum1,dum2,-3)
+                  write(chm_lun_out, *) '-------possible restart or end of digital filter......  '
+                  write(chm_lun_out, *) '-------reading major point emissions for date = ',dum1, ' and time = ',dum2
+               endif
+               if ( .not. chm_get_fire_emis_l ) then
+                  call chm_mjrpts_get_emissions(mjp_unf,Stack_Emis,nb_sources,nb_me_species,mj_names,datev,err)
+               else
+                  allocate(Stack_Emis_a(na_sources,nb_me_species))
+                  allocate(Stack_Emis_f(nf_sources,nb_me_species))
+                  call chm_mjrpts_get_emissions(mjp_unf,Stack_Emis_a,na_sources,nb_me_species,mj_names,datev,err)
+                  call chm_mjrpts_get_emissions(fir_unf,Stack_Emis_f,nf_sources,nb_me_species,mj_names,datev,err)
+                  Stack_Emis(1:na_sources,:) = Stack_Emis_a(:,:)
+                  Stack_Emis(na_sources+1:nb_sources,:) = Stack_Emis_f(:,:)
+                  deallocate(Stack_Emis_a, Stack_Emis_f)
+               endif
+             endif
+         else
+             mesg='problem with chm_mjrpts_get_missions'
+         endif
+         if ( chm_get_fire_emis_l ) then
+            allocate ( zplm(nf_sources), rsmk(nf_sources) ) ! for time dependent stack parameter
+            if (local_dbg) write(chm_lun_out, *) 'reading fire pt source info rsmk zplm:', nf_sources
+            call chm_mjrpts_get_plmriseinfo(fir_unf,rsmk,zplm,nf_sources,datev,err)
+            if ( err < 0 ) call chm_stop('problem with chm_mjrpts_get_plmriseinfo',err)
+            l_zplm = 1
+            l_rsmk = 2
+            do i = 1, nf_sources
+               Stack_Info(na_sources+i,l_zplm ) = zplm(i)
+               Stack_Info(na_sources+i,l_rsmk ) = rsmk(i)
+            enddo
+            call chm_fst_closefile(fir_unf)
+            deallocate(zplm, rsmk)
+         endif
+     else
+         allocate (Stack_Info(1,1))
+         allocate (Stack_Emis(1,1))
+     endif ! end PE=0 read
+
+     call chm_stop(mesg,err) 
+
+!====Stack EMISSIONS
+!    From global array Stack_Emis of dimension (nb_sources,nb_me_species) obtain
+!         local POINTER Lstack_emis for dimension (nb_me_species,lnb_sources_x)
+!         lnb_sources should be equal to lnb_sources_x
+     if (local_dbg) write(chm_lun_out,*)'PE:',my_pe,'calling spread for Stack_Emis->lstack_emis:',shape(Lstack_emis)
+     lnb_sources_x = RPN_COMM_spread(mjr_context,Stack_Emis,nb_sources,nb_me_species,lstack_emis)
+     if (local_dbg) then
+       if(associated(Lstack_emis)) then
+         write(chm_lun_out,*)'PE:',my_pe,'Lstack_emis is associated with dimension ',shape(Lstack_emis)
+       endif
+     endif
+     istatus=0
+     if (lnb_sources_x /= lnb_sources) istatus=-1
+     call chm_stop('chm_load_emissions inconsistent number of local sources',istatus)
+
+!====Time varying Stack INFO
+!
+     if (local_dbg) write(chm_lun_out,*)'PE:',my_pe,'calling spread for Stack_Info->Vstack_info: ', shape(Vstack_Info)
+     lnb_sources_x = RPN_COMM_spread(mjr_context,Stack_Info,nb_sources,ntvar,Vstack_info)
+     if (local_dbg) then
+       if(associated(Vstack_info)) then
+         write(chm_lun_out,*)'PE:',my_pe,'Vstack_info is now associated with dimension ',shape(Vstack_info)
+       endif
+     endif
+     l_zplm = 1  ! define for PE !=0
+     l_rsmk = 2
+     do i=1,lnb_sources
+        Lstack_info(i_zplm,i) = Vstack_info(l_zplm,i)
+        Lstack_info(i_rsmk,i) = Vstack_info(l_rsmk,i)
+     enddo
+
+     deallocate(Stack_Emis)
+     deallocate(Stack_Info)
+
+     if (did_stack_info .and. chm_do_mjpts_l) &
+        call chm_plumerise_prep_emiss(lstack_emis,mj_names,nb_me_species)
+  endif IF_READ
+
+  return
+
+end subroutine chm_load_emissions
+

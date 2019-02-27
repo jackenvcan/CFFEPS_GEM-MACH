@@ -1,0 +1,333 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : chm_getphybus_struct.ftn90
+! Creation       : A. Kallaur (MSC/ARQI) and V.Lee (MSC/RPN) - July 2005
+! Description    : Extract selected (depending on the chem. scheme)
+!                  physics variable information (offset, size, initialize (yes, no->1, 0))
+!                  from the the physics buses. This is organised via the subroutine
+!                  callback method
+!
+! Extra info     :
+!
+! Arguments:
+!           IN
+!
+!==============================================================================
+!!if_on
+subroutine chm_getphybus_struct( )
+!!if_off
+
+   use phy_typedef, only: PHY_MAXNAMELENGTH,phymeta
+   use phygetmetaplus_mod, only: phymetaplus,phygetmetaplus
+   use chm_utils_mod,  only: chm_lun_out, global_debug
+   use chm_phyvar_mod
+   implicit none
+
+#include <clib_interface_mu.hf>
+!
+! Local variables
+!
+   integer(kind=4), parameter       :: MAX_PARAMS = 8,  NVARMAX = 1000
+   integer(kind=4)                  :: busidx,params(MAX_PARAMS),istat,icheck,ikfc
+   integer(kind=4)                  :: i, nmeta
+   character(len=4)                 :: outname_S,bus_S,inname_S
+   character(len=PHY_MAXNAMELENGTH) :: varname_S,prefix_S,basename_S,time_S,ext_S
+   type(phymetaplus), pointer       :: pmetaplus(:)
+   type(phymeta)                    :: pmeta
+   logical(kind=4)                  :: local_dbg
+!
+   local_dbg = (.false. .or. global_debug)
+   if (local_dbg) then
+      write(chm_lun_out, *) 'in chm_getphybus_struct'
+      write(chm_lun_out, *) " "
+   endif
+!
+!  Get from the PHYS. DYN. bus.
+   nullify(pmetaplus)
+   nmeta = phygetmetaplus(pmetaplus,F_name=' ',F_npath='V',F_bpath='D',F_maxmeta=NVARMAX, F_quiet=.true.,F_shortmatch=.false.)
+   call chm_stop('chm_getphybus dyn bus get',nmeta)
+   icheck = 0
+   do i=1,nmeta
+     pmeta=pmetaplus(i)%meta
+     varname_S = pmeta%vname
+     istat = clib_toupper(varname_S)
+     call gmmx_name_parts(varname_S,prefix_S,basename_S,time_S,ext_S)
+     if (time_S ==':P') then
+        if (basename_S == 'PW_P0') then
+           pplus=pmetaplus(i)%index
+           icheck = icheck + 1
+        elseif (basename_S == 'PW_PM') then
+           sigm=pmetaplus(i)%index
+           icheck = icheck + 1
+        elseif (basename_S == 'PW_PT') then
+           sigt=pmetaplus(i)%index
+           icheck = icheck + 1
+        elseif (basename_S == 'PW_TT') then
+           tplus=pmetaplus(i)%index
+           icheck = icheck + 1
+        elseif (basename_S == 'PW_UU') then
+           uplus=pmetaplus(i)%index
+           icheck = icheck + 1
+        elseif (basename_S == 'PW_VV') then
+           vplus=pmetaplus(i)%index
+           icheck = icheck + 1
+        elseif (basename_S == 'PW_WZ') then
+           wplus=pmetaplus(i)%index
+           icheck = icheck + 1
+        endif
+        if (prefix_S == 'TR/') then
+           if (basename_S == 'HU') then
+              huplus=pmetaplus(i)%index
+              icheck = icheck + 1
+           elseif (basename_S == 'QC'.or. basename_S == 'MPQC' ) then
+              qcplus=pmetaplus(i)%index
+              icheck = icheck + 1
+           endif
+        endif
+     elseif (time_S ==':M') then
+        if (basename_S == 'PW_ME') then
+           mt=pmetaplus(i)%index
+           icheck = icheck + 1
+        endif
+     endif
+   enddo
+   if (icheck /= 10)  local_dbg =.true.
+
+   if (local_dbg) then
+      write(chm_lun_out, *) 'FROM PHYS DYN BUS:'
+      write(chm_lun_out, *) 'PPLUS    -> (offset) :', pplus   
+      write(chm_lun_out, *) 'SIGM     -> (offset) :', sigm   
+      write(chm_lun_out, *) 'SIGT     -> (offset) :', sigt  
+      write(chm_lun_out, *) 'TPLUS    -> (offset) :', tplus
+      write(chm_lun_out, *) 'UPLUS    -> (offset) :', uplus   
+      write(chm_lun_out, *) 'VPLUS    -> (offset) :', vplus  
+      write(chm_lun_out, *) 'WPLUS    -> (offset) :', wplus 
+      write(chm_lun_out, *) 'HUPLUS   -> (offset) :', huplus  
+      write(chm_lun_out, *) 'QCPLUS   -> (offset) :', qcplus 
+      write(chm_lun_out, *) 'MT       -> (offset) :', mt    
+      write(chm_lun_out, *) 'icheck   ->           ', icheck
+      write(chm_lun_out, *) '----------------------------------------'
+      write(chm_lun_out, *) ' '
+      if (icheck /= 10)  call chm_stop('chm_getphybus dyn var missing',-1)
+   endif
+   
+!  Get from the PHYS. PER. bus.
+   qrkfc = -1
+   nullify(pmetaplus)
+   nmeta = phygetmetaplus(pmetaplus,F_name=' ',F_npath='V',F_bpath='P',F_maxmeta=NVARMAX, F_quiet=.true.,F_shortmatch=.false.)
+   call chm_stop('chm_getphybus per bus get',nmeta)
+   icheck = 0
+   ikfc = 0
+   do i=1,nmeta
+     pmeta=pmetaplus(i)%meta
+     varname_S = pmeta%vname
+     istat = clib_toupper(varname_S)
+     if (varname_S =='DLAT') then
+        dlat=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='DLON') then
+        dlon=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='DXDY') then
+        dxdy=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='FDC') then
+        fdc=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='FLUSOLIS') then
+        flusolis=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='FTOT') then
+        ftot=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='FXP') then
+        fxp=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='GLACIER') then
+        glacier=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='GLSEA') then
+        glsea=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='H') then
+        h=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='ILMO') then
+        ilmo=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='LWC') then
+        lwc=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='NT') then
+        nt=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='O3S') then
+        o3s=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='QDIAG') then
+        qdiag=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='SNODP') then
+        snodp=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='TDIAG') then
+        tdiag=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='TSURF') then
+        tsurf=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='UDIAG') then
+        udiag=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='VDIAG') then
+        vdiag=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='VEGF') then
+        vegf=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='WSOIL') then
+        wsoil=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='KFCRF') then
+        kfcrf=pmetaplus(i)%index
+        ikfc = ikfc + 1
+     elseif (varname_S =='KFCSF') then
+        kfcsf=pmetaplus(i)%index
+        ikfc = ikfc + 1
+     elseif (varname_S =='QRKFC') then
+        qrkfc=pmetaplus(i)%index
+        ikfc = ikfc + 1
+     endif
+   enddo
+   if (icheck /= 22 .or. (ikfc /=3 .and. qrkfc > 0) )  local_dbg =.true.
+       
+   if (local_dbg) then
+      write(chm_lun_out, *) 'FROM PHYS PER BUS:'
+      write(chm_lun_out, *) 'DLAT    -> (offset) :', dlat   
+      write(chm_lun_out, *) 'DLON    -> (offset) :', dlon  
+      write(chm_lun_out, *) 'DXDY    -> (offset) :', dxdy 
+      write(chm_lun_out, *) 'FDC     -> (offset) :', fdc
+      write(chm_lun_out, *) 'FLUSOLIS-> (offset) :', flusolis
+      write(chm_lun_out, *) 'FTOT    -> (offset) :', ftot
+      write(chm_lun_out, *) 'FXP     -> (offset) :', fxp
+      write(chm_lun_out, *) 'GLACIER -> (offset) :', glacier
+      write(chm_lun_out, *) 'GLSEA   -> (offset) :', glsea
+      write(chm_lun_out, *) 'H       -> (offset) :', h   
+      write(chm_lun_out, *) 'ILMO    -> (offset) :', ilmo     
+      write(chm_lun_out, *) 'LWC     -> (offset) :', lwc
+      write(chm_lun_out, *) 'NT      -> (offset) :', nt
+      write(chm_lun_out, *) 'QDIAG   -> (offset) :', qdiag
+      write(chm_lun_out, *) 'SNODP   -> (offset) :', snodp
+      write(chm_lun_out, *) 'TDIAG   -> (offset) :', tdiag
+      write(chm_lun_out, *) 'TSURF   -> (offset) :', tsurf
+      write(chm_lun_out, *) 'UDIAG   -> (offset) :', udiag
+      write(chm_lun_out, *) 'VDIAG   -> (offset) :', vdiag
+      write(chm_lun_out, *) 'VEGF    -> (offset) :', vegf
+      write(chm_lun_out, *) 'WSOIL   -> (offset) :', wsoil
+      write(chm_lun_out, *) 'O3S     -> (offset) :', o3s
+      write(chm_lun_out, *) 'KFCRF   -> (offset) :', kfcrf
+      write(chm_lun_out, *) 'KFCSF   -> (offset) :', kfcsf
+      write(chm_lun_out, *) 'QRKFC   -> (offset) :', qrkfc
+      write(chm_lun_out, *) 'icheck   ->          ', icheck
+      write(chm_lun_out, *) 'ikfc     ->          ', ikfc   
+      write(chm_lun_out, *) '---------------------------------------'
+      write(chm_lun_out, *) ' '
+      if (icheck /= 22)  call chm_stop('chm_getphybus per bus get',-1)
+      if (ikfc /=3 .and. qrkfc > 0 )  call chm_stop('chm_getphybus kfc var get',-1)
+   endif
+
+!  Get from the PHYS. VOL. bus.
+   nullify(pmetaplus)
+   nmeta = phygetmetaplus(pmetaplus,F_name=' ',F_npath='V',F_bpath='V',F_maxmeta=NVARMAX, F_quiet=.true.,F_shortmatch=.false.)
+   call chm_stop('chm_getphybus vol bus get',nmeta)
+   icheck = 0
+   do i=1,nmeta
+     pmeta=pmetaplus(i)%meta
+     varname_S = pmeta%vname
+     istat = clib_toupper(varname_S)
+     if (varname_S =='AT2M') then
+        at2m=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='CANG') then
+        cang=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='F12') then
+        f12=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='FEVP') then
+        fevp=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='KCL') then
+        kcl=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='KT') then
+        kt=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='PR') then
+        pr=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='RAINRATE') then
+        rainrate=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='RNFLX') then
+        rnflx=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='SNOFLX') then
+        snoflx=pmetaplus(i)%index
+        icheck = icheck + 1
+     elseif (varname_S =='UE') then
+        ue=pmetaplus(i)%index
+        icheck = icheck + 1
+     endif
+   enddo
+   if (icheck /= 11)  local_dbg =.true.
+
+   if (local_dbg) then
+      write(chm_lun_out, *) 'FROM PHYS VOL BUS:'
+      write(chm_lun_out, *) 'AT2M     -> (offset)  :', at2m    
+      write(chm_lun_out, *) 'CANG     -> (offset)  :', cang   
+      write(chm_lun_out, *) 'F12      -> (offset)  :', f12   
+      write(chm_lun_out, *) 'FEVP     -> (offset)  :', fevp 
+      write(chm_lun_out, *) 'KCL      -> (offset)  :', kcl 
+      write(chm_lun_out, *) 'KT       -> (offset)  :', kt 
+      write(chm_lun_out, *) 'PR       -> (offset)  :', pr     
+      write(chm_lun_out, *) 'RAINRATE -> (offset)  :', rainrate
+      write(chm_lun_out, *) 'RNFLX    -> (offset)  :', rnflx  
+      write(chm_lun_out, *) 'SNOFLX   -> (offset)  :', snoflx
+      write(chm_lun_out, *) 'UE       -> (offset)  :', ue  
+      write(chm_lun_out, *) 'icheck   ->          ', icheck
+      write(chm_lun_out, *) '-----------------------------------------------------'
+      write(chm_lun_out, *) ' '
+      if (icheck /= 11)  call chm_stop('chm_getphybus vol bus get',-1)
+   endif
+   
+end subroutine chm_getphybus_struct

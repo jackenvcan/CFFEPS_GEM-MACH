@@ -1,0 +1,185 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+! This module defines all the species that will be eventually use in the model
+! One integer per species/fields
+
+
+module chm_species_idx_mod
+#if defined(MACH_TENDENCIES)
+   use chm_utils_mod,        only: MAX_DEBUG_VAR, MAX_TRACERS
+   use chm_species_info_mod, only: tendency_idx
+#else
+   use chm_utils_mod,        only: MAX_DEBUG_VAR
+#endif
+   save
+! These variables will be used to access the master array of fields (species or else)
+! Please keep alphabetical order
+
+! Gas indices
+   integer(kind=4) sp_ALD2
+   integer(kind=4) sp_ALKA
+   integer(kind=4) sp_ALKE
+   integer(kind=4) sp_AROM
+   integer(kind=4) sp_BZO
+   integer(kind=4) sp_C3H8
+   integer(kind=4) sp_CO
+   integer(kind=4) sp_CRES
+   integer(kind=4) sp_CRG1
+   integer(kind=4) sp_CRG2
+   integer(kind=4) sp_DIAL
+   integer(kind=4) sp_EBMO
+   integer(kind=4) sp_EBVO
+   integer(kind=4) sp_ETHE
+   integer(kind=4) sp_H2O2
+   integer(kind=4) sp_HCHO
+   integer(kind=4) sp_HNO3
+   integer(kind=4) sp_HNO4
+   integer(kind=4) sp_HO2
+   integer(kind=4) sp_HONO
+   integer(kind=4) sp_ISOP
+   integer(kind=4) sp_MCO3
+   integer(kind=4) sp_MEK
+   integer(kind=4) sp_MGLY
+   integer(kind=4) sp_N2O5
+   integer(kind=4) sp_NH3
+   integer(kind=4) sp_NO
+   integer(kind=4) sp_NO2
+   integer(kind=4) sp_NO3
+   integer(kind=4) sp_NWOC
+   integer(kind=4) sp_O
+   integer(kind=4) sp_O3
+   integer(kind=4) sp_OH
+   integer(kind=4) sp_OSD
+   integer(kind=4) sp_PAN
+   integer(kind=4) sp_R2O2
+   integer(kind=4) sp_RNO3
+   integer(kind=4) sp_RO2
+   integer(kind=4) sp_RO2N
+   integer(kind=4) sp_RO2R
+   integer(kind=4) sp_ROOH
+   integer(kind=4) sp_SO4
+   integer(kind=4) sp_TOLU
+   integer(kind=4) sp_SO2
+
+   integer(kind=4) sp_NOY
+
+! Gas indices - LINOZ
+
+   integer(kind=4) sp_CFC11
+   integer(kind=4) sp_CFC12
+   integer(kind=4) sp_CH4
+   integer(kind=4) sp_N2O
+
+
+   integer(kind=4) sp_LIN1
+   integer(kind=4) sp_LIN2
+   integer(kind=4) sp_LIN3
+   integer(kind=4) sp_LIN4
+   integer(kind=4) sp_LIN5
+   integer(kind=4) sp_LIN6
+   integer(kind=4) sp_LIN7
+
+
+!  Declaration of PM species
+   integer(kind=4) sp_AM
+   integer(kind=4) sp_CM
+   integer(kind=4) sp_EC
+   integer(kind=4) sp_NI
+   integer(kind=4) sp_OC
+   integer(kind=4) sp_PC
+   integer(kind=4) sp_SS
+   integer(kind=4) sp_SU
+
+   integer(kind=4) sp_AC
+   integer(kind=4) sp_AF
+
+
+!  Other fields
+   integer(kind=4) sp_LU15
+   integer(kind=4) sp_SESN
+   integer(kind=4) sp_LAI
+   integer(kind=4) sp_KTN
+   integer(kind=4) sp_RHO
+   integer(kind=4) sp_AQ25
+   integer(kind=4) sp_AQ10
+   integer(kind=4) sp_pressure
+   integer(kind=4) sp_density
+! 3D Total columns
+   integer(kind=4) sp_tend_o3
+   integer(kind=4) sp_diff_o3
+   integer(kind=4) sp_col_o3
+   integer(kind=4) sp_col_no2
+   integer(kind=4) sp_col_no
+   integer(kind=4) sp_col_hu
+! 2D Tropo. columns
+   integer(kind=4) sp_tcol_o3
+   integer(kind=4) sp_tcol_no2
+   integer(kind=4) sp_tcol_no
+   integer(kind=4) sp_tcol_pan
+   integer(kind=4) sp_tcol_hno3
+   integer(kind=4) sp_tcol_n2o5
+   integer(kind=4) sp_tcol_so2
+   integer(kind=4) sp_tcol_so4
+   integer(kind=4) sp_tcol_co
+   integer(kind=4) sp_tcol_hcho
+   integer(kind=4) sp_tcol_isop
+!
+   integer(kind=4) sp_fmet
+   
+   integer(kind=4) sp_HUL
+
+! Diagnostic for dry and wet deposition
+
+   integer(kind=4) sp_HSO3    
+   integer(kind=4) sp_HPXA    
+   integer(kind=4) sp_RPXA             
+   integer(kind=4) sp_WSO4    
+   integer(kind=4) sp_WNO3    
+   integer(kind=4) sp_WNH4    
+   integer(kind=4) sp_CAT     
+   integer(kind=4) sp_HCO3    
+   integer(kind=4) sp_HION    
+   integer(kind=4) sp_SSLT    
+   integer(kind=4) sp_OCBN    
+   integer(kind=4) sp_WH2O    
+   integer(kind=4) sp_DUST    
+   integer(kind=4) sp_BLC     
+   integer(kind=4) sp_PCBN     
+
+
+
+!  Debug fields
+   integer(kind=4) dbg_2D(MAX_DEBUG_VAR)
+   integer(kind=4) dbg_3D(MAX_DEBUG_VAR)
+
+#if defined(MACH_TENDENCIES)
+! Tendencies fields
+! First dimension = looping index (idx:idx+nb_tracers)
+! Second dimension = corresponding index to species_master (to link this field to it's original tracer)
+   type(tendency_idx) :: tendency_fields(MAX_TRACERS)
+#endif
+
+end module chm_species_idx_mod
+
+
+
+
+

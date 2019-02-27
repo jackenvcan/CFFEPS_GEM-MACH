@@ -1,0 +1,436 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_incld_intsca_il.ftn90
+! Creation       : S. Menard, S. Gravel, B. Pabla, GEM-MACH, June 2008
+! Description    : Checks stiffness of system of equations and solves the
+!                  predictor-corrector equations, with iterations and convergence check.
+!
+! Extra info     : QA ADOM VERSION: ADOMIIB(CLEAN) LEVEL: 06/09/89 INTRQF ENSR(AES)
+!
+! Arguments  IN
+!               kk     -->
+!               n1     -->
+!               n2     -->
+!               n3     -->
+!               n4     -->
+!               ng     -->
+!               naq    --> Number of integrate aqueous species
+!               nstep  --> Iteration timestep number
+!               ideriv -->
+!               q      --> Cloudwater, ice/snow
+!               b      --> Aqueous variable coefficients
+!               tempk  --> Atmospheric Temperature (Kelvin)
+!               tempi  --> Inverse of tempk (1.0/tempk)
+!               rtemp  --> Rgas*tempk/wden (wden=1e+6 gm/m3)
+!               psacw  -->
+!               rad1   -->
+!
+!            OUT
+!               IMIN   -->
+!               KITER  -->
+!
+!            INOUT
+!               DT     --> Timestep
+!               RAQ    --> Rate constants for aqueous-phase
+!               G      --> Gas/part species conc (ppm)
+!               AQ     --> Aqueous species concentrations (molar) in cloudwater
+!               PGSCAV --> Gas/part scavenging (or diffusion)
+!=============================================================================
+!
+!!if_on
+subroutine mach_incld_intsca_il (kk, n1, n2, ng, n3, n4, naq, nstep, ideriv, IMIN,         &
+                     KITER, DT, GAZ_CONC, AQ, q, b, PGSCAV, tempk, tempi, rtemp,           &
+                     raq, psacw, rad1                                                      )
+   use mach_cam_utils_mod,     only: maxnsg, maxcnz, maxnsaq
+!!if_off
+   use mach_incld_headers_mod, only: mach_incld_diffun, mach_incld_steady
+   use mach_incld_mod,         only: aqmin, dtmin, gmin
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: kk
+   integer(kind=4), intent   (in) :: n1
+   integer(kind=4), intent   (in) :: n2
+   integer(kind=4), intent   (in) :: ng
+   integer(kind=4), intent   (in) :: n3
+   integer(kind=4), intent   (in) :: n4
+   integer(kind=4), intent   (in) :: naq
+   integer(kind=4), intent   (in) :: nstep
+   integer(kind=4), intent   (in) :: ideriv
+   integer(kind=4), intent  (out) :: imin
+   integer(kind=4), intent  (out) :: kiter
+   real(kind=4),    intent(inout) :: dt
+   real(kind=4),    intent(inout) :: gaz_conc(maxnsg)
+   real(kind=4),    intent(inout) :: aq(maxnsaq,2)
+   real(kind=4),    intent   (in) :: q(3)
+   real(kind=4),    intent   (in) :: b(5,2)
+   real(kind=4),    intent(inout) :: pgscav(maxnsg,2,maxcnz)
+   real(kind=4),    intent   (in) :: tempk(maxcnz)
+   real(kind=4),    intent   (in) :: tempi(maxcnz)
+   real(kind=4),    intent   (in) :: rtemp(maxcnz)
+   real(kind=4),    intent(inout) :: raq(25,2)
+   real(kind=4),    intent   (in) :: psacw(maxcnz)
+   real(kind=4),    intent   (in) :: rad1(maxcnz)
+!!if_off
+!
+! Local variables
+!
+   integer(kind=4)                    :: i, j, kneg, ineg, kloop, jj, iconv
+   integer(kind=4), parameter         :: niter = 3
+   real(kind=4)                       :: dthalf
+   real(kind=4),    parameter         :: epsg = .003, epsq = .003, tepsg = .03, tepsq = .03
+   real(kind=4)                       :: xcrit, xneg, dum2, xtemi, xtempi, xsxi, ersumg, errorg, eri, erraq, erraqm
+   real(kind=4)                       :: smf = 1.e-30, one = 1.0
+   real(kind=4), dimension(maxnsg)    :: dg, pg, cdg, sg, sdg, spg, scdg, yc1g, yc2g, erg
+   real(kind=4), dimension(maxnsaq, 2):: daq, paq, cdaq, saq, sdaq, spaq, scdaq, yc1q, yc2q
+   real(kind=4), dimension(maxnsaq)   :: xtemp, eraq
+   real(kind=4), dimension(2)         :: ersumq, errorq
+   logical(kind=4)                    :: lstifg(maxnsg), lstifq(maxnsaq, 2)
+!
+!  ygmin  = error control minimum concentrations for gas/aerosols
+!  yaqmin = error control minimum concentrations for aqueous
+
+   real(kind=4), dimension(maxnsg)    :: ygmin =   (/ 1.e-4, 1.e-5, 1.e-5, 1.e-4, 1.e-4, 1.e-4,  &
+                                                      1.e-5, 1.e-5, 1.e-5, 1.e-5, 0., 0./)
+   real(kind=4), dimension(maxnsaq)   :: yaqmin =  (/ 1.e-12, 1.e-6, 1.e-6, 1.e-6, 1.e-6, 1.e-6, &
+                                                      1.e-06, 0., 0., 0., 0., 0., 0./)
+30    continue
+! TODO: enlever goto. c'est une boucle du style do while (dt <= dtmin)
+   do i = 1, maxnsg
+      gaz_conc(i) = max(gaz_conc(i), gmin)
+      sg(i) = gaz_conc(i)
+      yc1g(i) = gaz_conc(i)
+      yc2g(i) = gaz_conc(i)
+   end do
+   do j = 1, 2
+   if (q(j) <= 0.) go to 888
+      do i = 1, maxnsaq
+         aq(i, j) = max(aq(i, j), aqmin)
+         if ( (i==9 .or. i==10) .and. aq(i, j)< 1.e-12 ) then
+            aq(i, j) = 1.e-12
+         end if
+         saq(i, j) = aq(i, j)
+         yc1q(i, j) = aq(i, j)
+         yc2q(i, j) = aq(i, j)
+      end do
+888 end do
+   imin = 1
+
+!  get derivatives
+
+   call mach_incld_diffun(KK, NG, gaz_conc, PG, DG, CDG, NAQ, AQ, PAQ, DAQ, CDAQ, Q, IDERIV, &
+               B, pgscav, tempk, tempi, rtemp, raq, psacw, rad1)
+
+110   continue
+   xcrit = 0.9 / dt
+   do i = n1, n2
+      if ( abs(dg(i)) > xcrit ) then
+         xtemp(i) = 1.00001
+      else
+         xtemp(i) = 0.0
+      endif
+      lstifg(i) = xtemp(i) > 0.
+   end do
+   do j = 1, 2
+      if (q(j) <= 0.) go to 125
+      do i = n3, n4
+         if ( abs(daq(i, j)) > xcrit ) then
+            xtemp(i) = 1.00001
+         else
+            xtemp(i) = 0.0
+         endif
+         lstifq(i, j) = xtemp(i) > 0.
+      end do
+125 end do
+115   continue
+
+!  predictor step
+
+!  gases / particles
+
+   do kneg = 1, 3
+      if (kneg > 1) dt = dt * .5
+
+!  start of inlining pred
+      xneg = 0.
+      dum2 = dt + smf
+      do i = n1, n2
+         xtemi = 2.0 / (dg(i) + smf)
+         if (lstifg(i)) then
+            xsxi = (gaz_conc(i) * (xtemi - dt) + xtemi * dt * pg(i)) / (xtemi + dum2)
+         else
+            xsxi = gaz_conc(i) + dt * cdg(i)
+         end if
+
+         if (pg(i) <= 1.e-20 .and. gaz_conc(i) <= 1.e-18) then
+            sg(i) = gaz_conc(i)
+         else
+            sg(i) = xsxi
+         end if
+
+         if (sg(i) <= 1.e-30) then
+            xneg = xneg - 1.00001
+         else
+            xneg = xneg + 1.00001
+         end if
+      end do
+      ineg = xneg / real(n2 - n1 + 1)
+      if (ineg <= 0) ineg = -1
+!  end of inlining of pred.f for gaseous species
+
+      if (kneg == 3) go to 100
+      if (ineg < 0) go to 555
+100   continue
+
+!  aqueous species
+      do j = 1, 2
+         if (q(j) <= 0.) go to 200
+
+!   start of inlining of pred.f for aqueous species
+         xneg = 0.
+         dum2 = dt + smf
+         do i = n3, n4
+            xtemi = 2.0 / (daq(i, j) + smf)
+
+            if (lstifq(i, j)) then
+               xsxi = (aq(i, j) * (xtemi - dt) + xtemi * dt * paq(i, j)) /  &
+               (xtemi + dum2)
+            else
+               xsxi = aq(i, j) + dt * cdaq(i, j)
+            end if
+
+            if (paq(i, j) <= 1.e-20 .and. aq(i, j) <= 1.e-18) then
+               saq(i, j) = aq(i, j)
+            else
+               saq(i, j) = xsxi
+            end if
+
+            if (saq(i, j) <= 1.e-30) then
+               xneg = xneg - 1.00001
+            else
+               xneg = xneg + 1.00001
+            end if
+         end do
+         ineg = xneg / real(n4 - n3 + 1)
+         if (ineg <= 0) ineg = -1
+!  end of inlining of pred.f for aqueous species
+
+         if (kneg == 3) go to 200
+         if (ineg < 0) go to 555
+200   end do
+
+!  exit loop if no negative concentrations in predictor step
+   go to 556
+555 end do
+556   continue
+
+!  corrector step
+   do i = n1, n2
+      yc1g(i) = max(sg(i), gmin)
+   end do
+   do j = 1, 2
+      if (q(j) <= 0.) go to 220
+      do i = n3, n4
+         yc1q(i, j) = max(saq(i, j), aqmin)
+      end do
+220 end do
+
+!  iteration loop
+   do kloop = 1, niter
+      ersumg = 0.
+      do j = 1, 2
+         ersumq(j) = 0.
+      end do
+
+!  get derivatives
+
+      call mach_incld_diffun(KK, NG, YC1G, SPG, SDG, SCDG, NAQ, YC1Q, SPAQ, SDAQ,     &
+                  SCDAQ, Q, IDERIV, b, pgscav, tempk, tempi, rtemp, raq, psacw, rad1)
+
+      errorg = -1.
+      do j = 1, 2
+         errorq(j) = -1.
+      end do
+
+!  inlining of "corr" routine for gaseous species
+      dthalf = dt * .5
+      dum2 = dt + smf
+
+      do i = n1, n2
+         xtempi = one / (sdg(i) + smf) + one / (dg(i) + smf)
+!  getting rid of "cvmgt" routine
+         if (lstifg(i)) then
+            xsxi = (dthalf*xtempi*(pg(i)+spg(i)) +gaz_conc(i)*(xtempi-dt))/ (xtempi + dum2)
+         else
+            xsxi = gaz_conc(i) + dthalf * (cdg(i) + scdg(i))
+         end if
+
+         if ((pg(i) + spg(i)) <= 2.e-20 .and. gaz_conc(i) <= 1.e-18) then
+            yc2g(i) = gaz_conc(i)
+         else
+            yc2g(i) = xsxi
+         end if
+!  evaluate error
+         eri = abs((yc2g(i) - yc1g(i)) / (max(min(yc1g(i), yc2g(i)), ygmin(i)) + smf))
+         ersumg = ersumg + eri
+         erg(i) = eri
+
+      end do
+
+      do i = n1, n2
+         errorg = max(errorg, erg(i))
+      end do
+!  this finishes inlining of "corr" routine for gaseous species
+
+!  compute average error
+      ersumg = ersumg / real(n2 - n1 + 1)
+
+!  aqueous species
+      do j = 1, 2
+         if (q(j) <= 0.) go to 400
+
+!  inlining of "corr" routine for aqueous species
+         dthalf = dt * .5
+         dum2 = dt + smf
+
+         do i = n3, n4
+            xtempi = one / (sdaq(i, j) + smf) + one / (daq(i, j) + smf)
+!  getting rid of "cvmgt" routine
+            if (lstifq(i, j)) then
+               xsxi = (dthalf * xtempi * (paq(i, j) + spaq(i, j)) +  &
+                      aq(i, j) * (xtempi - dt)) / (xtempi + dum2)
+            else
+               xsxi = aq(i, j) + dthalf * (cdaq(i, j) + scdaq(i, j))
+            end if
+
+            if ((paq(i, j)+spaq(i, j))<=2.e-20 .and. aq(i, j)<=1.e-18) then
+               yc2q(i, j) = aq(i, j)
+            else
+               yc2q(i, j) = xsxi
+            end if
+!  evaluate error
+            eri = abs((yc2q(i, j) - yc1q(i, j)) / (max(min(yc1q(i, j), yc2q(i, j)), yaqmin(i)) + smf))
+            ersumq(j) = ersumq(j) + eri
+            eraq(i) = eri
+         end do
+
+         do i = n3, n4
+            errorq(j) = max(errorq(j), eraq(i))
+         end do
+!  this finishes inlining of "corr" routine for aqueous species
+
+!  compute average error
+        ersumq(j) = ersumq(j) / real(n4 - n3 + 1)
+ 400  end do
+
+      erraq = 0.
+      erraqm = 0.
+      jj = 2
+      do j = 1, 2
+         if (q(j) <= 0.) jj = jj - 1
+      end do
+      if (jj == 0) go to 470
+
+!  lump average and maximum aqueous phase errors together
+      do j = 1, 2
+         if (q(j) <= 0.) go to 430
+         erraq = erraq + ersumq(j) / jj
+         erraqm = erraqm + errorq(j) / jj
+430   end do
+470   continue
+
+!   convergence test
+!   error control method:
+!   max error .lt. 10*eps and average error .lt. eps
+      kiter = kloop
+      iconv = 1
+      if (errorg > tepsg) iconv = -1
+      if (ersumg > epsg)  iconv = -2
+      if (erraqm > tepsq) iconv = -3
+      if (erraq > epsq)   iconv = -4
+
+!   exit iteration loop if convergence obtained
+485   if (iconv > 0) go to 540
+!
+!  use solution from this iteration for initial in next iteration
+      do i = n1, n2
+         yc1g(i) = max(gmin, yc2g(i))
+      end do
+      do j = 1, 2
+         if (q(j) <= 0.) go to 490
+         do i = n3, n4
+            yc1q(i, j) = max(yc2q(i, j), aqmin)
+         end do
+490   end do
+   end do
+
+!  no convergence after niter iterations, select smaller time step
+!  retry step beginning at predictor equations
+
+335 dt = max(dt * 0.5, dtmin)
+   if (dt <= dtmin) go to 1010
+   go to 30
+!  convergence obtained
+540   continue
+   if (ideriv < 0) go to 560
+
+!  calculate diagnostic species
+   do j = 1, 2
+      if (q(j) <= 0.) go to 99
+      yc2q(8, j) = (paq(8, j) + spaq(8, j)) / (daq(8, j) + sdaq(8, j))
+      call mach_incld_steady(yc2q(:, j), b(:, j))
+99 end do
+!  convergence obtained
+!  check for negative concentrations
+560 continue
+   do i = n1, n2
+      gaz_conc(i) = max(gmin, yc2g(i))
+   end do
+   do j = 1, 2
+      if (q(j) <= 0.) go to 495
+         do i = 1, naq
+            aq(i, j) = max(aqmin, yc2q(i, j))
+         end do
+495 end do
+    go to 595
+1010  imin = -1
+   do i = n1, n2
+      gaz_conc(i) = yc2g(i)
+   end do
+   do j = 1, 2
+      if (q(j) <= 0.) go to 31
+      do i = n3, n4
+         aq(i, j) = yc2q(i, j)
+      end do
+31 end do
+595 continue
+   return
+end

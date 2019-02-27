@@ -1,0 +1,281 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_gas_jcorr.ftn90
+! Creation       : P. Makar, B. Pabla for GEM-MACH, Feb 2007.
+!                  P. Makar, W. Gong,  A. Dastoor, September 8, 1998
+!
+! Description    : Calculates the clear sky correction factor of Chang et al.,
+!                  JGR 92, pp 14, 681-14, 700, 1987
+!
+! Extra info     : corr(x, y, z) = ( 1 + a(x, y) * ( Fcld (x, y, z) - 1) )
+!                  a(x, y) is the fraction of the sky which is cloudy
+!                  For solar zenith angles (chi) less than 60 degrees,
+!                  Fcld = 1 + (1 - tr) * cos (chi) above cloud layer
+!                       = 1.4 cos(chi)             in cloud layer
+!                       = 1.6 tr * cos(chi)        below cloud layer
+!                  For solar zenith angles greater than 60 degrees, the 60 degree
+!                  value is used.
+!                  "tr" is the energy transmission coefficient for normally incident light
+!                  tr= (5 - exp(-tau) ) / (4 + 3*tau*(1 - f) )
+!                  f = scattering phase function asymmetry factor = 0.86
+!                  tau = cloud optical depth
+!                      = sum(i)  3 L(i) dz(i) / (2 rho_h2o r)
+!                  That is, the total optical depth is the sum of the optical depths
+!                  of each cloudy layer.
+!
+!                  Important Note: Chang et al's correction is for a single cloud
+!                  layer, while the information available from the current
+!                  meteorological model allows for multiple cloud layers.  This version
+!                  of the correction factor assumes an "average cloud"; summing the
+!                  optical depths over height to get the net value, then assuming the
+!                  existance of a single cloud over the given cloudy region.  No
+!                  attempt in this version of the correction factor to account for
+!                  multiple cloud layer effects.
+!
+! Arguments:  IN
+!               rho -> Density of air, kg/m3
+!               metvar3d(1, 1, MV3D_ZPLUS)  -> Thermodynamic level heights (above-ground height)
+!               metvar3d(1, 1, MV3D_AT2M)  -> Interpolation coefficients from thermodynamic to momentum level heights (layer boundaries for model thermodynamic levels)
+!               metvar2d(i, MV2D_CANG)  -> Cosine of solar zenith angle
+!               metvar3d(i, k, MV3D_FTOT)  -> Cloud fraction within a given layer
+!               metvar3d(i, k, MV3D_QCPLUS)  -> Average liquid water content in gridsquare, kg/kg
+!
+!             IN/OUT
+!                jc  -> Correction factor for J values
+!============================================================================
+!
+!!if_on
+subroutine mach_gas_jcorr (rho, JC, metvar2d, metvar3d)
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_metvar_mod,     only: SIZE_MV2D, SIZE_MV3D
+!!if_off
+   use chm_metvar_mod,     only: MV2D_CANG, MV3D_FTOT, MV3D_QCPLUS, MV2D_MT, MV3D_ZPLUS, MV3D_AT2M
+   use chm_consphychm_mod, only: rho_h2o
+   implicit none
+   external tothermo
+!!if_on
+   real(kind=4),    intent(in) :: rho     (chm_ni,chm_nk)
+   real(kind=4), intent(inout) :: jc      (chm_ni,chm_nk)
+   real(kind=4),    intent(in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent(in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+!!if_off
+!
+!  Declaration of local variables
+!
+   real(kind=4)            :: den, qmn
+   real(kind=4), parameter :: rdrop   = 1.0e-05   !radius of typical cloud drop, m.
+   real(kind=4), parameter :: lconmin = 1.0e-04   !minimum liquid water content, g/m3,
+   real(kind=4), parameter :: alim    = 1.0e-09   !smallest allowable cloud fraction before layer can be considered to be "cloudless"
+   integer(kind=4)         :: i, k
+   integer(kind=4)         :: kmin(chm_ni), kmax(chm_ni)
+   integer(kind=4)         :: kwat(chm_ni, chm_nk)
+   real(kind=4)            :: mh(chm_ni,chm_nk), th(chm_ni,chm_nk), at2m(chm_ni,chm_nk)
+   real(kind=4)            :: chim(chm_ni), tau(chm_ni)
+   real(kind=4)            :: fbelow(chm_ni, chm_nk), fin(chm_ni, chm_nk), fabove(chm_ni, chm_nk)
+   real(kind=4)            :: a(chm_ni, chm_nk), aip(chm_ni, chm_nk), afrac(chm_ni, chm_nk)
+
+   den = 1.0 / (2.0 * rho_h2o * rdrop)
+
+!  momentum height levels above ground are to be calculated from metvar3d(:,:,MV3D_ZPLUS)
+   do k = 1, chm_nk
+     do i = 1, chm_ni
+       th(i, k) = metvar3d(i, k, MV3D_ZPLUS)
+       at2m(i, k) = metvar3d(i, k, MV3D_AT2M)
+     end do
+   end do
+   call tothermo(mh,th,at2m,at2m,chm_ni,chm_nk,chm_nk,.false.)
+
+!  maximum solar zenith angle will be less than or equal to 60 degrees
+!  (1.047 radians); cos(chi) > 0.5
+   do i = 1, chm_ni
+      chim(i) = max(0.5, metvar2d(i, MV2D_CANG))
+   end do
+
+!  determine fraction of the sky which is cloudy
+! (1) average the two time steps of cloud fraction data,
+   do k = 1, chm_nk
+      do i = 1, chm_ni
+         a(i, k) =  metvar3d(i, k, MV3D_FTOT) 
+      end do
+   end do
+
+! (2) avoid division by zero error for cloud fraction:
+!  afrac is 1 if the area fraction is greater than the minimum
+!  allowed, zero otherwise.
+   do k = 1, chm_nk
+      do i = 1, chm_ni
+         aip(i, k) = 1.0 / max(a(i, k), alim)
+         afrac(i, k) = max(sign(1.0, a(i, k) - alim), 0.0)
+      end do
+   end do
+
+!  calculate total cloud optical depth:
+   do i = 1, chm_ni
+      tau(i) = 0.0
+   end do
+   do k = 1, chm_nk
+      do i = 1, chm_ni
+!  jc temporarily used to store cloud liquid water content
+!  in g/m3. multiply by zero if area fraction of cloud is
+!  less than lower limit.
+         jc(i, k) = max(metvar3d(i, k, MV3D_QCPLUS) * 1000.0 * rho(i, k) &
+                     * afrac(i, k), 0.0)
+      end do
+!  Liquid water content was average for entire grid square.
+!  Divide this by the area fraction to get the liquid water
+!  content, assuming that all of the liquid water is in
+!  clouds.  Note that ami was set earlier to ensure that
+!  division by zero error does not occur.  Presumably, jc should
+!  be zero if nu is zero anyway; this is just in case there's
+!  different round off levels for the two variables.
+      do i = 1, chm_ni
+         jc(i, k) = jc(i, k) * aip(i, k)
+      end do
+   end do
+
+!  Liquid water check: if qc is negative, find its magnitude and
+!  write this out to unit 6:
+   qmn = 0.0
+   do k = 1, chm_nk
+      do i = 1, chm_ni
+      qmn = min(qmn, metvar3d(i, k, MV3D_QCPLUS))
+      end do
+   end do
+!    write (chm_lun_out, *) 'minimum value of qc: ', qmn
+
+!  calculate the total optical depth in the vertical direction
+!  due to clouds.  Note that the momentum height surfaces are
+!  assumed to be the boundaries of each model layer, except for
+!  the ground level.
+
+
+!  all layers except surface
+   do k = 1, chm_nk-1
+      do i = 1, chm_ni
+         tau(i) = tau(i) + 3.0 * jc(i, k) * ( mh(i, k) - mh(i, k+1) ) * den
+      end do
+   end do
+!  bottom layer: 
+   do i = 1, chm_ni
+         tau(i) = tau(i) + 3.0 * jc(i, chm_nk) * mh(i, chm_nk) * den
+   end do
+
+!  calculate cloud transmission coefficient; replace optical
+!  depth with transmission coefficient:
+   do i = 1, chm_ni
+      tau(i) = (5.0 - exp(-tau(i))) / (4.0 + 0.42 * tau(i))
+   end do
+
+!  determine maximum, minimum layer indices for which
+!  liquid water is present.  kwat will be the 1.0 value
+!  if cloud exists in the given model layer, 0 if no cloud
+!  exists in the layer.
+   do k = 1, chm_nk
+      do i = 1, chm_ni
+   kwat(i, k) = int(max(sign(1.0, jc(i, k) - lconmin), 0.0))
+      end do
+   end do
+   do i = 1, chm_ni
+      kmin(i) = 0
+      kmax(i) = 0
+   end do
+
+!  again, code is changed due to change in direction
+!  of vertical index:
+   do k = 1, chm_nk
+      do i = 1, chm_ni
+      kmin(i) = max(kmin(i), k * kwat(i, k))
+      kmax(i) = max(kmax(i), (chm_nk - k + 1) * kwat(i, k))
+      end do
+   end do
+   do i=1, chm_ni
+      kmax(i) = (chm_nk - kmax(i) + 1)
+   end do
+
+!  kmin(i) now contains the vertical index of the lowest altitude
+!  layer which contains cloud, kmax(i) contains the vertical index of
+!  the highest altitude layer index which contains cloud.
+!
+!  we now have a "cloud", extending from
+!  layer kmin(i) up to layer kmax(i), with transmission coefficient
+!  tau(i).  calculate fcld parameter (in jc array, temporarily):
+   do k = 1, chm_nk
+      do i = 1, chm_ni
+      jc(i, k) = 1.0
+      end do
+   end do
+
+!  calculate below, within, above cloud values:
+   do k = 1, chm_nk
+      do i = 1, chm_ni
+         fbelow(i, k) = 1.6 * tau(i) * chim(i)
+         fin(i, k) = 1.4 * chim(i)
+         fabove(i, k) = 1.0 + (1.0 - tau(i)) * chim(i)
+      end do
+   end do
+
+!  assign these to the appropriate layers:
+!  note modification for layer structure:
+   do i = 1, chm_ni
+      do k = kmin(i) + 1, chm_nk
+         jc(i, k) = fbelow(i, k)
+      end do
+      do k = kmax(i), kmin(i)
+         jc(i, k) = fin(i, k)
+      end do
+      do k = 1, kmax(i) - 1
+         jc(i, k) = fabove(i, k)
+      end do
+   end do
+
+!  calculate cloud fraction, place in tau array.  the maximum value
+!  of any given layer is used as the area fraction for the entire
+!  average cloud.  this is a conservative estimate, making the
+!  assumption that all layers line up vertically.
+   do i = 1, chm_ni
+      tau(i) = 0.0
+   end do
+   do k = 1, chm_nk
+      do i = 1, chm_ni
+         tau(i) = max(a(i, k), tau(i))
+      end do
+   end do
+
+!  calculate the final clear sky correction factor:
+   do k = 1, chm_nk
+      do i = 1, chm_ni
+      jc(i, k) = 1.0 + tau(i) * (jc(i, k) - 1.0)
+      end do
+   end do
+
+   return
+end

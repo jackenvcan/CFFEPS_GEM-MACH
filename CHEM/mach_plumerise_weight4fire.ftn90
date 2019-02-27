@@ -1,0 +1,145 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http: /  / www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet / Project : GEM-MACH
+! Fichier / File   : mach_plumerise_weight4fire.ftn90
+! Creation       : Jack C. / Sylvie G. 
+!
+! Description    : adopted from "mach_plumerise_weight.ftn90" and modified for 
+!                  fire emission mjr-point sources only
+!
+! Arguments:
+!            IN
+!                cur_source                    -> ID of the current source
+!                z_magl                       -> height of the model levels (m above ground)
+!                index_above_boundlayer_height -> Index above boundary layer height
+!                safe_inv_mo_length            -> Inverse of Monin obukhov_length
+!                metvar2d                      -> 2D met variable array
+!                rho                           -> air density ((sm(sp_density) (kg/m^3))
+!
+!             IN / OUT
+!                weight                        -> Weight of each cell in the column over the point source (0-1)
+!
+! Extra info     :
+!
+!============================================================================
+!
+!!if_on
+subroutine mach_plumerise_weight4fire(cur_source, z_magl, index_above_boundlayer_height, &
+                                      safe_inv_mo_length, WEIGHT, metvar2d, rho)
+   use chm_ptopo_grid_mod,      only: chm_ni, chm_nk
+   use chm_metvar_mod,          only: SIZE_MV2D
+!!if_off
+   use chm_metvar_mod,          only: MV2D_H
+   use chm_utils_mod,           only: global_debug, chm_lun_out
+   use chm_mjrpts_sortinfo_mod, only: lstack_info, i_gilc, i_rsmk, i_zplm
+   use chm_species_info_mod,    only: species_master
+   implicit none
+
+!!if_on
+   integer(kind=4), intent (in) :: cur_source
+   real(kind=4),    intent (in) :: z_magl (chm_ni,chm_nk)
+   integer(kind=4), intent (in) :: index_above_boundlayer_height(chm_ni)
+   real(kind=4),    intent (in) :: safe_inv_mo_length           (chm_ni)
+   real(kind=4),    intent(out) :: weight  (chm_nk)
+   real(kind=4),    intent (in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent (in) :: rho(chm_ni,chm_nk)       ! Air density kg/m3
+!!if_off
+!
+!  Local variables
+!
+   integer(kind=4) :: k                           ! loop index
+   integer(kind=4) :: pbl_indx, pbl_nlay
+   integer(kind=4) :: zplm_indx, zplm_nlay
+   integer(kind=4) :: stack_i                     ! Nearest integer gridpoint centre locations to the real number gridpoint locations
+   real(kind=4)    :: stack_zplm, stack_rsmk
+   real(kind=4)    :: column_sum, column_sum_1
+   real(kind=4)    :: stdev                       ! standard deviation used in the gaussian case
+   real(kind=4)    :: stack_magl                  ! Stack height in meter above ground
+   real(kind=4)    :: stack_magl_f
+   real(kind=4), dimension(chm_nk)    :: weight_s, weight_f
+   real(kind=4)    :: weight_f_sum
+
+   logical(kind=4) :: local_dbg
+
+   local_dbg = ((.false. .or. global_debug) .and. (chm_lun_out > 0))
+
+   weight(:) = 0.
+   weight_s(:) = 0.
+   weight_f(:) = 0.
+
+   stack_i = nint(lstack_info(i_gilc,cur_source))
+!
+!! Jack Modify for distribution below ZPLM
+   stack_zplm = lstack_info(i_zplm, cur_source)
+   stack_rsmk = lstack_info(i_rsmk, cur_source)
+   pbl_indx = index_above_boundlayer_height(stack_i)
+
+   do k = chm_nk, 1, -1
+      ! Evaluate position zplm from the ground up
+      zplm_indx = k
+      if (z_magl(stack_i, k) >= stack_zplm) then
+         exit
+      endif
+   enddo
+   pbl_indx = index_above_boundlayer_height(stack_i)
+   if (local_dbg) write(chm_lun_out, *)'cur_i, stk_i, zplm_indx, pbl_indx, zplm, rsmk', &
+                                          cur_source, stack_i, zplm_indx, pbl_indx, stack_zplm, stack_rsmk
+
+   zplm_nlay = chm_nk - zplm_indx + 1  ! find # of layers below ZPLM
+   !calculate smoke density below zplm
+   weight_f(:) = 0.0
+   weight_f(zplm_indx:chm_nk) = rho(stack_i, zplm_indx:chm_nk) * stack_rsmk
+   weight_f_sum = sum(weight_f)
+   do k = zplm_indx, chm_nk
+      if (weight_f_sum > 0.0) then
+         weight_s(k) = weight_f(k) / weight_f_sum
+      else
+         weight_s(k) = 1.0 / zplm_nlay
+      endif
+   enddo
+
+   if (local_dbg) then
+      if (weight_f_sum <= 0.0) write(chm_lun_out, *) 'WARNING:sum(weight)=0 ', stack_rsmk, stack_zplm
+      write(chm_lun_out, 111) 'z_magl: stk:', z_magl(stack_i, :)
+      write(chm_lun_out, 111) 'weight_wf: stk:', weight_s(:)
+      write(chm_lun_out, 111) 'rho: stk:', rho(stack_i, :)
+   end if 
+111 format(a, 100(f8.3))
+
+! normalize weighing factor by layer thickness for subsequent S/R
+   do k = 1, chm_nk-1
+       weight_s(k) = weight_s(k) / (z_magl(stack_i, k) - z_magl(stack_i, k+1))
+   end do
+   weight_s(chm_nk) = weight_s(chm_nk) / z_magl(stack_i, chm_nk)
+
+   weight(:) = weight_s(:)
+
+end subroutine mach_plumerise_weight4fire

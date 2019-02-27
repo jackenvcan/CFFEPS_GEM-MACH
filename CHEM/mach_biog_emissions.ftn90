@@ -1,0 +1,325 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_biog_emissions.ftn90
+! Creation       : H. Landry, S. Menard, A. Kallaur - mai 2006
+! Description    : Compute the biogenics emissions
+!
+! Extra Info     : From bioe3.ftn90, AURAMS v1.3.1
+!                  Geron et. al.
+!                  An Improved Model for Estimating Emissions of Volatile Organic
+!                  Compounds from Forests in the Eastern United States, JGR Vol. 99
+!                  No. D6, pp 12, 773-12, 791, June 20 1994
+!
+!                  Vose J. M. and W. T. Swank
+!                  Assessing Seasonal Leaf Area Dynamics and Vertical Leaf Area
+!                  Distributions in Eastern White Pine (Pinus Strobus L.) with a
+!                  Portable Light Meter, Tree Physiol., 7, pp 125-134 1990.
+!
+!                  Vose et al (1995)
+!                  Vertical leaf area distribution, light transmittance, and
+!                  application of the Beer-Lambert Law in four mature hardwood stands
+!                  in the Southern Appalachians, Canadian Journal of Forest Research
+!
+!                  E.J. Williams, A. Guenther and F.C. Fehsenfeld
+!                  An Inventory of Nitric Oxide Emissions from Soils in the United
+!                  States, JGR Vol. 97 pp 7511-7519, May 20 1992
+!
+! Arguments:  IN
+!               ni              -->  Slab size
+!               par             -->  Photosynthetically Active Radiation
+!               pardb           -->  PAR direct beam
+!               pardif          -->  PAR diffuse
+!               surf_temp_p     -->  surface temperature
+!               cosine_solar_p  -->  cosine of solar angle
+!               no_std_p        -->  Standard NO   emission (without correction)
+!               isop_std_p      -->  Standard ISOP emission (without correction)
+!               mono_std_p      -->  Standard MONO emission (without correction)
+!               voc_std_p       -->  Standard VOC  emission (without correction)
+!               lai_p           -->  Leaf area index
+!               seasons         -->  A ni size array with the seasons "number" between 1.0 and 5.0
+!               metvar3d        --> local storage (chemistry lib only, see chm_exe) for met. fields 
+!                                   copied from Physics buses (see chm_load_metvar).
+!
+!             OUT
+!               emissbio_no_p   -->  Final NO   biogenic emission after BEIS3 processes
+!               emissbio_voc_p  -->  Final VOC  biogenic emission after BEIS3 processes
+!               emissbio_isop_p -->  Final ISOP biogenic emission after BEIS3 processes
+!               emissbio_mono_p -->  Final MONO biogenic emission after BEIS3 processes
+!
+!==============================================================================
+!
+!!if_on
+subroutine mach_biog_emissions(par, pardb, pardif, cosine_solar_p,                                             &
+                                    summer_no_std_p, summer_isop_std_p, summer_mono_std_p, summer_voc_std_p,   &
+                                    winter_no_std_p, winter_isop_std_p, winter_mono_std_p, winter_voc_std_p,   &
+                                    lai_p, seasons , metvar3d         ,                                        &
+                                    EMISSBIO_NO_P  , EMISSBIO_VOC_P   , EMISSBIO_ISOP_P  , EMISSBIO_MONO_P     )
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_metvar_mod,     only: SIZE_MV3D, MV3D_TPLUS
+!!if_off
+   use chm_utils_mod,      only: chm_lun_out, global_debug
+   use chm_consphychm_mod, only: rgasi
+   implicit none
+!!if_on
+   real(kind=4), intent (in) :: par              (chm_ni)      !--|    photosynthetically 
+   real(kind=4), intent (in) :: pardb            (chm_ni)      !  |--> active radiation
+   real(kind=4), intent (in) :: pardif           (chm_ni)      !--|    direct beam, diffuse
+   real(kind=4), intent (in) :: cosine_solar_p   (chm_ni)      ! cosine of solar angle
+   real(kind=4), intent (in) :: summer_no_std_p  (chm_ni)      !--|
+   real(kind=4), intent (in) :: summer_isop_std_p(chm_ni)      !  |
+   real(kind=4), intent (in) :: summer_mono_std_p(chm_ni)      !  |
+   real(kind=4), intent (in) :: summer_voc_std_p (chm_ni)      !  |
+   real(kind=4), intent (in) :: winter_no_std_p  (chm_ni)      !  |--> Standard emission (without correction)
+   real(kind=4), intent (in) :: winter_isop_std_p(chm_ni)      !  |
+   real(kind=4), intent (in) :: winter_mono_std_p(chm_ni)      !  |
+   real(kind=4), intent (in) :: winter_voc_std_p (chm_ni)      !--|
+   real(kind=4), intent (in) :: lai_p            (chm_ni)      ! Leaf area index
+   real(kind=4), intent (in) :: seasons          (chm_ni)      ! seasons field (5 seasons defined)
+   real(kind=4), intent (in) :: metvar3d         (chm_ni,chm_nk,SIZE_MV3D) ! Met. vars
+!     * emissions values before being influenced by biogenics emissions and beis3 correction
+   real(kind=4), intent(out) :: emissbio_no_p    (chm_ni)      ! NO emissions
+   real(kind=4), intent(out) :: emissbio_voc_p   (chm_ni)      ! VOC emissions
+   real(kind=4), intent(out) :: emissbio_isop_p  (chm_ni)      ! Isopropene emissions
+   real(kind=4), intent(out) :: emissbio_mono_p  (chm_ni)      ! Monoterpene emissions 
+!!if_off
+!
+!  Local (internal) variables
+!     * Formula variables
+   real(kind=4)   :: light_correction  (chm_ni) 
+   real(kind=4)   :: tmp_surf_temp     (chm_ni)     
+   real(kind=4)   :: iso_corr_fact     (chm_ni)     
+   real(kind=4)   :: voc_mono_corr_fact(chm_ni)
+   real(kind=4)   :: no_corr_fact      (chm_ni) 
+   real(kind=4)   :: kbe, canparscat, canpardif, parshade, fracshade
+   real(kind=4)   :: parsun, laisun, fracsun, tmpsun, tmpshade     
+   real(kind=4)   :: emissbio_isop_sum,emissbio_mono_sum,emissbio_voc_sum,emissbio_no_sum
+!   *  Constants
+   real(kind=4), parameter :: seasons_coef(5) = (/ 1.0, 0.66, 0.25, 0.0, 0.5 /)
+!     * Loop counters
+   integer(kind=4)  :: i,istatus
+   real(kind=4)     :: min_par
+!     * debug switch
+   logical(kind=4)  :: local_dbg
+   external  qqexit
+
+   local_dbg = (.false. .or. global_debug)
+   
+   if (local_dbg) then
+      write(chm_lun_out, *) 'Sacha: INSIDE mach_biog_emissions ==> {chm_ni} = ',chm_ni
+      write(chm_lun_out, *) 'summer_{no,voc,isop,mono}_std_p(chm_ni)        = ',summer_no_std_p  (chm_ni), summer_voc_std_p (chm_ni), &
+                                                                                summer_isop_std_p(chm_ni), summer_mono_std_p(chm_ni)
+      write(chm_lun_out, *) 'winter_{no,voc,isop,mono}_std_p(chm_ni)        = ',winter_no_std_p  (chm_ni), winter_voc_std_p (chm_ni), &
+                                                                                winter_isop_std_p(chm_ni), winter_mono_std_p(chm_ni)
+      write(chm_lun_out, *) 'par(chm_ni)  , pardif(chm_ni),pardb(chm_ni)    = ',par(chm_ni), pardif(chm_ni), pardb(chm_ni)
+      write(chm_lun_out, *) 'lai_p(chm_ni), seasons(chm_ni)                 = ',lai_p(chm_ni),seasons(chm_ni)
+      write(chm_lun_out, *) 'cosine_solar_p(chm_ni)                         = ',cosine_solar_p(chm_ni)
+   endif 
+!  reset light correct array
+   light_correction(1:chm_ni) = 0.0
+!
+   istatus=0
+   min_par = minval(par(:))
+   if (min_par < 0.) then 
+      write(0, *) 'Error : variable par smaller than 0 ', min_par, ' stop ....'
+      call qqexit(1)
+   endif
+!
+! ----- Main loop
+!
+   do i = 1, chm_ni
+!
+!* -----------------------------------------------------------------------------
+!*    Light correction
+!*       The formula used is (ref. Geron et al):
+!*
+!*          cl(i, j, k) = (a*cl1*L(k)/(1+a*a*L(k)*L(k))**0.5
+!*       where:
+!*             L(k) : PAR value for leaf area index type "k"
+!* -----------------------------------------------------------------------------
+!
+      if(lai_p(i) > 0.0) then
+         if ((par(i) > 0.01) .AND. (lai_p(i) <= 0.1) .AND. &
+            (cosine_solar_p(i) > 0.02079483)) then
+
+            if (par(i) > 2550) then
+               write(chm_lun_out, *) 'warning : computing light correction with 2550 ', i, par(i)
+               light_correction(i) = get_light_correction(2550.0)
+            else
+               light_correction(i) = get_light_correction(par(i))
+            endif
+
+         else
+            kbe = 0.5 * sqrt(1. + tan(acos(cosine_solar_p(i))) * tan(acos(cosine_solar_p(i))))
+            canparscat = 0.5 * pardb(i) * (exp(-0.894 * kbe * lai_p(i)) - &
+                        exp(-1 * kbe * lai_p(i)))
+            canpardif = pardif(i) * (1 -exp(-0.6 * lai_p(i))) / (0.61 * lai_p(i))
+            parshade  = canpardif + canparscat
+            parsun    = kbe * (pardb(i) + pardif(i)) + parshade
+            laisun    = (1.0 -exp(-kbe * lai_p(i))) / kbe
+            fracsun   = laisun / lai_p(i)
+            fracshade = 1.0 - fracsun
+
+            if (parsun <= 0.01) then
+               tmpsun = 0
+            else
+               tmpsun = fracsun * get_light_correction(parsun)
+            endif
+            if (parshade <= 0.01) then
+               tmpshade = 0
+            else
+               tmpshade = fracshade * get_light_correction(parshade)
+            endif
+            light_correction(i) = tmpsun + tmpshade
+         endif
+
+      else
+         light_correction(i) = 0.0
+      endif  
+!
+!* -----------------------------------------------------------------------------
+!*    Temperature correction for isoprene
+!*       The formula used is (ref. Geron et al) :
+!*
+!*                     exp(ct1*(T-Ts)/R*Ts*t)
+!*         ct(i, j) = --------------------------
+!*                   1 + exp(ct2*(T-Tm)/R*Ts*t)
+!*
+!*       NOTE : over 40 C leaf stomata are closed and the correction is constant
+!* -----------------------------------------------------------------------------
+!
+      tmp_surf_temp(i) = min (metvar3d(i, chm_nk, MV3D_TPLUS), 315.0)
+
+      iso_corr_fact(i) = exp(95000 * (tmp_surf_temp(i) - 303.0) / (rgasi * tmp_surf_temp(i) * 303.0)) / &
+                         (1 + exp(230000 * (tmp_surf_temp(i) - 314) / (rgasi * 303.0 * tmp_surf_temp(i) )))
+!
+!* -----------------------------------------------------------------------------
+!*    Temperature correction for mono and other VOC
+!*       Calculate Temperature correction factors for Monoterpenes(M) and
+!*       OVOC (Other VOC). The correction function is ref. (Geron et. al) :
+!*
+!*         OV(or M) = (OVs or Ms)*exp[B(T-Ts)]
+!*
+!*         NOTE1: The same formula is used for OVOC as Monoterpenes.
+!*         NOTE2: See
+!* -----------------------------------------------------------------------------
+!
+      voc_mono_corr_fact(i) = exp(0.09 * (tmp_surf_temp(i) - 303))
+!
+!* -----------------------------------------------------------------------------
+!*    Temperature correction for NO emissions
+!*       For reference, beis 2 had 4 formulas for forest, grassland, wetland an agricultural use
+!*       Only the agricultural part has been kept and applies to all. As far as I can tell
+!*            nof(i, j, 4) = exp(alfa*(0.72*tt(i, j)+52.28-tb))
+!*       (Ref Geron et. al. and Williams et. al.)
+!*
+!*       NOTE : under -4 C, the soil is frozen and the correction is constent
+!* -----------------------------------------------------------------------------
+!
+      if (tmp_surf_temp(i) > 303.0) then
+         tmp_surf_temp(i) = 303
+      endif
+      if (tmp_surf_temp(i) > 268.890) then
+         no_corr_fact(i) = exp(0.05112 * tmp_surf_temp(i) - 15.68248)  ! agriculture
+      else
+         no_corr_fact(i) = 0.0
+      end if
+!
+! Applying the seasonal coefficients to the emissions
+!
+!* -----------------------------------------------------------------------------
+!*    Calculate Isoprene (C5H8) emissions
+!*       Based on the formula (ref. Geron et. al.):
+!*          I = Is*cl*ct for all points on the domain
+!*       NOTE: During the calculation, a mapping is made between the
+!*             "BEIS" and "CMC" species lists, where for
+!*             each vegetative type from "CMC" list, we define
+!*             a distribution function of coefficients based on
+!*             the "BEIS" list where:
+!*             sum(i=1, n) beiscoeff(i) = 1.0
+!*             The coefficient values are stored in the pm array and
+!*             are set in the setpm subroutine.
+!* -----------------------------------------------------------------------------
+!
+      emissbio_isop_p(i) = (seasons_coef(nint(seasons(i))) * (summer_isop_std_p(i) - winter_isop_std_p(i)) + winter_isop_std_p(i)) * iso_corr_fact(i) * light_correction(i)
+!
+!* -----------------------------------------------------------------------------
+!*    Calculate the Monoterpene Emissions (C10Hx)
+!*       Based on the formula (ref. Geron et. al.):
+!*          M = Ms*exp[B(T-Ts)]
+!* -----------------------------------------------------------------------------
+!
+      emissbio_mono_p(i) = (seasons_coef(nint(seasons(i))) * (summer_mono_std_p(i) - winter_mono_std_p(i)) + winter_mono_std_p(i)) * voc_mono_corr_fact(i)
+!
+!* -----------------------------------------------------------------------------
+!*    Calculate the OVOC Emissions
+!*       Based on the formula (ref. Geron et. al.):
+!*         OV = OVs*exp[B(T-Ts)]
+!*       NOTE: The same formula is used for OVOC as Monoterpenes.
+!* -----------------------------------------------------------------------------
+!
+      emissbio_voc_p(i) = (seasons_coef(nint(seasons(i))) * (summer_voc_std_p(i) - winter_voc_std_p(i)) + winter_voc_std_p(i)) * voc_mono_corr_fact(i)
+!
+!* -----------------------------------------------------------------------------
+!*    Calculate the NO emission rate
+!*       Using appropriate index read from file and using same approach as
+!*       in OVOC above.
+!* -----------------------------------------------------------------------------
+!
+      emissbio_no_p(i) = (seasons_coef(nint(seasons(i))) * (summer_no_std_p(i) - winter_no_std_p(i)) + winter_no_std_p(i)) * no_corr_fact(i)
+      
+      if (local_dbg) then
+         emissbio_isop_sum = emissbio_isop_sum + emissbio_isop_p(i) 
+         emissbio_mono_sum = emissbio_mono_sum + emissbio_mono_p(i)
+         emissbio_voc_sum  = emissbio_voc_sum  + emissbio_voc_p (i)
+         emissbio_no_sum   = emissbio_no_sum   + emissbio_no_p  (i)
+      endif
+   enddo ! end of main loop over chm_ni
+      
+   
+   if (local_dbg) then        
+      write(chm_lun_out, 10) emissbio_isop_sum, emissbio_mono_sum, emissbio_voc_sum, emissbio_no_sum   
+10    format ('Sacha: mach_biog_emissions ==> emissbio_sum_{isop,mono,voc,no} = ',4(e15.5,2x))
+   endif
+
+
+
+         
+   contains
+!
+!  A simple function declaration for a repetitive calculation
+!
+   real function get_light_correction(PAR_flux)
+      real PAR_flux
+      get_light_correction = (0.0028782 * PAR_flux) / sqrt (1.0 + 7.29e-06 * (PAR_flux**2))
+   end function get_light_correction
+
+end subroutine mach_biog_emissions

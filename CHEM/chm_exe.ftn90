@@ -1,0 +1,180 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : chm_exe.ftn90
+! Creation       : A. Kallaur, H. Landry, S. Menard - July 2005 and more
+! Description    : Computes the chemical tranformation for a
+!                  list of species and reactions in the atmosphere.
+!
+! Extra info     : The object is the Development of chosen chemical scheme that
+!                  begins here in this subroutine: chemical transformations,
+!                  with this chosen scheme.
+!
+! Arguments:
+!           IN
+!
+!             busent_size        -->    dimension of busent   
+!             busdyn_size        -->    dimension of busdyn   
+!             busper_size        -->	dimension of busper
+!             busvol_size        -->    dimension of busvol
+!             timestep           -->    timestep (sec.)
+!             slab_index         -->    slice number
+!             step               -->    timestep number
+!             ithread            -->    cpu number executing slice "slab_index"
+!             ni                 -->    horizontal running length (physics)
+!             nk                 -->    vertical dimension (physics)
+!
+!            IN/OUT
+!             busent    -->    entry bus
+!             busdyn    -->    dynamical bus	
+!             busper    -->    permanent bus
+!             busvol    -->    volatile bus
+!
+!=============================================================================
+!
+!!if_on
+subroutine chm_exe(busent         , busdyn        , busper        , busvol        , &
+                   busent_size    , busdyn_size   , busper_size   , busvol_size   , &
+                   timestep       , slab_index    , step          , ithread       , &
+                   ni             , nk                                              )
+!!if_off           
+   use chm_utils_mod,        only: chm_lun_out, chm_timestep, global_debug, undefined
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   use chm_nml_mod,          only: chm_master, chm_model_s, chm_step_factor
+   use chm_metvar_mod,       only: SIZE_MV2D, SIZE_MV3D 
+   use mach_headers_mod,     only: mach_main
+   use mach_linoz_headers_mod, only: linoz_main
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: nk, ni
+   integer(kind=4), intent   (in) :: busvol_size, busper_size, busdyn_size, busent_size
+   integer(kind=4), intent   (in) :: slab_index, step, ithread
+   real(kind=4),    intent   (in) :: timestep
+   real(kind=4),    intent(inout) :: busent(busent_size), busdyn(busdyn_size)
+   real(kind=4),    intent(inout) :: busper(busper_size), busvol(busvol_size)
+!!if_off
+!
+!  Declaration of local variables
+!  For purposes of efficiency, met. fields are copied from their respective buses (in chm_load_metvar)
+!  and regouped and stored in the declared arrays below. These fields are used in many other modules
+!  in the chemical code.
+!
+   real(kind=4)    :: metvar2d      (ni, SIZE_MV2D)  
+   real(kind=4)    :: metvar3d      (ni, nk, SIZE_MV3D)
+   real(kind=4)    :: metvar_vegf   (ni, 26)
+   real(kind=4)    :: metvar_glacier(ni, 2)
+   logical(kind=4) :: local_dbg
+   logical(kind=4), save :: print_once=.true.
+!
+!  Detect Master switch. If false, NORMAL EXIT WITH MESSAGE 
+!
+
+   if (.not. chm_master) then
+      if(print_once) then
+         write(chm_lun_out, *) 'CHM_EXE -> DETECTED CHEMICAL MASTER KILL, NO CHEMISTRY: NORMAL EXIT'
+         print_once = .false.
+      endif
+      return
+   endif
+   
+!  Only the init processor can output
+!  sending output of other processors to /dev/null
+!    if (step == 0 .and. ithread > 1 .and. slab_index > 1) then
+!       chm_lun_out   = 666
+!       open(chm_lun_out, file='/dev/null', status='old')
+!    end if
+! 
+!    print *,"global_debug = ", global_debug
+!
+! Set debug flag
+!
+   local_dbg = (.false. .or. global_debug)    
+!
+!  Exit the chemistry if logical controller switch is .false.
+!
+   if (chm_model_s == undefined) then
+      write (chm_lun_out, *) 'NO CHEMISTRY INTEGRATION at time step =  ',step
+      return
+   endif
+
+!  No more chemistry calculation done at diagnostic level (nk). Only prognistic levels from (1, chm_nk)
+   chm_nk = nk - 1
+   chm_ni = ni
+
+   if (local_dbg) then
+      write (chm_lun_out, *) 'Enter chemistry --> timestep =',step, 'chm_ni  = ', chm_ni ,'slab_index = ',slab_index
+   endif
+!   if (step <= 1) then
+      chm_timestep = chm_step_factor * timestep
+!   endif
+
+   if (mod(step, chm_step_factor) == 0) then
+
+      call chm_load_metvar(busdyn, busdyn_size, busper, busper_size, &
+                           busvol, busvol_size, metvar2d, metvar3d,  &
+                           metvar_vegf, metvar_glacier)
+
+      select case (chm_model_s)
+
+      case ('MACH')
+
+
+      call mach_main(busdyn,      busper,      busvol        , &
+                     busdyn_size, busper_size, busvol_size   , &
+                     metvar2d, metvar3d                      , &
+                     metvar_vegf, metvar_glacier             , &
+                     slab_index, step)
+! 
+      case ('LINOZ')
+      call linoz_main(busdyn,      busper,      busvol        , &
+                      busdyn_size, busper_size, busvol_size   , &
+                      metvar2d, metvar3d                      , &
+                      slab_index, step)
+
+      end select
+!
+!   For all chemistry tracers, copy prognostic level (chm_nk) into diagnostic level (chm_nk + 1)
+!
+      call chm_dupl_tracr_lev(busdyn, busdyn_size, ni, nk, chm_nk, chm_nk+1, slab_index)
+
+   else
+      if (local_dbg) then
+         write (chm_lun_out, *) 'Chemistry Solver NOT activated for timestep: step = ', step
+      endif
+   endif
+ 1000 format(/'CHEMISTRY: PERFORMING TIMESTEP #',i8,/52('='))
+
+!  if (timestep == ?last? .and. ithread > 0) then
+!    close(chm_lun_out)
+!  end if
+
+end subroutine chm_exe
+

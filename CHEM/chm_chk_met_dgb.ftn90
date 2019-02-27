@@ -1,0 +1,87 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+!
+!!if_on
+ subroutine chm_chk_met_dgb(busvol,busvol_size, metvar2d, metvar3d)
+  use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+  use chm_metvar_mod
+!!if_off
+  use chm_utils_mod,        only: ik
+  use chm_species_idx_mod,  only: dbg_2d, dbg_3d
+  use chm_species_info_mod, only: sm
+  
+  implicit none
+!!if_on
+  integer(kind=4), intent   (in) :: busvol_size
+  real(kind=4),    intent(inout) :: busvol  (busvol_size)
+  real(kind=4),    intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+  real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+!!if_off
+! 
+! Local variables 
+! 
+   integer(kind=4) :: i,k
+!
+   do i = 1, chm_ni
+      busvol(sm(dbg_2d(1)) % vol_offset + i - 1) = metvar2d(i,MV2D_PPLUS) 
+      busvol(sm(dbg_2d(2)) % vol_offset + i - 1) = metvar2d(i,MV2D_DXDY) 
+      busvol(sm(dbg_2d(3)) % vol_offset + i - 1) = metvar2d(i,MV2D_TSURF) 
+      busvol(sm(dbg_2d(4)) % vol_offset + i - 1) = metvar2d(i,MV2D_UDIAG) 
+      busvol(sm(dbg_2d(5)) % vol_offset + i - 1) = metvar2d(i,MV2D_VDIAG) 
+      busvol(sm(dbg_2d(6)) % vol_offset + i - 1) = metvar2d(i,MV2D_QDIAG) 
+      busvol(sm(dbg_2d(7)) % vol_offset + i - 1) = metvar2d(i,MV2D_GLSEA) 
+      busvol(sm(dbg_2d(8)) % vol_offset + i - 1) = metvar2d(i,MV2D_SNODP) 
+      busvol(sm(dbg_2d(9)) % vol_offset + i - 1) = metvar2d(i,MV2D_H) 
+
+      busvol(sm(dbg_2d(10)) % vol_offset + i - 1) = metvar2d(i,MV2D_DLAT) 
+      busvol(sm(dbg_2d(11)) % vol_offset + i - 1) = metvar2d(i,MV2D_DLON) 
+      busvol(sm(dbg_2d(12)) % vol_offset + i - 1) = metvar2d(i,MV2D_FLUSOLIS) 
+      busvol(sm(dbg_2d(13)) % vol_offset + i - 1) = metvar2d(i,MV2D_MT) 
+      busvol(sm(dbg_2d(14)) % vol_offset + i - 1) = metvar2d(i,MV2D_UE) 
+      busvol(sm(dbg_2d(15)) % vol_offset + i - 1) = metvar2d(i,MV2D_CANG) 
+      busvol(sm(dbg_2d(16)) % vol_offset + i - 1) = metvar2d(i,MV2D_KCL) 
+      busvol(sm(dbg_2d(17)) % vol_offset + i - 1) = metvar2d(i,MV2D_RAINRATE) 
+      busvol(sm(dbg_2d(18)) % vol_offset + i - 1) = metvar2d(i,MV2D_ILMO)
+   end do
+!
+   do i = 1, chm_ni
+      do k = 1, chm_nk
+         busvol(sm(dbg_3d(1)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_RNFLX)
+         busvol(sm(dbg_3d(2)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_SNOFLX)
+         busvol(sm(dbg_3d(3)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_PEVP)
+         busvol(sm(dbg_3d(4)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_PPRO)
+         busvol(sm(dbg_3d(5)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_TPLUS)
+         busvol(sm(dbg_3d(6)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_UPLUS)
+         busvol(sm(dbg_3d(7)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_VPLUS)
+         busvol(sm(dbg_3d(8)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_HUPLUS)
+         busvol(sm(dbg_3d(9)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_QCPLUS)
+         busvol(sm(dbg_3d(10)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_ZPLUS)
+         busvol(sm(dbg_3d(11)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_WPLUS)
+         busvol(sm(dbg_3d(12)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_SIGM)
+         busvol(sm(dbg_3d(13)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_SIGT)
+         busvol(sm(dbg_3d(14)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_FTOT)
+         busvol(sm(dbg_3d(15)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_FXP)
+         busvol(sm(dbg_3d(16)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_FDC)
+         busvol(sm(dbg_3d(17)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_KT)
+         busvol(sm(dbg_3d(18)) % vol_offset + ik(i, k, chm_ni)) = metvar3d(i, k, MV3D_AT2M)
+      end do
+   end do
+
+ end subroutine chm_chk_met_dgb

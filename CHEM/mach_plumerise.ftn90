@@ -1,0 +1,249 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_plumerise.ftn90
+! Creation       : H. Landry, A. Kallaur, S. Menard, March 2008 adaptation for GEM-MACH
+!                  Wanmin Gong, for AURAMS 2004
+!                  Original version from Janusz Pudykiewicz for CHRONOS 1995
+!
+! Description    : Assembly of major-point-source emission data for calculation
+!                  with Eulerian transport model simulating atmospheric
+!                  oxidants. Plume rise formula based on Briggs (1984).
+! Arguments:
+!            IN
+!                cell_area         -> Area of a grid cell (m^2)
+!                temperature       -> Model temperature (K)
+!                uu, vv            -> Wind components
+!                boundlayer_height -> height of the boundary layer (m above ground)
+!                obukhov_length    -> Monin-Obukhov length (m)
+!                friction_velocity -> Friction Speed U* (in m / s)
+!                slab_index         -> Slab number
+!                busdyn_size        -> Size of chemical dynamic bus (advected chem. species)
+!                metvar{2d,3d}      -> local storage (chemistry lib only, see chm_exe) for met. fields 
+!                                      copied from Physics buses (see chm_load_metvar).
+!
+!             IN/OUT
+!                busdyn             -> Dynamic bus.
+!
+! Extra info     :
+!     oct 2016  Jack - add separate plumerise call between fire and anthropogenic sources
+!
+!============================================================================
+!
+!!if_on
+subroutine mach_plumerise (busdyn     , busvol     , &
+                           busdyn_size, busvol_size, &
+                           metvar2d   , metvar3d   , slab_index   )
+   use chm_metvar_mod,          only: SIZE_MV2D, SIZE_MV3D
+   use chm_ptopo_grid_mod,      only: chm_ni, chm_nk
+!!if_off
+   use chm_metvar_mod,          only: MV2D_ILMO, MV2D_MT, MV2D_H, MV3D_ZPLUS, MV3D_AT2M
+   use chm_utils_mod,           only: chm_lun_out, global_debug, ik
+   use chm_species_info_mod,    only: nb_species, sm, species_master 
+   use chm_species_idx_mod,     only: sp_density
+   use chm_mjrpts_sortinfo_mod, only: lnb_sources, lstack_info, i_gilc, i_gjlc, i_typ, i_zplm, i_rsmk
+   use mach_headers_mod,        only: mach_plumerise_weight, mach_plumerise_weight4fire, mach_plumerise_apply
+   implicit none
+!
+   external tothermo
+!
+!!if_on
+   integer(kind=4), intent   (in) :: busdyn_size
+   integer(kind=4), intent   (in) :: busvol_size
+   integer(kind=4), intent   (in) :: slab_index
+   real(kind=4),    intent(inout) :: busdyn  (busdyn_size)
+   real(kind=4),    intent(inout) :: busvol  (busvol_size)
+   real(kind=4),    intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+!!if_off
+!
+!  Local variables
+!========================
+!
+!  Automatic arrays
+!
+   integer(kind=4), dimension(chm_ni)         :: index_above_boundlayer
+   real(kind=4)   , dimension(chm_nk)         :: weight               ! Weight of each cell in the column over the point source
+   real(kind=4)   , dimension(chm_ni)         :: safe_inv_mo_length  ! Safe inverse of monin-obukhov_length used only to avoid the possibility of a division by zero
+   real(kind=4)   , dimension(chm_ni, chm_nk) :: at2m                 ! interpolation coeficient
+   real(kind=4)   , dimension(chm_ni, chm_nk) :: z_tagl              ! height of the thermodynamic model levels in meter above ground
+   real(kind=4)   , dimension(chm_ni, chm_nk) :: z_magl              ! height of the momentum model levels in meter above ground
+   real(kind=4)   , dimension(chm_ni, chm_nk) :: rho                  ! Air density
+   real(kind=4)   , dimension(chm_ni, chm_nk) :: fconc                ! Concentration field of advected chemical specie (ug/kg)
+!
+!  Scalar variables
+!
+   logical(kind=4) :: local_dbg, level_found
+   integer(kind=4) :: i, k, cur_source, sp_index, stack_i, bin_nb  ! loop indices
+   real(kind=4)    :: emiss_rate
+!
+! Constants
+!
+   real(kind=4), parameter :: THRESHOLD = 1.e06
+
+   local_dbg = (.false. .or. global_debug)
+
+   if (local_dbg) then
+      write(chm_lun_out, *) ' '
+      write(chm_lun_out, *) '*****************************************************************'
+      write(chm_lun_out, *) 'ENTER MACH PLUMERISE SUBROUTINE'
+      write(chm_lun_out, *) 'Processing slab number: ', slab_index
+      write(chm_lun_out, *) 'Number of sources is lnb_sources: ', lnb_sources
+   endif
+
+   index_above_boundlayer = 1
+
+   safe_inv_mo_length(:) = metvar2d(:, MV2D_ILMO)
+
+   ! Compute height of the model level interface in meter above ground-level
+   do k = 1, chm_nk
+     do i = 1, chm_ni
+       z_tagl(i, k) = metvar3d(i, k, MV3D_ZPLUS)
+       at2m(i, k) = metvar3d(i, k, MV3D_AT2M)
+       rho(i,k) = busvol(sm(sp_density) % vol_offset + ik(i, k, chm_ni))
+     end do
+   end do
+   call tothermo(z_magl,z_tagl,at2m,at2m,chm_ni,chm_nk,chm_nk,.false.)
+
+   do i = 1, chm_ni
+
+      if (abs(metvar2d(i, MV2D_ILMO)) > THRESHOLD) then
+         safe_inv_mo_length(i) = sign(THRESHOLD, metvar2d(i, MV2D_ILMO))
+      end if
+
+      level_found = .false.
+
+      do k = chm_nk, 1, -1
+         ! Evaluate position of boundary layer from the ground up, for all grid point
+         index_above_boundlayer(i) = k
+         if (z_magl(i, k) >= metvar2d(i, MV2D_H)) then
+            exit
+         end if
+      end do
+
+   end do
+!
+! Loop over the total number of stacks (point sources) found: calculate the weight
+! factor for the entire column for each stack, and then apply it to the emission rate
+! of all the species.
+!
+   do cur_source = 1,lnb_sources
+      if (nint(lstack_info(i_gjlc,cur_source)) == slab_index) then
+         stack_i = nint(lstack_info(i_gilc,cur_source))
+      else
+         cycle
+      endif
+!
+! Calculate values for weight function (in the vertical, values 0.0<=w(i)<=1.0,
+! with sigma(i=1,chm_nk)w(i)=1.0)
+! i_typ = flag for forest fire (fire=500, others=100)
+!
+      weight = 0.0
+      if ((lstack_info(i_typ,cur_source) < 500.)) then
+         call mach_plumerise_weight(cur_source, z_magl, index_above_boundlayer, safe_inv_mo_length, weight, &
+                                    metvar2d, metvar3d )
+      else
+         call mach_plumerise_weight4fire(cur_source, z_magl, index_above_boundlayer, safe_inv_mo_length, weight, &
+                                         metvar2d, rho)
+      endif
+
+      if (local_dbg) then
+!     if(mod(cur_source,100) == 0) then
+         write(chm_lun_out, *) 'current source number : ', cur_source
+         write(chm_lun_out, *) 'current source coordinates ', stack_i, slab_index
+         write(chm_lun_out, *) 'height of momentum levels  ', z_magl(stack_i, 1:chm_nk)
+         write(chm_lun_out, *) 'current source weight      ', weight
+      end if
+
+
+      do sp_index = 1, nb_species
+!  Apply plumerise injection for gases to the chemistry dynamical bus
+
+         if (associated(species_master(sp_index) % me_list)) then
+            if (local_dbg) then
+!           if(mod(cur_source,100) == 0) then
+               write(chm_lun_out, *) 'FOUND GAS SPECIES {DYN,mjpt} NAME : ', species_master(sp_index) % dyn_name, species_master(sp_index) % me_name
+               write(chm_lun_out, *) 'current source value  : ', species_master(sp_index) % me_list(cur_source)
+            end if
+            emiss_rate = species_master(sp_index) % me_list(cur_source)
+
+            if (emiss_rate > 0.0) then
+               do k = 1, chm_nk
+                  do i = 1, chm_ni
+                     fconc(i,k) = busdyn(species_master(sp_index) % dyn_offset + ik(i, k, chm_ni))
+                  enddo
+               end do
+               call mach_plumerise_apply(fconc, emiss_rate, weight, rho, metvar2d, stack_i)
+               do k = 1, chm_nk
+                  do i = 1, chm_ni
+                     busdyn(species_master(sp_index) % dyn_offset + ik(i, k, chm_ni)) = fconc(i,k)
+                  enddo
+               end do
+            end if
+
+!  Apply plumerise injection for PM to the chemistry dynamical bus 
+         else if (species_master(sp_index) % nb_bins > 1) then
+            do bin_nb = 1, species_master(sp_index) % nb_bins
+               if (associated(species_master(sp_index) % bins_array(bin_nb) % me_list)) then
+                  if (local_dbg) then
+                     write(chm_lun_out, *) 'FOUND PM SPECIES {DYN,mjpt} NAME:', species_master(sp_index) % bins_array(bin_nb) % dyn_name, species_master(sp_index) % bins_array(bin_nb) % me_name
+                     write(chm_lun_out, *) 'current source number : ', cur_source
+                     write(chm_lun_out, *) 'current source value  : ', species_master(sp_index) % bins_array(bin_nb) % me_list(cur_source)
+                  end if
+                  emiss_rate = species_master(sp_index) % bins_array(bin_nb) % me_list(cur_source)
+
+                  if (emiss_rate > 0) then
+                     do k = 1, chm_nk
+                        do i = 1, chm_ni
+                           fconc(i,k) = busdyn(species_master(sp_index) % bins_array(bin_nb) % dyn_offset + ik(i, k, chm_ni))
+                        enddo
+                     end do
+                     call mach_plumerise_apply(fconc, emiss_rate, weight, rho, metvar2d, stack_i)
+                     do k = 1, chm_nk
+                        do i = 1, chm_ni
+                           busdyn(species_master(sp_index) % bins_array(bin_nb) % dyn_offset + ik(i, k, chm_ni)) = fconc(i,k)
+                        enddo
+                     end do
+                  end if
+               end if
+            end do
+         end if
+      end do
+   end do
+
+   if (local_dbg) then
+      write(chm_lun_out, *) 'EXIT MACH PLUMERISE SUBROUTINE'
+      write(chm_lun_out, *) ' '
+      write(chm_lun_out, *) '*****************************************************************'
+   end if
+
+   return
+end subroutine mach_plumerise

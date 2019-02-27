@@ -1,0 +1,70 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+!
+!!if_on
+ subroutine chm_chk_pm_dbg(busvol,busvol_size,slab_index,busdyn,busdyn_size)
+  use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+!!if_off
+  use chm_utils_mod,        only: global_debug
+  use chm_species_idx_mod
+  use chm_species_info_mod, only: sm
+  implicit none
+!!if_on
+  integer(kind=4), intent    (in) :: busdyn_size
+  integer(kind=4), intent    (in) :: busvol_size
+  integer(kind=4), intent    (in) :: slab_index
+  real(kind=4),    intent (inout) :: busvol(busvol_size)
+  real(kind=4),    intent (inout) :: busdyn(busdyn_size)
+!!if_off 
+!
+! Local variables 
+! 
+  integer(kind=4)                      :: i,j,k, ibin
+  integer(kind=4), parameter           :: nsp_gas = 16
+  integer(kind=4), parameter           :: nsp_aero = 8
+  integer(kind=4), dimension(nsp_gas)  :: species_gas
+  integer(kind=4), dimension(nsp_aero) :: species_aero
+  logical(kind=4)                      :: local_dbg
+
+  species_gas(1:nsp_gas) = (/ sp_SO2,  sp_SO4,  sp_NO,   sp_NO2,  &
+                                  sp_ALKA, sp_ETHE, sp_ALKE, &
+                                  sp_TOLU, sp_AROM, sp_HCHO, sp_ALD2, sp_MEK,  &
+                                  sp_CRES, sp_ISOP, &
+                                  sp_CO,   sp_NH3   &
+                                         /)
+  species_aero(1:nsp_aero) = (/ sp_AM,  sp_CM,  sp_EC,   sp_NI,  &
+                                sp_OC,  sp_PC,  sp_SS, &
+                                sp_SU /)
+ 
+   local_dbg = (.false. .or. global_debug)
+
+! do i=1,nsp_gas
+!   busvol(sm(dbg_3d(i)) % vol_offset : sm(dbg_3d(i)) % vol_offset +chm_ni*chm_nk-1 ) = &
+!     busdyn(sm(species_gas(i)) % dyn_offset : sm(species_gas(i)) % dyn_offset +chm_ni*chm_nk-1)
+! enddo
+  do i=1,nsp_aero
+    do ibin = 1,2
+    j = (i-1)*2 + ibin
+    busvol(sm(dbg_3d(j)) % vol_offset : sm(dbg_3d(j)) % vol_offset +chm_ni*chm_nk-1 ) = &
+      busdyn(sm(species_aero(i)) % bins_array(ibin) % dyn_offset : sm(species_aero(i)) % bins_array(ibin) % dyn_offset +chm_ni*chm_nk-1)
+    enddo
+  enddo
+  
+ end subroutine chm_chk_pm_dbg

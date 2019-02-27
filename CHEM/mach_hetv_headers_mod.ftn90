@@ -1,0 +1,800 @@
+!begin trap head
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_hetv_headers_mod.ftn90
+! Creation       : S. Menard, H. Landry, Juillet 2008
+! Description    : Modules defining explicit interfaces for mach_hetv* subroutines
+!
+! Extra info     :
+!
+!============================================================================
+
+module mach_hetv_headers_mod
+   interface
+!end trap head
+
+subroutine mach_hetv_activity (method, n, ns, ne, m_h, m_hso4, m_nh4, m_no3, m_so4, m_oh, g_h_no3, g_h_hso4, g_nh4_hso4,  &
+                               g_nh42_so4, g_h_oh, g_nh4_oh, g_nh4_no3, g_h2_so4, g_nh43_hso42, g0_h_no3, g0_h2_so4,      &
+                               g0_h_hso4, g0_nh4_no3, g0_nh42_so4, g0_nh4_hso4, tc)
+   integer(kind=4),   intent  (in) :: n
+   character(len=20), intent  (in) :: method
+   integer(kind=4),   intent  (in) :: ns
+   integer(kind=4),   intent  (in) :: ne
+   real(kind=8),      intent  (in) :: tc          (n)
+   real(kind=8),      intent  (in) :: m_h         (n)
+   real(kind=8),      intent  (in) :: m_hso4      (n)
+   real(kind=8),      intent  (in) :: m_nh4       (n)
+   real(kind=8),      intent  (in) :: m_no3       (n)
+   real(kind=8),      intent  (in) :: m_so4       (n)
+   real(kind=8),      intent (out) :: m_oh        (n)
+   real(kind=8),      intent (out) :: g_h_no3     (n)
+   real(kind=8),      intent (out) :: g_h_hso4    (n)
+   real(kind=8),      intent (out) :: g_nh4_hso4  (n)
+   real(kind=8),      intent (out) :: g_nh42_so4  (n)
+   real(kind=8),      intent (out) :: g_h_oh      (n)
+   real(kind=8),      intent (out) :: g_nh4_oh    (n)
+   real(kind=8),      intent (out) :: g_nh4_no3   (n)
+   real(kind=8),      intent (out) :: g_h2_so4    (n)
+   real(kind=8),      intent (out) :: g_nh43_hso42(n)
+   real(kind=8),      intent (out) :: g0_h_no3    (n)
+   real(kind=8),      intent (out) :: g0_h2_so4   (n)
+   real(kind=8),      intent (out) :: g0_h_hso4   (n)
+   real(kind=8),      intent (out) :: g0_nh4_no3  (n)
+   real(kind=8),      intent (out) :: g0_nh42_so4 (n)
+   real(kind=8),      intent (out) :: g0_nh4_hso4 (n)
+end subroutine mach_hetv_activity
+
+subroutine mach_hetv_case1(npts, nr, ns1, ne1, so4, no3, nh4, hso4, hno3, h, nh3, amsul, ambis, &
+                 amnit, leto, t, tc, aw, iter, itero, k0, p1, p2, eps, eps2, lwn, ta,           &
+                 ts, tn, ndiv, lwmin, tstd, small, smrt)
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: ns1
+   integer(kind=4), intent   (in) :: ne1
+   integer(kind=4), intent   (in) :: iter
+   integer(kind=4), intent   (in) :: itero
+   integer(kind=4), intent   (in) :: ndiv
+   real(kind=8),    intent   (in) :: lwmin
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: small
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: eps
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent   (in) :: k0   (nr)
+   real(kind=8),    intent   (in) :: p1   (nr)
+   real(kind=8),    intent   (in) :: p2   (nr)
+   real(kind=8),    intent  (out) :: so4  (npts)
+   real(kind=8),    intent(inout) :: no3  (npts)
+   real(kind=8),    intent  (out) :: nh4  (npts)
+   real(kind=8),    intent  (out) :: hso4 (npts)
+   real(kind=8),    intent(inout) :: hno3 (npts)
+   real(kind=8),    intent  (out) :: h    (npts)
+   real(kind=8),    intent(inout) :: nh3  (npts)
+   real(kind=8),    intent(inout) :: amsul(npts)
+   real(kind=8),    intent  (out) :: ambis(npts)
+   real(kind=8),    intent(inout) :: amnit(npts)
+   real(kind=8),    intent(inout) :: leto (npts)
+   real(kind=8),    intent   (in) :: t    (npts)
+   real(kind=8),    intent   (in) :: tc   (npts)
+   real(kind=8),    intent   (in) :: aw   (npts)
+   real(kind=8),    intent  (out) :: lwn  (npts)
+   real(kind=8),    intent(inout) :: ta   (npts)
+   real(kind=8),    intent(inout) :: ts   (npts)
+   real(kind=8),    intent(inout) :: tn   (npts)
+end subroutine mach_hetv_case1
+
+subroutine mach_hetv_case10 (npts, nr, ns10, ne10, so4, no3, nh4, hso4, hno3, h, nh3, amsul, ambis, amnit, &
+                   leto, t, tc, rh, iter, itero, k0, p1, p2, eps, eps2, rho, lwn, ta, ts, tn,           &
+                   mdrh_amnit_amsul, drh_amnit, oh, ndiv, tstd, small, smrt                                )
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: ns10
+   integer(kind=4), intent   (in) :: ne10
+   integer(kind=4), intent   (in) :: iter
+   integer(kind=4), intent   (in) :: itero
+   integer(kind=4), intent   (in) :: ndiv
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: small
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: eps
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent   (in) :: k0(nr)
+   real(kind=8),    intent   (in) :: p1(nr)
+   real(kind=8),    intent   (in) :: p2(nr)
+   real(kind=8),    intent  (out) :: so4             (npts)
+   real(kind=8),    intent  (out) :: no3             (npts)
+   real(kind=8),    intent  (out) :: nh4             (npts)
+   real(kind=8),    intent  (out) :: hso4            (npts)
+   real(kind=8),    intent  (out) :: hno3            (npts)
+   real(kind=8),    intent  (out) :: h               (npts)
+   real(kind=8),    intent  (out) :: nh3             (npts)
+   real(kind=8),    intent  (out) :: amsul           (npts)
+   real(kind=8),    intent  (out) :: ambis           (npts)
+   real(kind=8),    intent  (out) :: amnit           (npts)
+   real(kind=8),    intent  (out) :: leto            (npts)
+   real(kind=8),    intent   (in) :: t               (npts)
+   real(kind=8),    intent   (in) :: tc              (npts)
+   real(kind=8),    intent   (in) :: rh              (npts)
+   real(kind=8),    intent   (in) :: rho             (npts)
+   real(kind=8),    intent  (out) :: lwn             (npts)
+   real(kind=8),    intent(inout) :: ta              (npts)
+   real(kind=8),    intent(inout) :: ts              (npts)
+   real(kind=8),    intent(inout) :: tn              (npts)
+   real(kind=8),    intent   (in) :: mdrh_amnit_amsul(npts)
+   real(kind=8),    intent   (in) :: drh_amnit       (npts)
+   real(kind=8),    intent  (out) :: oh              (npts)
+end subroutine mach_hetv_case10
+
+subroutine mach_hetv_case11(npts, nr, ns11, ne11, so4_t, no3_t, nh4_t, hso4_t, hno3_t, h_t, &
+                            nh3_t, amsul_t, ambis_t, amnit_t, leto_t, t_t, tc_t, aw_t, &
+                            iter, itero, k0, p1, p2, eps, eps2, rho_t, lwn_t, ta_t, ts_t,   &
+                            tn_t, oh_t, ndiv, tstd, small, smrt                             )
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: ns11
+   integer(kind=4), intent   (in) :: ne11
+   integer(kind=4), intent   (in) :: iter
+   integer(kind=4), intent   (in) :: itero
+   integer(kind=4), intent   (in) :: ndiv
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: small
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: eps
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent   (in) :: k0(nr)
+   real(kind=8),    intent   (in) :: p1(nr)
+   real(kind=8),    intent   (in) :: p2(nr)
+   real(kind=8),    intent  (out) :: so4_t  (npts)
+   real(kind=8),    intent  (out) :: no3_t  (npts)
+   real(kind=8),    intent  (out) :: nh4_t  (npts)
+   real(kind=8),    intent  (out) :: hso4_t (npts)
+   real(kind=8),    intent  (out) :: hno3_t (npts)
+   real(kind=8),    intent  (out) :: h_t    (npts)
+   real(kind=8),    intent  (out) :: nh3_t  (npts)
+   real(kind=8),    intent  (out) :: amsul_t(npts)
+   real(kind=8),    intent  (out) :: ambis_t(npts)
+   real(kind=8),    intent  (out) :: amnit_t(npts)
+   real(kind=8),    intent  (out) :: leto_t (npts)
+   real(kind=8),    intent   (in) :: t_t    (npts)
+   real(kind=8),    intent   (in) :: tc_t   (npts)
+   real(kind=8),    intent   (in) :: aw_t   (npts)
+   real(kind=8),    intent   (in) :: rho_t  (npts)
+   real(kind=8),    intent  (out) :: lwn_t  (npts)
+   real(kind=8),    intent(inout) :: ta_t   (npts)
+   real(kind=8),    intent(inout) :: ts_t   (npts)
+   real(kind=8),    intent(inout) :: tn_t   (npts)
+   real(kind=8),    intent  (out) :: oh_t   (npts)
+end subroutine mach_hetv_case11
+
+subroutine mach_hetv_case12(npts, nr, ns12, ne12, so4, no3, nh4, hso4, hno3, h, nh3, amsul, &
+                           ambis, amnit, leto, t, tc, aw, iter, itero, k0, p1, p2, eps,     &
+                           eps2, rho, lwn, ta, ts, tn, oh, tstd, small, smrt)
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: ns12
+   integer(kind=4), intent   (in) :: ne12
+   integer(kind=4), intent   (in) :: iter
+   integer(kind=4), intent   (in) :: itero
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: small
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: eps
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent   (in) :: k0(nr)
+   real(kind=8),    intent   (in) :: p1(nr)
+   real(kind=8),    intent   (in) :: p2(nr)
+   real(kind=8),    intent  (out) :: so4  (npts)
+   real(kind=8),    intent  (out) :: no3  (npts)
+   real(kind=8),    intent  (out) :: nh4  (npts)
+   real(kind=8),    intent  (out) :: hso4 (npts)
+   real(kind=8),    intent(inout) :: hno3 (npts)
+   real(kind=8),    intent  (out) :: h    (npts)
+   real(kind=8),    intent(inout) :: nh3  (npts)
+   real(kind=8),    intent  (out) :: amsul(npts)
+   real(kind=8),    intent  (out) :: ambis(npts)
+   real(kind=8),    intent(inout) :: amnit(npts)
+   real(kind=8),    intent  (out) :: leto (npts)
+   real(kind=8),    intent   (in) :: t    (npts)
+   real(kind=8),    intent   (in) :: tc   (npts)
+   real(kind=8),    intent   (in) :: aw   (npts)
+   real(kind=8),    intent   (in) :: rho  (npts)
+   real(kind=8),    intent  (out) :: lwn  (npts)
+   real(kind=8),    intent(inout) :: ta   (npts)
+   real(kind=8),    intent(inout) :: ts   (npts)
+   real(kind=8),    intent(inout) :: tn   (npts)
+   real(kind=8),    intent  (out) :: oh   (npts)
+end subroutine mach_hetv_case12
+
+subroutine mach_hetv_case2(npts, nr, ns2, ne2, so4, no3, nh4, hso4, hno3, h, nh3, amsul, &
+                           ambis, amnit, leto, t, tc, aw, itero, k0, p1, p2, eps2,       &
+                           lwn, ta, ts, tn, tstd, smrt)
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: ns2
+   integer(kind=4), intent   (in) :: ne2
+   integer(kind=4), intent   (in) :: itero
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: k0   (nr)
+   real(kind=8),    intent   (in) :: p1   (nr)
+   real(kind=8),    intent   (in) :: p2   (nr)
+   real(kind=8),    intent  (out) :: so4  (npts)
+   real(kind=8),    intent(inout) :: no3  (npts)
+   real(kind=8),    intent  (out) :: nh4  (npts)
+   real(kind=8),    intent  (out) :: hso4 (npts)
+   real(kind=8),    intent(inout) :: hno3 (npts)
+   real(kind=8),    intent(inout) :: h    (npts)
+   real(kind=8),    intent(inout) :: nh3  (npts)
+   real(kind=8),    intent(inout) :: amsul(npts)
+   real(kind=8),    intent(inout) :: ambis(npts)
+   real(kind=8),    intent(inout) :: amnit(npts)
+   real(kind=8),    intent(inout) :: leto (npts)
+   real(kind=8),    intent   (in) :: t    (npts)
+   real(kind=8),    intent   (in) :: tc   (npts)
+   real(kind=8),    intent   (in) :: aw   (npts)
+   real(kind=8),    intent  (out) :: lwn  (npts)
+   real(kind=8),    intent(inout) :: ta   (npts)
+   real(kind=8),    intent(inout) :: ts   (npts)
+   real(kind=8),    intent(inout) :: tn   (npts)
+end subroutine mach_hetv_case2
+
+subroutine mach_hetv_case3 (npts, ns3, ne3, so4, no3, nh4, hso4, hno3, h, nh3, amsul, ambis, amnit, leto, lwn, ta, ts, tn)
+   integer(kind=4), intent  (in) :: npts
+   integer(kind=4), intent  (in) :: ns3
+   integer(kind=4), intent  (in) :: ne3
+   real(kind=8),    intent  (in) :: ta   (npts)
+   real(kind=8),    intent  (in) :: ts   (npts)
+   real(kind=8),    intent  (in) :: tn   (npts)
+   real(kind=8),    intent (out) :: so4  (npts)
+   real(kind=8),    intent (out) :: no3  (npts)
+   real(kind=8),    intent (out) :: nh4  (npts)
+   real(kind=8),    intent (out) :: hso4 (npts)
+   real(kind=8),    intent (out) :: hno3 (npts)
+   real(kind=8),    intent (out) :: h    (npts)
+   real(kind=8),    intent (out) :: nh3  (npts)
+   real(kind=8),    intent (out) :: amsul(npts)
+   real(kind=8),    intent (out) :: ambis(npts)
+   real(kind=8),    intent (out) :: amnit(npts)
+   real(kind=8),    intent (out) :: leto (npts)
+   real(kind=8),    intent (out) :: lwn  (npts)
+end subroutine mach_hetv_case3
+
+subroutine mach_hetv_case4 (npts, nr, ns4, ne4, so4, no3, nh4, hso4, hno3, h, nh3, amsul, ambis,    &
+                           amnit, leto, t, tc, rh, iter, itero, k0, p1, p2, eps, eps2, lwn,      &
+                           ta, ts, tn, mdrh_leto_ambis, drh_ambis, ndiv, tstd, small, smrt)
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: ns4
+   integer(kind=4), intent   (in) :: ne4
+   integer(kind=4), intent   (in) :: iter
+   integer(kind=4), intent   (in) :: itero
+   integer(kind=4), intent   (in) :: ndiv
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: small
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: eps
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent   (in) :: k0             (nr)
+   real(kind=8),    intent   (in) :: p1             (nr)
+   real(kind=8),    intent   (in) :: p2             (nr)
+   real(kind=8),    intent  (out) :: so4            (npts)
+   real(kind=8),    intent  (out) :: no3            (npts)
+   real(kind=8),    intent  (out) :: nh4            (npts)
+   real(kind=8),    intent  (out) :: hso4           (npts)
+   real(kind=8),    intent(inout) :: hno3           (npts)
+   real(kind=8),    intent  (out) :: h              (npts)
+   real(kind=8),    intent(inout) :: nh3            (npts)
+   real(kind=8),    intent(inout) :: amsul          (npts)
+   real(kind=8),    intent(inout) :: ambis          (npts)
+   real(kind=8),    intent(inout) :: amnit          (npts)
+   real(kind=8),    intent  (out) :: leto           (npts)
+   real(kind=8),    intent   (in) :: t              (npts)
+   real(kind=8),    intent   (in) :: tc             (npts)
+   real(kind=8),    intent   (in) :: rh             (npts)
+   real(kind=8),    intent  (out) :: lwn            (npts)
+   real(kind=8),    intent(inout) :: ta             (npts)
+   real(kind=8),    intent(inout) :: ts             (npts)
+   real(kind=8),    intent(inout) :: tn             (npts)
+   real(kind=8),    intent   (in) :: mdrh_leto_ambis(npts)
+   real(kind=8),    intent   (in) :: drh_ambis      (npts)
+end subroutine mach_hetv_case4
+
+subroutine mach_hetv_case5(npts, nr, ns5, ne5, so4, no3, nh4, hso4, hno3, h, nh3, amsul,   &
+                           ambis, amnit, leto, t, tc, aw, iter, itero, k0, p1, p2, eps, &
+                           eps2, lwn, ta, ts, tn, ndiv, tstd, small, smrt)
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: ns5
+   integer(kind=4), intent   (in) :: ne5
+   integer(kind=4), intent   (in) :: iter
+   integer(kind=4), intent   (in) :: itero
+   integer(kind=4), intent   (in) :: ndiv
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: small
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: eps
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent   (in) :: k0   (nr)
+   real(kind=8),    intent   (in) :: p1   (nr)
+   real(kind=8),    intent   (in) :: p2   (nr)
+   real(kind=8),    intent  (out) :: so4  (npts)
+   real(kind=8),    intent  (out) :: no3  (npts)
+   real(kind=8),    intent  (out) :: nh4  (npts)
+   real(kind=8),    intent  (out) :: hso4 (npts)
+   real(kind=8),    intent(inout) :: hno3 (npts)
+   real(kind=8),    intent  (out) :: h    (npts)
+   real(kind=8),    intent(inout) :: nh3  (npts)
+   real(kind=8),    intent(inout) :: amsul(npts)
+   real(kind=8),    intent(inout) :: ambis(npts)
+   real(kind=8),    intent(inout) :: amnit(npts)
+   real(kind=8),    intent  (out) :: leto (npts)
+   real(kind=8),    intent   (in) :: t    (npts)
+   real(kind=8),    intent   (in) :: tc   (npts)
+   real(kind=8),    intent   (in) :: aw   (npts)
+   real(kind=8),    intent  (out) :: lwn  (npts)
+   real(kind=8),    intent(inout) :: ta   (npts)
+   real(kind=8),    intent(inout) :: ts   (npts)
+   real(kind=8),    intent(inout) :: tn   (npts)
+end subroutine mach_hetv_case5
+
+subroutine mach_hetv_case6 (npts, ns6, ne6, so4, no3, nh4, hso4, hno3, h, nh3, amsul, ambis, amnit, leto, lwn, ta, ts, tn)
+   integer(kind=4), intent  (in) :: npts
+   integer(kind=4), intent  (in) :: ns6
+   integer(kind=4), intent  (in) :: ne6
+   real(kind=8),    intent  (in) :: ta   (npts)
+   real(kind=8),    intent  (in) :: ts   (npts)
+   real(kind=8),    intent  (in) :: tn   (npts)
+   real(kind=8),    intent (out) :: so4  (npts)
+   real(kind=8),    intent (out) :: no3  (npts)
+   real(kind=8),    intent (out) :: nh4  (npts)
+   real(kind=8),    intent (out) :: hso4 (npts)
+   real(kind=8),    intent (out) :: hno3 (npts)
+   real(kind=8),    intent (out) :: h    (npts)
+   real(kind=8),    intent (out) :: nh3  (npts)
+   real(kind=8),    intent (out) :: amsul(npts)
+   real(kind=8),    intent (out) :: ambis(npts)
+   real(kind=8),    intent (out) :: amnit(npts)
+   real(kind=8),    intent (out) :: leto (npts)
+   real(kind=8),    intent (out) :: lwn  (npts)
+end subroutine mach_hetv_case6
+
+subroutine mach_hetv_case7 (npts, nr, ns7, ne7, so4, no3, nh4, hso4, hno3, h, nh3, amsul, ambis, &
+                  amnit, leto, t, tc, rh, iter, itero, k0, p1, p2, eps, eps2, lwn,            &
+                  ta, ts, tn, mdrh_leto_amsul, drh_leto, ndiv, tstd, small, smrt)
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: ns7
+   integer(kind=4), intent   (in) :: ne7
+   integer(kind=4), intent   (in) :: iter
+   integer(kind=4), intent   (in) :: itero
+   integer(kind=4), intent   (in) :: ndiv
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: small
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: eps
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent   (in) :: k0(nr)
+   real(kind=8),    intent   (in) :: p1(nr)
+   real(kind=8),    intent   (in) :: p2(nr)
+   real(kind=8),    intent  (out) :: so4            (npts)
+   real(kind=8),    intent  (out) :: no3            (npts)
+   real(kind=8),    intent  (out) :: nh4            (npts)
+   real(kind=8),    intent  (out) :: hso4           (npts)
+   real(kind=8),    intent(inout) :: hno3           (npts)
+   real(kind=8),    intent  (out) :: h              (npts)
+   real(kind=8),    intent(inout) :: nh3            (npts)
+   real(kind=8),    intent  (out) :: amsul          (npts)
+   real(kind=8),    intent(inout) :: ambis          (npts)
+   real(kind=8),    intent(inout) :: amnit          (npts)
+   real(kind=8),    intent(inout) :: leto           (npts)
+   real(kind=8),    intent   (in) :: t              (npts)
+   real(kind=8),    intent   (in) :: tc             (npts)
+   real(kind=8),    intent   (in) :: rh             (npts)
+   real(kind=8),    intent  (out) :: lwn            (npts)
+   real(kind=8),    intent(inout) :: ta             (npts)
+   real(kind=8),    intent(inout) :: ts             (npts)
+   real(kind=8),    intent(inout) :: tn             (npts)
+   real(kind=8),    intent   (in) :: mdrh_leto_amsul(npts)
+   real(kind=8),    intent   (in) :: drh_leto       (npts)
+end subroutine mach_hetv_case7
+
+subroutine mach_hetv_case8(npts, nr, ns8, ne8, so4, no3, nh4, hso4, hno3, h, nh3, amsul, &
+                 ambis, amnit, leto, t, tc, aw, iter, itero, k0, p1, p2,              &
+                 eps, eps2, lwn, ta, ts, tn, ndiv, tstd, small, smrt)
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: ns8
+   integer(kind=4), intent   (in) :: ne8
+   integer(kind=4), intent   (in) :: iter
+   integer(kind=4), intent   (in) :: itero
+   integer(kind=4), intent   (in) :: ndiv
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: small
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: eps
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent   (in) :: k0(nr)
+   real(kind=8),    intent   (in) :: p1(nr)
+   real(kind=8),    intent   (in) :: p2(nr)
+   real(kind=8),    intent  (out) :: so4  (npts)
+   real(kind=8),    intent  (out) :: no3  (npts)
+   real(kind=8),    intent  (out) :: nh4  (npts)
+   real(kind=8),    intent  (out) :: hso4 (npts)
+   real(kind=8),    intent(inout) :: hno3 (npts)
+   real(kind=8),    intent  (out) :: h    (npts)
+   real(kind=8),    intent(inout) :: nh3  (npts)
+   real(kind=8),    intent  (out) :: amsul(npts)
+   real(kind=8),    intent(inout) :: ambis(npts)
+   real(kind=8),    intent(inout) :: amnit(npts)
+   real(kind=8),    intent(inout) :: leto (npts)
+   real(kind=8),    intent   (in) :: t    (npts)
+   real(kind=8),    intent   (in) :: tc   (npts)
+   real(kind=8),    intent   (in) :: aw   (npts)
+   real(kind=8),    intent  (out) :: lwn  (npts)
+   real(kind=8),    intent(inout) :: ta   (npts)
+   real(kind=8),    intent(inout) :: ts   (npts)
+   real(kind=8),    intent(inout) :: tn   (npts)
+end subroutine mach_hetv_case8
+
+subroutine mach_hetv_case9 (npts, nr, ns9, ne9, so4, no3, nh4, hno3, nh3, amsul, ambis, amnit, &
+                  leto, t, k0, p1, p2, rho, lwn, ta, ts, tn, tstd, smrt)
+   integer(kind=4), intent (in) :: nr
+   integer(kind=4), intent (in) :: npts
+   integer(kind=4), intent (in) :: ns9
+   integer(kind=4), intent (in) :: ne9
+   real(kind=8),    intent (in) :: tstd
+   real(kind=8),    intent (in) :: smrt
+   real(kind=8),    intent (in) :: k0(nr)
+   real(kind=8),    intent (in) :: p1(nr)
+   real(kind=8),    intent (in) :: p2(nr)
+   real(kind=8),    intent(out) :: so4  (npts)
+   real(kind=8),    intent(out) :: no3  (npts)
+   real(kind=8),    intent(out) :: nh4  (npts)
+   real(kind=8),    intent(out) :: hno3 (npts)
+   real(kind=8),    intent(out) :: nh3  (npts)
+   real(kind=8),    intent(out) :: amsul(npts)
+   real(kind=8),    intent(out) :: ambis(npts)
+   real(kind=8),    intent(out) :: amnit(npts)
+   real(kind=8),    intent(out) :: leto (npts)
+   real(kind=8),    intent (in) :: t    (npts)
+   real(kind=8),    intent (in) :: rho  (npts)
+   real(kind=8),    intent(out) :: lwn  (npts)
+   real(kind=8),    intent (in) :: ta   (npts)
+   real(kind=8),    intent (in) :: ts   (npts)
+   real(kind=8),    intent (in) :: tn   (npts)
+end subroutine mach_hetv_case9
+
+subroutine mach_hetv_corrhno3(npts, nr, ns, ne, so4, no3, nh4, hso4, hno3, h, t, tc, aw, &
+                    k0, p1, p2, rho, lwn, lwnmin, tstd )
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: ns
+   integer(kind=4), intent   (in) :: ne
+   real(kind=8),    intent   (in) :: lwnmin
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: k0(nr)
+   real(kind=8),    intent   (in) :: p1(nr)
+   real(kind=8),    intent   (in) :: p2(nr)
+   real(kind=8),    intent(inout) :: so4  (npts)
+   real(kind=8),    intent(inout) :: no3  (npts)
+   real(kind=8),    intent(inout) :: nh4  (npts)
+   real(kind=8),    intent(inout) :: hso4 (npts)
+   real(kind=8),    intent(inout) :: hno3 (npts)
+   real(kind=8),    intent(inout) :: h    (npts)
+   real(kind=8),    intent   (in) :: t    (npts)
+   real(kind=8),    intent   (in) :: tc   (npts)
+   real(kind=8),    intent   (in) :: aw   (npts)
+   real(kind=8),    intent   (in) :: rho  (npts)
+   real(kind=8),    intent  (out) :: lwn  (npts)
+end subroutine mach_hetv_corrhno3
+
+subroutine mach_hetv_main (npts, so4_i, no3_i, nh4_i, hso4_i, hno3_i, h_i, nh3_i, amsul_i,     &
+                  ambis_i, amnit_i, leto_i, t_i, rh_i, eps, eps2, iter, itero,            &
+                  rho_i, lwn_i, ndiv, lwmin, tstd, small, smrt, case_number           )
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: iter
+   integer(kind=4), intent   (in) :: itero
+   integer(kind=4), intent   (in) :: ndiv
+   real(kind=8),    intent   (in) :: lwmin
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: small
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: eps
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent(inout) :: so4_i      (npts)
+   real(kind=8),    intent(inout) :: no3_i      (npts)
+   real(kind=8),    intent(inout) :: nh4_i      (npts)
+   real(kind=8),    intent(inout) :: hso4_i     (npts)
+   real(kind=8),    intent(inout) :: hno3_i     (npts)
+   real(kind=8),    intent(inout) :: h_i        (npts)
+   real(kind=8),    intent(inout) :: nh3_i      (npts)
+   real(kind=8),    intent(inout) :: amsul_i    (npts)
+   real(kind=8),    intent(inout) :: ambis_i    (npts)
+   real(kind=8),    intent(inout) :: amnit_i    (npts)
+   real(kind=8),    intent(inout) :: leto_i     (npts)
+   real(kind=8),    intent   (in) :: t_i        (npts)
+   real(kind=8),    intent   (in) :: rh_i       (npts)
+   real(kind=8),    intent   (in) :: rho_i      (npts)
+   real(kind=8),    intent  (out) :: lwn_i      (npts)
+   real(kind=4),    intent  (out) :: case_number(npts)
+end subroutine mach_hetv_main
+
+subroutine mach_hetv_hetchem (gascon, aerocon, tempk, zpres, npts, nptsnz, ibulk, jlat, &
+                              aeronum, rhrow_new, aerosize, kount, rhorow, hetselec)
+   use mach_cam_utils_mod,    only: maxns, maxnsp, isize 
+   use chm_ptopo_grid_mod,    only: chm_nk
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: nptsnz
+   integer(kind=4), intent   (in) :: ibulk
+   integer(kind=4), intent   (in) :: jlat
+   integer(kind=4), intent   (in) :: kount
+   integer(kind=4), intent   (in) :: hetselec
+   real(kind=4),    intent(inout) :: gascon(npts,maxns,chm_nk)
+   real(kind=4),    intent(inout) :: aerocon(npts,maxnsp,chm_nk,isize)
+   real(kind=4),    intent   (in) :: tempk(npts,chm_nk)
+   real(kind=4),    intent   (in) :: zpres(npts,chm_nk)
+   real(kind=4),    intent   (in) :: aeronum(npts,chm_nk,isize)
+   real(kind=4),    intent   (in) :: rhrow_new(npts,chm_nk)
+   real(kind=4),    intent   (in) :: aerosize(2,isize)
+   real(kind=4),    intent   (in) :: rhorow(npts,chm_nk)
+end subroutine mach_hetv_hetchem
+
+subroutine mach_hetv_hetvcall (npts, maxhet, maxghet, nsize, ghetf, hetf, tempk, rhrow, jlat, kount1, rhorow)
+   integer(kind=4), intent   (in) :: nsize
+   integer(kind=4), intent   (in) :: maxghet
+   integer(kind=4), intent   (in) :: maxhet
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: jlat
+   integer(kind=4), intent   (in) :: kount1
+   real(kind=4),    intent   (in) :: tempk (npts)
+   real(kind=4),    intent   (in) :: rhrow (npts)
+   real(kind=4),    intent   (in) :: rhorow(npts)
+   real(kind=4),    intent(inout) :: ghetf (npts,maxghet)
+   real(kind=4),    intent(inout) :: hetf  (npts,maxhet,nsize)
+end subroutine mach_hetv_hetvcall
+
+subroutine mach_hetv_poly3v (a1, a2, a3, root, islv, npts, ns, ne)
+              integer(kind=4), intent (in) :: npts
+              integer(kind=4), intent (in) :: ns
+              integer(kind=4), intent (in) :: ne
+              real(kind=8),    intent (in) :: a1  (npts)
+              real(kind=8),    intent (in) :: a2  (npts)
+              real(kind=8),    intent (in) :: a3  (npts)
+              real(kind=8),    intent(out) :: root(npts)
+              integer(kind=4), intent(out) :: islv(npts)
+end subroutine mach_hetv_poly3v
+
+subroutine mach_hetv_rebin (het , dhet_chem, tempk, zpres, aerosize, binnum, npts, maxcnz, &
+                  maxnsz, maxhet, kount, jlat                                              )
+    integer(kind=4), intent   (in) :: maxhet
+    integer(kind=4), intent   (in) :: maxnsz
+    integer(kind=4), intent   (in) :: maxcnz
+    integer(kind=4), intent   (in) :: npts
+    integer(kind=4), intent   (in) :: kount
+    integer(kind=4), intent   (in) :: jlat
+    real(kind=4),    intent(inout) :: het      (npts,maxhet,maxcnz,maxnsz)
+    real(kind=4),    intent(inout) :: dhet_chem(npts,maxhet,maxcnz)
+    real(kind=4),    intent   (in) :: tempk    (npts,maxcnz)
+    real(kind=4),    intent   (in) :: zpres    (npts,maxcnz)
+    real(kind=4),    intent   (in) :: aerosize (2,maxnsz)
+    real(kind=4),    intent   (in) :: binnum   (npts,maxcnz,maxnsz)
+end subroutine mach_hetv_rebin
+
+subroutine mach_hetv_water (n, ns, ne, so4, h, no3, nh4, hso4, aw, lwo, lwn )
+   
+   integer(kind=4), intent (in) :: n
+   integer(kind=4), intent (in) :: ns
+   integer(kind=4), intent (in) :: ne
+   real(kind=8),    intent (in) :: so4 (n)
+   real(kind=8),    intent (in) :: h   (n)
+   real(kind=8),    intent (in) :: no3 (n)
+   real(kind=8),    intent (in) :: nh4 (n)
+   real(kind=8),    intent (in) :: hso4(n)
+   real(kind=8),    intent (in) :: aw  (n)
+   real(kind=8),    intent (in) :: lwo (n)
+   real(kind=8),    intent(out) :: lwn (n)
+end subroutine mach_hetv_water
+
+subroutine mach_hetv_activity_single (m_h, m_hso4, m_nh4, m_no3, m_so4, m_oh, g_h_no3, g_h_hso4, g_nh4_hso4,  &
+                               g_nh42_so4, g_h_oh, g_nh4_oh, g_nh4_no3, g_h2_so4, g_nh43_hso42, g0_h_no3, g0_h2_so4,      &
+                               g0_h_hso4, g0_nh4_no3, g0_nh42_so4, g0_nh4_hso4, tc)
+   real(kind=8),      intent  (in) :: tc          
+   real(kind=8),      intent  (in) :: m_h         
+   real(kind=8),      intent  (in) :: m_hso4      
+   real(kind=8),      intent  (in) :: m_nh4       
+   real(kind=8),      intent  (in) :: m_no3       
+   real(kind=8),      intent  (in) :: m_so4       
+   real(kind=8),      intent (out) :: m_oh        
+   real(kind=8),      intent (out) :: g_h_no3     
+   real(kind=8),      intent (out) :: g_h_hso4    
+   real(kind=8),      intent (out) :: g_nh4_hso4  
+   real(kind=8),      intent (out) :: g_nh42_so4  
+   real(kind=8),      intent (out) :: g_h_oh      
+   real(kind=8),      intent (out) :: g_nh4_oh    
+   real(kind=8),      intent (out) :: g_nh4_no3   
+   real(kind=8),      intent (out) :: g_h2_so4    
+   real(kind=8),      intent (out) :: g_nh43_hso42
+   real(kind=8),      intent (out) :: g0_h_no3    
+   real(kind=8),      intent (out) :: g0_h2_so4   
+   real(kind=8),      intent (out) :: g0_h_hso4   
+   real(kind=8),      intent (out) :: g0_nh4_no3  
+   real(kind=8),      intent (out) :: g0_nh42_so4 
+   real(kind=8),      intent (out) :: g0_nh4_hso4 
+end subroutine mach_hetv_activity_single
+
+subroutine mach_hetv_main_single (so4, no3, nh4, hso4, hno3, h, nh3, amsul,     &
+                  ambis, amnit, leto, t, rh, eps, eps2, iter, itero,            &
+                  rho, lwn, ndiv, lwmin, tstd, small, smrt, case_number)
+   integer(kind=4), intent   (in) :: iter
+   integer(kind=4), intent   (in) :: itero
+   integer(kind=4), intent   (in) :: ndiv
+   real(kind=8),    intent   (in) :: lwmin
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: small
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: eps
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent(inout) :: so4      
+   real(kind=8),    intent(inout) :: no3      
+   real(kind=8),    intent(inout) :: nh4      
+   real(kind=8),    intent(inout) :: hso4     
+   real(kind=8),    intent(inout) :: hno3     
+   real(kind=8),    intent(inout) :: h        
+   real(kind=8),    intent(inout) :: nh3      
+   real(kind=8),    intent(inout) :: amsul    
+   real(kind=8),    intent(inout) :: ambis    
+   real(kind=8),    intent(inout) :: amnit    
+   real(kind=8),    intent(inout) :: leto     
+   real(kind=8),    intent   (in) :: t        
+   real(kind=8),    intent   (in) :: rh       
+   real(kind=8),    intent   (in) :: rho      
+   real(kind=8),    intent  (out) :: lwn      
+   real(kind=4),    intent  (out) :: case_number
+end subroutine mach_hetv_main_single
+
+subroutine mach_hetv_case2_single(nr, so4, no3, nh4, hso4, hno3, h, nh3, amsul, &
+                           ambis, amnit, leto, t, tc, aw, itero, k0, p1, p2, eps2,       &
+                           lwn, ta, ts, tn, tstd, smrt)
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: itero
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: k0   (nr)
+   real(kind=8),    intent   (in) :: p1   (nr)
+   real(kind=8),    intent   (in) :: p2   (nr)
+   real(kind=8),    intent  (out) :: so4  
+   real(kind=8),    intent(inout) :: no3  
+   real(kind=8),    intent  (out) :: nh4  
+   real(kind=8),    intent  (out) :: hso4 
+   real(kind=8),    intent(inout) :: hno3 
+   real(kind=8),    intent(inout) :: h    
+   real(kind=8),    intent(inout) :: nh3  
+   real(kind=8),    intent(inout) :: amsul
+   real(kind=8),    intent(inout) :: ambis
+   real(kind=8),    intent(inout) :: amnit
+   real(kind=8),    intent(inout) :: leto 
+   real(kind=8),    intent   (in) :: t    
+   real(kind=8),    intent   (in) :: tc   
+   real(kind=8),    intent   (in) :: aw   
+   real(kind=8),    intent  (out) :: lwn  
+   real(kind=8),    intent(inout) :: ta   
+   real(kind=8),    intent(inout) :: ts   
+   real(kind=8),    intent(inout) :: tn   
+end subroutine mach_hetv_case2_single
+
+subroutine mach_hetv_case9_single (nr, hno3, nh3, amsuldry, amnitdry, t, k0, p1, p2, rho, ta, ts, tn, tstd, smrt)
+   integer(kind=4), intent (in) :: nr
+   real(kind=8),    intent(out) :: hno3 
+   real(kind=8),    intent(out) :: nh3  
+   real(kind=8),    intent(out) :: amsuldry
+   real(kind=8),    intent(out) :: amnitdry
+   real(kind=8),    intent (in) :: t    
+   real(kind=8),    intent (in) :: k0(nr)
+   real(kind=8),    intent (in) :: p1(nr)
+   real(kind=8),    intent (in) :: p2(nr)
+   real(kind=8),    intent (in) :: rho  
+   real(kind=8),    intent (in) :: ta   
+   real(kind=8),    intent (in) :: ts   
+   real(kind=8),    intent (in) :: tn   
+   real(kind=8),    intent (in) :: tstd
+   real(kind=8),    intent (in) :: smrt
+end subroutine mach_hetv_case9_single
+
+subroutine mach_hetv_case12_single(nr, so4, no3, nh4, hso4, hno3, h, nh3, &
+                           t, tc, aw, iter, itero, k0, p1, p2, eps,     &
+                           eps2, rho, lwn, ta, ts, tn, oh, tstd, small, smrt)
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: iter
+   integer(kind=4), intent   (in) :: itero
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: small
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: eps
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent   (in) :: k0(nr)
+   real(kind=8),    intent   (in) :: p1(nr)
+   real(kind=8),    intent   (in) :: p2(nr)
+   real(kind=8),    intent  (out) :: so4  
+   real(kind=8),    intent  (out) :: no3  
+   real(kind=8),    intent  (out) :: nh4  
+   real(kind=8),    intent  (out) :: hso4 
+   real(kind=8),    intent(inout) :: hno3 
+   real(kind=8),    intent  (out) :: h    
+   real(kind=8),    intent(inout) :: nh3  
+   real(kind=8),    intent   (in) :: t    
+   real(kind=8),    intent   (in) :: tc   
+   real(kind=8),    intent   (in) :: aw   
+   real(kind=8),    intent   (in) :: rho  
+   real(kind=8),    intent  (out) :: lwn  
+   real(kind=8),    intent(inout) :: ta   
+   real(kind=8),    intent(inout) :: ts   
+   real(kind=8),    intent(inout) :: tn   
+   real(kind=8),    intent  (out) :: oh   
+end subroutine mach_hetv_case12_single
+
+subroutine mach_hetv_water_single (so4, h, no3, nh4, hso4, aw, lwo, lwn )
+   
+   real(kind=8),    intent (in) :: so4 
+   real(kind=8),    intent (in) :: h   
+   real(kind=8),    intent (in) :: no3 
+   real(kind=8),    intent (in) :: nh4 
+   real(kind=8),    intent (in) :: hso4
+   real(kind=8),    intent (in) :: aw  
+   real(kind=8),    intent (in) :: lwo 
+   real(kind=8),    intent(out) :: lwn 
+end subroutine mach_hetv_water_single
+
+subroutine mach_hetv_corrhno3_single(nr, so4, no3, nh4, hso4, hno3, h, t, tc, aw, &
+                    k0, p1, p2, rho, lwn, lwnmin, tstd )
+   integer(kind=4), intent   (in) :: nr
+   real(kind=8),    intent   (in) :: lwnmin
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: k0(nr)
+   real(kind=8),    intent   (in) :: p1(nr)
+   real(kind=8),    intent   (in) :: p2(nr)
+   real(kind=8),    intent(inout) :: so4 
+   real(kind=8),    intent(inout) :: no3
+   real(kind=8),    intent(inout) :: nh4
+   real(kind=8),    intent(inout) :: hso4
+   real(kind=8),    intent(inout) :: hno3
+   real(kind=8),    intent(inout) :: h  
+   real(kind=8),    intent   (in) :: t 
+   real(kind=8),    intent   (in) :: tc
+   real(kind=8),    intent   (in) :: aw
+   real(kind=8),    intent   (in) :: rho 
+   real(kind=8),    intent  (out) :: lwn 
+end subroutine mach_hetv_corrhno3_single
+
+end interface
+end module mach_hetv_headers_mod

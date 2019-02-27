@@ -1,0 +1,460 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_main.ftn90
+! Creation       : S. Menard  ,  GEM-MACH, Feb 2007.
+! Description    : GEM-MACH chemistry processes are called from mach_main.ftn90. Each chemistry
+!                  process involved from mach_main.ftn90 need to have it's own key in
+!                  gem_settings.nml namelist.
+!
+! Extra info     :  Type of bus
+! -----------
+!                     ** dynamic bus
+!                            advected variables, change every time step, needed by Physics every
+!                            time step
+!                     ** permanant bus
+!                           variables on this bus keep constant values throughout model integration
+!                           steps unless you change those at
+!                           any model time step
+!                     ** volatile bus
+!                           variables stay throughout model time steps, but their values change
+!                           every time step e.g.
+!                     ** Entry bus
+!                          variables on this bus are very short lived e.g. only model step 0.
+!                          Hence these variables can be inputted/outputted at step 0.
+!
+! Arguments:
+!            IN
+!               busdyn_size  -> Dimension of busdyn
+!               busper_size  -> Dimension of busper
+!               busvol_size  -> Dimension of busvol
+!               busper        -> Permanent bus for physics
+!               busvol        -> Volatile bus for physics
+!               slab_index             -> Slice number
+!               step          -> Timestep number
+!
+!           IN/OUT
+!               busDYN        -> Dynamic bus for physics
+!
+!================================================================================================
+!
+!!if_on
+subroutine mach_main(busdyn     , busper     , busvol     ,           &
+                     busdyn_size, busper_size, busvol_size,           &
+                     metvar2d, metvar3d, metvar_vegf, metvar_glacier, &
+                     slab_index, step)
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_metvar_mod,     only: SIZE_MV2D, SIZE_MV3D
+!!if_off
+   use chm_utils_mod
+   use chm_headers_mod, only: chm_chk_met_dgb, chm_chk_mjpt_dbg, chm_chk_tendencies, chm_chk_pm_dbg
+   use chm_consphychm_mod
+   use chm_nml_mod
+   use chm_species_info_mod
+   use chm_species_idx_mod
+   use chm_datime_mod      , only: current_date, chm_dttim, secondsin1hour
+   use chm_phyvar_mod
+   use mach_headers_mod    , only: mach_input_check, mach_calc_season, mach_landuse, &
+                                   mach_plumerise  , mach_biog_main  , mach_output , &
+                                   mach_diffusion  , mach_calc_diag              
+   use mach_gas_headers_mod, only: mach_gas_drydep_main, mach_gas_main
+   use mach_cam_headers_mod, only: mach_cam_flux, mach_pm_chem
+
+   use mach_pkg_tendencies_mod
+
+   implicit none
+!
+!  Declaration of subroutine arguments
+!
+!!if_on
+   integer(kind=4), intent   (in) :: slab_index
+   integer(kind=4), intent   (in) :: step
+   integer(kind=4), intent   (in) :: busvol_size
+   integer(kind=4), intent   (in) :: busper_size
+   integer(kind=4), intent   (in) :: busdyn_size
+   real(kind=4),    intent(inout) :: busdyn        (busdyn_size)
+   real(kind=4),    intent(inout) :: busper        (busper_size)
+   real(kind=4),    intent(inout) :: busvol        (busvol_size)
+   real(kind=4),    intent   (in) :: metvar2d      (chm_ni,SIZE_MV2D)
+   real(kind=4),    intent   (in) :: metvar3d      (chm_ni,chm_nk,SIZE_MV3D)
+   real(kind=4),    intent   (in) :: metvar_vegf   (chm_ni,26)
+   real(kind=4),    intent   (in) :: metvar_glacier(chm_ni,2)
+!!if_off
+!
+!  Declare external functions
+!
+   real(kind=4) :: jjulien
+   external     :: jjulien
+!
+!  Declaration of local variables.
+!
+   integer(kind=4)                :: ijul_day
+   real   (kind=4)                :: rjul_day
+   logical(kind=4)                :: qi_exist
+   real(kind=4)                   :: oldso4(chm_ni, chm_nk)
+   real(kind=8)                   :: date_incr
+   integer(kind=4), parameter     :: nsp_diff_gas = 41
+   integer(kind=4)                :: diff_species_gas(nsp_diff_gas)
+   integer(kind=4), parameter     :: nsp_diff_pm  = 8
+   integer(kind=4)                :: diff_species_pm(nsp_diff_pm)
+   integer(kind=4), parameter     :: nsp_depos = 28
+   integer(kind=4)                :: deposited_species(nsp_depos)
+   integer(kind=4)                :: i, k
+   logical(kind=4)                :: local_dbg
+
+!  Assign the species lists used in some chemical processes
+   diff_species_gas(1:nsp_diff_gas) = (/ sp_SO2,  sp_SO4,  sp_NO,   sp_NO2,  sp_O3,   sp_H2O2, &
+                                         sp_HNO3, sp_PAN,  sp_C3H8, sp_ALKA, sp_ETHE, sp_ALKE, &
+                                         sp_TOLU, sp_AROM, sp_HCHO, sp_ALD2, sp_MEK,  sp_MGLY, &
+                                         sp_DIAL, sp_ROOH, sp_CRES, sp_HONO, sp_RNO3, sp_ISOP, &
+                                         sp_HO2,  sp_RO2,  sp_MCO3, sp_CO,   sp_NH3,  sp_OSD,  &
+                                         sp_O   , sp_NO3,  sp_N2O5, sp_HNO4, sp_OH,   sp_RO2R, &
+                                         sp_R2O2, sp_RO2N, sp_BZO,  sp_CRG1, sp_CRG2 /)
+
+   diff_species_pm(1:nsp_diff_pm)   = (/ sp_OC, sp_PC, sp_SU, sp_CM, sp_EC, sp_SS, sp_NI, sp_AM /)
+!
+!  Note: the order of the species for dry deposition is correlated to the order in
+!  tables alpha, beta, hstar and fzero in mach_gas_drydep_mod.ftn90. Do not change
+!  the order without making sure that those tables have been modified as well.
+   deposited_species(1:nsp_depos)   = (/ sp_SO2,  sp_SO4,  sp_NO,   sp_NO2,  sp_O3,   &
+                                         sp_H2O2, sp_HNO3, sp_PAN,  sp_C3H8, sp_ALKA, &
+                                         sp_ETHE, sp_ALKE, sp_TOLU, sp_AROM, sp_HCHO, &
+                                         sp_ALD2, sp_MEK,  sp_MGLY, sp_DIAL, sp_ROOH, &
+                                         sp_CRES, sp_HONO, sp_RNO3, sp_ISOP, sp_HO2,  &
+                                         sp_RO2,  sp_MCO3, sp_NH3 /)
+!
+!==============================================================================================
+! Code statements begin here
+!==============================================================================================
+!
+   local_dbg = (.false. .or. global_debug) 
+!  
+!   write (chm_lun_out, *) 'TEMP EXIT in: mach_main'
+!   return
+!
+!   call tmg_start0 ( 65, 'mach_main')
+!
+   if(local_dbg) then
+      write (chm_lun_out, *) 'in mach_main'
+      write (chm_lun_out, *) 'chm_timestep, slab_index, step', chm_timestep, slab_index, step
+      write (chm_lun_out, *) 'chm_ni, chm_ni, chm_nk '    , chm_ni, chm_ni, chm_nk
+   end if
+!
+!  Check debug fields with sample transfers in chm_chk_met_dgb
+!  and exit (temporary feature)
+!
+!  call chm_chk_met_dgb(busvol,busvol_size, metvar2d, metvar3d)
+!  call chm_chk_mjpt_dbg(busvol,busvol_size,slab_index,busdyn,busdyn_size)
+!  call chm_chk_tendencies(busvol,busvol_size)
+!
+!   write (chm_lun_out, *) 'TEMP EXIT in: mach_main just after chm_chk* modules'
+!   return
+!
+!================================================================================================
+! Start of pressure and air density calculations
+!================================================================================================
+    if (local_dbg) then
+       write (chm_lun_out, *) 'computing pressure and air density'
+    end if
+    call mach_pressure(busvol, busvol_size, metvar2d, metvar3d)
+!
+!   write (chm_lun_out, *) 'TEMP EXIT in: mach_main just after call to mach_pressure'
+!   return
+!
+!================================================================================================
+! Start of landuse and season calculations
+!================================================================================================
+!
+   if (step <  1) then
+ !  call tmg_start0 ( 71, 'mach_landuse')
+      call mach_landuse (busper, busper_size, metvar_vegf)
+      if (local_dbg) then
+         write (chm_lun_out, *) 'Initialization for timestep 0 completed. Exiting mach_main'
+      end if
+!   call tmg_stop0 ( 71 )
+      if ((chm_pkg_gas_s == 'ADOM2' )) then
+         call mach_output (busdyn     , busper     , busvol     , &
+                           busdyn_size, busper_size, busvol_size, &
+                           metvar2d, step                          )
+!
+      end if
+      return
+   end if
+
+! Calculate the julian calendar day (1-365)
+   date_incr = chm_timestep * step / ( secondsin1hour * real(chm_step_factor) )
+   call incdatr(current_date, chm_dttim, date_incr)
+   rjul_day = jjulien(0, 0, current_date)
+   ijul_day = nint(rjul_day)
+   call mach_calc_season(busper, busper_size, ijul_day, metvar2d)
+
+!
+!   write (chm_lun_out, *) 'TEMP EXIT in: mach_main just after call to mach_landuse'
+!   return
+!
+!================================================================================================
+! Start of dry deposition for gases
+!================================================================================================
+!
+!   call tmg_start0 ( 72, 'mach_gas_drydep_main')
+!
+   select case (chm_gas_drydep_s)
+
+      case ('ROBICHAUD')
+         if(local_dbg) then
+            write (chm_lun_out, *) 'Compute the dry deposition for gas: ', chm_gas_drydep_s
+         end if
+
+         call mach_gas_drydep_main(busper, busvol, busper_size, busvol_size, &
+                                   metvar2d, deposited_species, nsp_depos    )
+      case default
+         if(local_dbg) then
+            write (chm_lun_out, *) '> Warning '
+            write (chm_lun_out, *) '> No dry deposition for gas: ', chm_gas_drydep_s
+         end if
+   end select
+!
+!  call tmg_stop0 ( 72 )
+!
+!   write (chm_lun_out, *) 'TEMP EXIT in: mach_main just after call to mach_gas_drydep_main'
+!   return
+!
+!================================================================================================
+! Start of major points sources emissions injection
+!================================================================================================
+!
+!   call tmg_start0 ( 81, 'mach_plumerise')
+!   if (local_dbg) then
+!      write (chm_lun_out, *) 'Call to chm_chk_mjpt_dbg just before plumerise calculation'
+!   endif
+!   call chm_chk_mjpt_dbg(busvol,busvol_size,slab_index,busdyn,busdyn_size)
+!
+   select case (chm_mj_treatment_s)
+      case ('PLUMERISE')
+         if (chm_do_mjpts_l) then
+            if(local_dbg) then
+               write (chm_lun_out, *) 'Compute the major points plumerise ', chm_mj_treatment_s, ' chm_do_mjpts_l ', chm_do_mjpts_l
+            end if
+            call mach_plumerise (busdyn     , busvol     ,            &
+                                 busdyn_size, busvol_size,            &
+                                 metvar2d   , metvar3d   , slab_index )
+
+         endif
+      case default
+         if(local_dbg) then
+            write (chm_lun_out, *) '> Warning '
+            write (chm_lun_out, *) '> No major point source treatment: ', chm_mj_treatment_s
+         end if
+   end select
+!
+!   call tmg_stop0 ( 81 )
+!
+!   write (chm_lun_out, *) 'TEMP EXIT in: mach_main just after call to mach_plumerise'
+!   return
+!
+!================================================================================================
+! Start of the biogenic emissions scheme
+!================================================================================================
+!
+!   call tmg_start0 ( 77, 'mach_biog_main')
+!
+   select case (chm_biog_s)
+      case ('BEIS3.09')
+         if(local_dbg) then
+            write (chm_lun_out, *) 'Compute the biogenic emissions: ', chm_biog_s
+         end if
+         call mach_biog_main (busper,busper_size, metvar2d, metvar3d)
+      case default
+         if(local_dbg) then
+            write (chm_lun_out, *) '> Warning '
+            write (chm_lun_out, *) '> No biogenic emissions: ', chm_biog_s
+         end if
+   end select
+!
+!   call tmg_stop0 ( 77 )
+!
+!   write (chm_lun_out, *) 'TEMP EXIT in: mach_main just after call to mach_biog_main'
+!   return
+!
+!================================================================================================
+! Sea-salt emissions if to be treated by diffusion
+!================================================================================================
+!
+   if ((chm_pkg_pm_s  == 'CAM2BINS'       .or. chm_pkg_pm_s      == 'CAM12BINS') .and.  &
+       (chm_seaflux_s == 'GONG_MONAHAN_F' .or. chm_fugitive_dust_s /= 'NIL'    )) then
+      call mach_cam_flux (BUSPER, BUSVOL, busper_size, busvol_size, metvar2d, metvar3d      )
+   endif
+!
+!================================================================================================
+!  Start of the vertical diffusion
+!================================================================================================
+!
+!   call tmg_start0 ( 78, 'mach_diffusion')
+!
+   if ((chm_vert_diff_s == 'FLUX') .or. (chm_vert_diff_s == 'BOUNDARY') .or. &
+       (chm_vert_diff_s == 'RPNPHY') .or. (chm_vert_diff_s == 'RPNPHY_I')) then
+
+      if(local_dbg) then
+         write (chm_lun_out, *) 'calling diffusion ', chm_vert_diff_s
+         write (chm_lun_out, *) 'setting min and max on vertical diffusion coefficient'
+      end if
+ 
+      call mach_input_check (busvol, busvol_size, metvar2d, metvar3d)
+
+#if defined(MACH_TENDENCIES)
+      call tendency_store(tend_diffusion, busdyn, busdyn_size, BUSVOL, busvol_size)
+#endif
+! Calling diffusion for gas species
+      call mach_diffusion(busdyn, busper, busvol,                &
+                          busdyn_size, busvol_size, busper_size, &
+                          diff_species_gas, nsp_diff_gas,        &                           
+                          sm(diff_species_gas(1)) % nb_bins,     &
+                          metvar2d, metvar3d                     )
+
+! If necessary, calling diffusion for PM species
+      if (chm_pkg_pm_s == 'CAM2BINS' .or. chm_pkg_pm_s == 'CAM12BINS') then
+         call mach_diffusion(busdyn, busper, busvol,                &
+                             busdyn_size, busvol_size, busper_size, &
+                             diff_species_pm, nsp_diff_pm,          &
+                             sm(diff_species_pm(1)) % nb_bins,      &
+                             metvar2d, metvar3d                     )   
+      end if
+
+#if defined(MACH_TENDENCIES)
+      call tendency_delta(tend_diffusion, busdyn, busdyn_size, BUSVOL, busvol_size)
+#endif
+   end if
+!
+!  call tmg_stop0 ( 78 )
+!
+!================================================================================================
+! Start of Gas Phase Chemistry (only between level (nk_start and level chm_nk)
+!================================================================================================
+!
+!  Keep [SO4]g before gas chemistry for use in CAM
+
+   if (chm_pkg_pm_s == 'CAM2BINS' .or. chm_pkg_pm_s == 'CAM12BINS') then
+      do k = 1,chm_nk
+         oldso4(:,k) = busdyn(sm(sp_SO4) % dyn_offset + (k-1)*chm_ni : sm(sp_SO4) % dyn_offset + k*chm_ni - 1)
+      enddo
+    endif
+
+!
+   select case (chm_pkg_gas_s)
+#if defined(MACH_TENDENCIES)
+      call tendency_store(tend_gaschem, busdyn, busdyn_size, BUSVOL, busvol_size)
+#endif
+      case ('ADOM2')
+         if (local_dbg) then
+            write (chm_lun_out, *) 'Compute the gas phase chemistry: ', chm_pkg_gas_s
+         end if
+
+         call mach_gas_main(busdyn     , busvol     ,          & 
+                            busdyn_size, busvol_size,          &
+                            step       , metvar2d   , metvar3d )
+
+      case default
+         if (local_dbg) then
+            write (chm_lun_out, *) '> Warning '
+            write (chm_lun_out, *) '> No gas phase chemistry: ', chm_pkg_gas_s
+         end if
+#if defined(MACH_TENDENCIES)
+      call tendency_delta(tend_gaschem, busdyn, busdyn_size, BUSVOL, busvol_size)
+#endif
+   end select
+!
+!================================================================================================
+! Start of Aerosol Processes
+!================================================================================================
+!
+!   call tmg_start0 ( 74, 'mach_pm_chem')
+!
+!  call chm_chk_pm_dbg(busvol,busvol_size,slab_index,busdyn,busdyn_size)
+!
+   select case (chm_pkg_pm_s)
+#if defined(MACH_TENDENCIES)
+   call tendency_store(tend_pmchem, busdyn, busdyn_size, BUSVOL, busvol_size)
+#endif
+       case ('CAM12BINS', 'CAM2BINS')
+          if(local_dbg) then
+             write (chm_lun_out, *) 'Compute processes for 2 bin aerosol scheme: ', chm_pkg_pm_s
+          end if
+
+          call mach_pm_chem(  busdyn, busvol, busper, busdyn_size, busvol_size, busper_size, &
+                              step  , slab_index    , oldso4     , metvar2d   , metvar3d  )
+       case ('GOCART_SO2')
+          if(local_dbg) then
+             write (chm_lun_out, *) 'Simple COGART process of SO2 oxydaation ', chm_pkg_pm_s
+          end if
+          call gocart_so2so4(  busdyn, busdyn_size, metvar3d )
+       case default
+          if(local_dbg) then
+             write (chm_lun_out, *) '> Warning '
+             write (chm_lun_out, *) '> No aerosol process: ', chm_pkg_pm_s
+          end if
+#if defined(MACH_TENDENCIES)
+   call tendency_delta(tend_pmchem, busdyn, busdyn_size, BUSVOL, busvol_size)
+#endif
+    end select
+!
+   if (chm_diag_accum_L) then
+!
+      call mach_calc_diag (busdyn,busvol,busper,busdyn_size,busvol_size,busper_size,step,slab_index)
+!
+   end if
+!
+!   call tmg_stop0 ( 74 )
+!
+!================================================================================================
+!  Units conversion for a subset of PM and gases species before outputting them.
+!  See chemistry model output files: km*
+!  Note: Units conversion done only if gas chemistry is "ADOM2" and PM chemistry package is "CAM2BINS"
+!================================================================================================
+!
+!   call tmg_start0 ( 80, 'mach_output')
+
+   if ((chm_pkg_gas_s == 'ADOM2' )) then
+      call mach_output (busdyn     , busper     , busvol     , &
+                        busdyn_size, busper_size, busvol_size, &
+                        metvar2d, step                          )
+   end if
+!
+!   call tmg_stop0 ( 80 )
+!
+!================================================================================================
+!
+!   call tmg_stop0 ( 65 )
+!
+  if (local_dbg) then
+     write (chm_lun_out, *) 'EXIT mach_main'
+  endif
+return
+end subroutine mach_main

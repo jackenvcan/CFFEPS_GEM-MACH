@@ -1,0 +1,196 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_incld_rates.ftn90
+! Creation       : S. Menard, S. Gravel, GEM-MACH, June 2008
+! Description    : Compute derivatives in chemeq format for chemical kinetics and
+!                  mass transfer (excluding intra-hydrometeor fluxes). This version
+!                  assumes daq, paq, & cdaq are only used when q > 0.
+!
+! Extra info     : QA  ADOM  VERSION: ADOMIIB(CLEAN)  LEVEL: 06/09/89  RATES  ENSR(AES)
+!
+! Arguments  IN
+!               ng     -->
+!               naq    --> Number of integrate aqueous species
+!               ideriv -->
+!               q1     --> Liquid water conc of cloudwater
+!               q2     --> Liquid water conc of Ice/snow
+!               g      --> Gas/part species conc (ppm)
+!               aq1    --> Aq. species conc in cloudwater (m/l)
+!               r1     -->
+!               b1     -->
+!               aq2    --> Aq. species conc in ice/snow (m/l)
+!               r2     -->
+!               b2     -->
+!
+!            OUT
+!               DG     -->
+!               PG     -->
+!               CDG    -->
+!               DAQ1   -->
+!               PAQ1   -->
+!               PAQ2   -->
+!               CDAQ2  -->
+!
+!=============================================================================
+!
+!!if_on
+subroutine mach_incld_rates (ng, gaz_conc, DG, PG, CDG, naq, aq1, DAQ1, PAQ1, CDAQ1, r1, b1,     &
+                  aq2, daq2, paq2, cdaq2, r2, b2, q1, q2, ideriv                                 )
+!!if_off
+   implicit none
+!!if_on
+   integer(kind=4), intent (in) :: naq
+   integer(kind=4), intent (in) :: ng
+   integer(kind=4), intent (in) :: ideriv
+   real(kind=4),    intent (in) :: q1
+   real(kind=4),    intent (in) :: q2
+   real(kind=4),    intent (in) :: b1      (5)
+   real(kind=4),    intent (in) :: b2      (5)
+   real(kind=4),    intent (in) :: r1      (25)
+   real(kind=4),    intent (in) :: r2      (25)
+   real(kind=4),    intent(out) :: dg      (ng)
+   real(kind=4),    intent(out) :: pg      (ng)
+   real(kind=4),    intent(out) :: cdg     (ng)
+   real(kind=4),    intent (in) :: aq1     (naq)
+   real(kind=4),    intent(out) :: daq1    (naq)
+   real(kind=4),    intent(out) :: paq1    (naq)
+   real(kind=4),    intent(out) :: cdaq1   (naq)
+   real(kind=4),    intent (in) :: aq2     (naq)
+   real(kind=4),    intent(out) :: daq2    (naq)
+   real(kind=4),    intent(out) :: paq2    (naq)
+   real(kind=4),    intent(out) :: cdaq2   (naq)
+   real(kind=4),    intent (in) :: gaz_conc(ng+1)
+!!if_off
+!
+! Local variables
+   integer(kind=4)              :: ngend, naqend, i
+!
+!  central operator aqueous phase chemical mechanism   08.23.84
+!  gas kinetics
+!  none in this version    set     dg = pg = zero
+
+   ngend = ng
+   naqend = naq
+   if (ideriv < 0) ngend = 3
+   if (ideriv < 0) naqend = 4
+   do i = 1, ngend
+      dg(i) = 0.
+      pg(i) = 0.
+   end do
+   do i = 1, naqend
+      daq1(i) = 0.
+      paq1(i) = 0.
+      daq2(i) = 0.
+      paq2(i) = 0.
+   end do
+
+!  cloudwater
+   if (q1 <= 0.) go to 200
+   daq1(1) = r1(3) * aq1(9) + r1(19) * aq1(12) + r1(20) * aq1(2) + r1(21) * aq1(3) + r1(22)
+   paq1(1) = b1(1) * r1(2) * gaz_conc(1)
+   daq1(2) = r1(7) + r1(20) * aq1(1)
+   paq1(2) = b1(1) * r1(6) * gaz_conc(2)
+   daq1(3) = r1(11) + r1(21) * aq1(1)
+   paq1(3) = b1(1) * r1(10) * gaz_conc(3)
+   if (ideriv > 0) go to 401
+   daq1(4) = 0.
+   paq1(4) = (r1(19) * aq1(12) + r1(20) * aq1(2) + r1(21) * aq1(3) + r1(22)) * aq1(1)
+   go to 402
+401   continue
+   daq1(4) = 0.
+   paq1(4) = b1(1) * r1(1) * gaz_conc(4) + b1(1) * r1(23) * gaz_conc(5) + b1(1) * r1(24) * gaz_conc(6)
+   daq1(5) = r1(9) * aq1(9)
+   paq1(5) = b1(1) * r1(8) * gaz_conc(7) + b1(1) * r1(25) * gaz_conc(9)
+   daq1(6) = r1(13) * aq1(10)
+   paq1(6) = b1(1) * r1(12) * gaz_conc(8) + b1(1) * r1(23) * gaz_conc(5) + b1(3) * r1(24) * gaz_conc(6) + b1(1) * r1(25) * gaz_conc(9)
+   daq1(7) = 0.
+   paq1(7) = b1(4) * r1(14) * gaz_conc(10)
+   daq1(8) = r1(16) * aq1(9)
+   paq1(8) = b1(1) * r1(15) * gaz_conc(12)
+402   continue
+   do i = 1, naqend
+      cdaq1(i) = paq1(i) - daq1(i) * aq1(i)
+   end do
+
+!  gas/part (from cloudwater)
+   dg(1) = r1(2)
+   pg(1) = b1(2) * r1(3) * aq1(1) * aq1(9)
+   dg(2) = r1(6)
+   pg(2) = b1(2) * r1(7) * aq1(2)
+   dg(3) = r1(10)
+   pg(3) = b1(2) * r1(11) * aq1(3)
+   if (ideriv < 0) go to 403
+   dg(4) = r1(1)
+   dg(5) = r1(23)
+   dg(6) = r1(24)
+   dg(7) = r1(8)
+   pg(7) = b1(2) * r1(9) * aq1(5) * aq1(9)
+   dg(8) = r1(12)
+   pg(8) = b1(2) * r1(13) * aq1(6) * aq1(10)
+   dg(9) = r1(25)
+   dg(10) = r1(14)
+403   continue
+
+! --- ice/snow
+200 if (q2 <= 0.) go to 300
+    if (ideriv > 0) go to 407
+    go to 408
+407   continue
+   paq2(4) = b2(1) * r2(1) * gaz_conc(4) + b2(1) * r2(23) * gaz_conc(5) + b2(1) * r2(24) * gaz_conc(6)
+   paq2(5) = b2(1) * r2(8) * gaz_conc(7) + b2(1) * r2(25) * gaz_conc(9)
+   paq2(6) = b2(1) * r2(12) * gaz_conc(8) + b2(1) * r2(23) * gaz_conc(5) + b2(3) * r2(24) * gaz_conc(6) + b2(1) * r2(25) * gaz_conc(9)
+   paq2(7) = b2(4) * r2(14) * gaz_conc(10)
+   daq2(8) = r2(16) * aq2(9)
+   paq2(8) = b2(1) * r2(15) * gaz_conc(12)
+408   continue
+   do i = 1, naqend
+      cdaq2(i) = paq2(i) - daq2(i) * aq2(i)
+   end do
+
+! --- gas/part (from ice/snow)
+   if (ideriv < 0) go to 409
+   dg(4) = dg(4) + r2(1)
+   dg(5) = dg(5) + r2(23)
+   dg(6) = dg(6) + r2(24)
+   dg(7) = dg(7) + r2(8)
+   dg(8) = dg(8) + r2(12)
+   dg(9) = dg(9) + r2(25)
+   dg(10) = dg(10) + r2(14)
+409   continue
+
+! --- compute net derivative for gases
+300 do i = 1, ngend
+      cdg(i) = pg(i) - dg(i) * gaz_conc(i)
+    end do
+
+return
+end

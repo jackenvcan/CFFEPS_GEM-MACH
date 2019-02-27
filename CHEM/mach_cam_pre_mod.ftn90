@@ -1,0 +1,156 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_cam_pre_mod.ftn90
+! Creation       : P. Huang, May. 2008 Updated for AURAMS CAM
+!                  P. Huang, Mar. 2008
+! Description    : Declare parameters used for the PM dry deposition scheme
+!                  in CAM
+!                  Declare variables related to the indices of gas and PM
+! Modification   : V. Savic-Jovcic, March 2016: Cleaned up unused variables
+! 
+!============================================================================
+!     Name              Description
+!============================================================================
+!     icom              number of dry aerosols
+!     aeroname          array for dry aerosol name
+!     rhop0             dry aerosol density [ug/m^3]
+!     pllp              Parameter pllp for dry deposition velocity of PM
+!     aest              Parameter gamma for dry deposition velocity of PM
+!     pgamma            Parameter gamma for dry deposition velocity of PM
+!============================================================================
+
+module mach_cam_pre_mod
+   use mach_gas_chemicbi_mod, only: lucprm, nsn
+   implicit none
+   save
+
+    integer(kind=4), parameter :: icom = 8     !8 aerosol speciecs
+    character(len=8), dimension(icom) :: aeroname = (/"SULPHATE", "SEA-SALT", "OMCARBON", "NITRATES", "AMMONIUM", "SOILDUST", "BLCARBON", "PMCARBON"/)
+    real, dimension(icom) :: rhop0 = (/ 1769.0, 2170.0, 1300.0, 1725.0, 1754.3, 2650.0, 1500.0, 1300.0 /)
+
+
+!  for particle vd
+   real(kind=4), dimension(lucprm, nsn) :: pllp = reshape ((/                                                  &
+   2.00, 5.00, 2.00, 5.00, 5.00, 2.00, 2.00, -1.00, -1.00, 10.00, 10.00, -1.00, -1.00, -1.00, 10.00,   &
+   2.00, 5.00, 2.00, 5.00, 5.00, 2.00, 2.00, -1.00, -1.00, 10.00, 10.00, -1.00, -1.00, -1.00, 10.00,   &
+   2.00, 5.00, 5.00, 10.00, 5.00, 5.00, 10.00, -1.00, -1.00, 10.00, 10.00, -1.00, -1.00, -1.00, 10.00, &
+   2.00, 5.00, 5.00, 10.00, 5.00, 5.00, 10.00, -1.00, -1.00, 10.00, 10.00, -1.00, -1.00, -1.00, 10.00, &
+   2.00, 5.00, 2.00, 5.00, 5.00, 2.00, 2.00, -1.00, -1.00, 10.00, 10.00, -1.00, -1.00, -1.00, 10.00    &
+                                                        /), (/lucprm, nsn/))
+
+   real(kind=4), dimension(lucprm) :: aest = (/ 1.00, 0.60, 1.10, 0.80, 0.80, 1.20, 1.20, 50.00, 50.00, 1.30, 2.00, 50.00, 100.00, 100.00, 1.50 /)
+   real(kind=4), dimension(lucprm) :: pgamma= (/ -.56, -.58, -.56, -.56, -.56, -.54, -.54, -.54, -.54, -.54, -.54, -.54, -.50, -.50, -.56 /)
+
+!     Name              Description
+!=======================================================================
+!     igs_xxx           index of gas in tracer array
+!     iae_xxx           index of PM in tracer array
+!     IAE1              FIRST AEROSOL BIN TRACER
+!     IAE2              LAST AEROSOL BIN TRACER
+!     IGAS1             FIRST GAS SPECIES TRACER
+!     IGAS2             LAST GAS SPECIES TRACER
+!     maxngs            Maximum number of chemical gas species
+!     gasextr           Extra 2 species, soa and ccn after gas species in tracer array
+!     camextr           Extra 2 species, h2s and dms after pm species in tracer array
+   integer(kind=4), parameter :: maxngs = 47
+   integer(kind=4), parameter :: gasextr = 2
+   integer(kind=4), parameter :: camextr = 2
+
+!  indices for aurams gases
+   integer(kind=4) igs_SO2
+   integer(kind=4) igs_SO4
+   integer(kind=4) igs_NO
+   integer(kind=4) igs_NO2
+   integer(kind=4) igs_O3
+   integer(kind=4) igs_H2O2
+   integer(kind=4) igs_HNO3
+   integer(kind=4) igs_PAN
+   integer(kind=4) igs_C3H8
+   integer(kind=4) igs_ALKA
+   integer(kind=4) igs_ETHE
+   integer(kind=4) igs_ALKE
+   integer(kind=4) igs_TOLU
+   integer(kind=4) igs_AROM
+   integer(kind=4) igs_HCHO
+   integer(kind=4) igs_ALD2
+   integer(kind=4) igs_MEK
+   integer(kind=4) igs_MGLY
+   integer(kind=4) igs_DIAL
+   integer(kind=4) igs_ROOH
+   integer(kind=4) igs_CRES
+   integer(kind=4) igs_HONO
+   integer(kind=4) igs_RNO3
+   integer(kind=4) igs_ISOP
+   integer(kind=4) igs_HO2
+   integer(kind=4) igs_RO2
+   integer(kind=4) igs_MCO3
+   integer(kind=4) igs_CO
+   integer(kind=4) igs_NH3
+   integer(kind=4) igs_DUST
+   integer(kind=4) igs_OSD
+   integer(kind=4) igs_O
+   integer(kind=4) igs_NO3
+   integer(kind=4) igs_N2O5
+   integer(kind=4) igs_HNO4
+   integer(kind=4) igs_OH
+   integer(kind=4) igs_RO2R
+   integer(kind=4) igs_R2O2
+   integer(kind=4) igs_RO2N
+   integer(kind=4) igs_BZO
+   integer(kind=4) igs_CRG1
+   integer(kind=4) igs_CRG2
+   integer(kind=4) igs_CH4
+   integer(kind=4) igs_C2H6
+   integer(kind=4) igs_H2O
+   integer(kind=4) igs_O2
+   integer(kind=4) igs_M
+   integer(kind=4) IGAS1, IGAS2, NGAS
+   integer(kind=4) igs_SOA, igs_CCN
+
+!  species used by CAM
+   integer(kind=4) igs_H2S, igs_DMS
+   integer(kind=4) IAE1, IAE2, NCAM
+
+!  indices of aerosol components
+   integer(kind=4) iae_SU
+   integer(kind=4) iae_SS
+   integer(kind=4) iae_OC
+   integer(kind=4) iae_NI
+   integer(kind=4) iae_AM
+   integer(kind=4) iae_SD
+   integer(kind=4) iae_EC
+   integer(kind=4) iae_PC
+
+!  additional constants
+   integer(kind=4), parameter :: nswdep = 15     ! number of species in wet dep flux output
+
+end module mach_cam_pre_mod

@@ -1,0 +1,174 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_diff_rpnphy.ftn90
+! Creation       : Sylvie Gravel, May 2012
+! Description    : Performs vertical diffusion using operator difuvdfj from physics library
+!                  Adapted to staggered model
+!
+! Arguments:
+!           IN
+!              emissions  -> The sum of area and biogenic emissions
+!              vd         -> Dry deposition velocities for gas
+!              ubf        -> Species upper lid flux boundary condition index values
+!              kt         -> Thermal vertical diffusion coefficient
+!              n_diff     -> Number of chemical species to be diffused (including various bins)
+!              ni_net     -> ni * n_diff
+!              metvar2d   -> 2D physics variables
+!              metvar3d   -> 3D physics variables
+!
+!           INOUT
+!              CONC       ->   species concentrations
+!
+!=============================================================================
+!
+!!if_on
+subroutine mach_diff_rpnphy (CONC, emissions, vd, ubf, kt, ni_net, n_diff, metvar2d, metvar3d )
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_metvar_mod,     only: SIZE_MV2D, SIZE_MV3D
+!!if_off
+   use chm_metvar_mod,     only: MV2D_DXDY, MV3D_SIGT,  &
+                                 MV3D_SIGM, MV2D_PPLUS, &
+                                 MV3D_TPLUS, MV3D_HUPLUS
+   use chm_utils_mod,      only: chm_timestep, chm_tlift, chm_lun_out, global_debug
+   use chm_consphychm_mod, only: grav, rgasd
+   use chm_nml_mod,        only: chm_vert_diff_s
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: ni_net
+   integer(kind=4), intent   (in) :: n_diff
+   real(kind=4),    intent(inout) :: conc(ni_net,chm_nk)
+   real(kind=4),    intent   (in) :: emissions(ni_net)
+   real(kind=4),    intent   (in) :: vd(ni_net)
+   real(kind=4),    intent   (in) :: ubf(ni_net)
+   real(kind=4),    intent   (in) :: kt(chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+!!if_off              
+!
+!  local workspace arrays and variables:
+!
+   integer(kind=4)  :: i, k, ix, ii, itype
+   real(kind=4)     :: gam0, gam1, rsg, ubfmax, ubfmin, gamsq
+   real(kind=4)     :: a(ni_net, chm_nk), b(ni_net, chm_nk), c(ni_net, chm_nk), d(ni_net, chm_nk)
+   real(kind=4)     :: ktsg(ni_net, chm_nk), sigm(ni_net, chm_nk), sigt(ni_net, chm_nk)
+   real(kind=4)     :: vt(chm_ni, chm_nk) 
+   real(kind=4)     :: alfa(ni_net), beta(ni_net)
+   real(kind=4)     :: tconc(ni_net, chm_nk), zero(ni_net, chm_nk)
+   logical(kind=4)  :: local_dbg
+
+   external difuvdfj, mfotvt, qqexit
+!
+   local_dbg = (.false. .or. global_debug)
+
+   if (local_dbg) then
+      write (chm_lun_out, *) "Entering mach_diff_rpnphy"
+   end if
+
+!  Code can not presently handle flux at upper boundary. subroutine difuvdfj will need to be generalized
+
+   ubfmax = maxval(ubf(1: ni_net))
+   ubfmin = minval(ubf(1: ni_net))
+   if (ubfmax > 0. .or. ubfmin < 0.) then
+      if (local_dbg) then
+         write (chm_lun_out, *) "Upper boundary flux not compatible with subroutine mach_diff_rpnphy"
+      end if
+      call qqexit(1)
+   endif
+
+   zero = 0.
+
+!  Calculate virtual temperature
+   call mfotvt(vt, metvar3d(1, 1, MV3D_TPLUS), metvar3d(1, 1, MV3D_HUPLUS), chm_ni, chm_nk, chm_ni)
+
+!  Normalization factors for vertical diffusion in sigma coordinate factors are applied to diffusion coefficients
+!  and to surface fluxes
+
+   rsg = (grav / rgasd)
+   do k = 1, chm_nk
+      do i = 1, chm_ni
+         gam0  = rsg * metvar3d(i, k, MV3D_SIGT)/ vt(i, k)
+         gamsq = gam0**2
+         do ii = 1, n_diff
+            ix = ii + (i - 1) * n_diff
+            ktsg(ix, k) = kt(i, k) * gamsq
+            sigm(ix, k) = metvar3d(i, k, MV3D_SIGM)
+            sigt(ix, k) = metvar3d(i, k, MV3D_SIGT)
+         end do
+      end do
+   end do
+
+   if (chm_tlift == 1) then
+      itype = 6
+   else
+      itype = 5
+   endif
+
+   select case (chm_vert_diff_s)
+
+      case ('RPNPHY_I')
+        do i = 1, chm_ni
+           gam0 = - rsg * metvar3d(i, chm_nk, MV3D_SIGT)/ vt(i, chm_nk)
+           gam1 = grav / (metvar2d(i, MV2D_PPLUS) * metvar2d(i, MV2D_DXDY))
+           do ii = 1, n_diff
+              ix = ii + (i - 1) * n_diff
+              alfa(ix) = gam1 * emissions(ix) 
+              beta(ix) = gam0 * vd(ix)
+           end do
+        end do
+
+      case default
+        do i = 1, chm_ni
+           gam0 = - rsg * metvar3d(i, chm_nk, MV3D_SIGT)/ vt(i, chm_nk)
+           gam1 = grav / (metvar2d(i, MV2D_PPLUS) * metvar2d(i, MV2D_DXDY))
+           do ii = 1, n_diff
+              ix = ii + (i - 1) * n_diff
+              alfa(ix) = gam1 * emissions(ix) + gam0 * vd(ix) * conc(ix, chm_nk)
+           end do
+        end do
+        beta = 0.
+   end select
+
+
+!  Calculate tendancies due to vertical diffusion. Store in tconc.
+
+   call difuvdfj(tconc, conc, ktsg, zero, zero, alfa, beta, sigm, sigt, chm_timestep, &
+                 itype, 1., a, b, c, d, ni_net, ni_net, ni_net, chm_nk)
+
+   do k = 1, chm_nk
+      do ii = 1, ni_net
+         conc(ii, k)  = conc(ii, k) + chm_timestep * tconc(ii, k)
+      enddo
+   enddo
+
+   return
+
+   end subroutine mach_diff_rpnphy

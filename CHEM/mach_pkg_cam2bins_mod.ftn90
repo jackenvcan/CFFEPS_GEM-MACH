@@ -1,0 +1,318 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+
+module mach_pkg_cam2bins_mod
+   use chm_nml_mod,          only: chm_seaflux_s, chm_get_ae_emis_l, chm_get_be_emis_l, chm_pkg_gas_s, chm_mono_s, chm_mass_s
+   use chm_utils_mod,        only: pre_increment
+   use chm_species_idx_mod
+   use chm_species_info_mod, only: species_master, zero_fields, species_info
+
+   save
+
+   integer(kind=4), parameter :: cam2bins_nb_bins = 2
+
+!  Array container that will be used to allocate static memory for bins
+   type (species_info), target :: OC_bins(cam2bins_nb_bins)
+   type (species_info), target :: PC_bins(cam2bins_nb_bins)
+   type (species_info), target :: SU_bins(cam2bins_nb_bins)
+   type (species_info), target :: EC_bins(cam2bins_nb_bins)
+   type (species_info), target :: SS_bins(cam2bins_nb_bins)
+   type (species_info), target :: NI_bins(cam2bins_nb_bins)
+   type (species_info), target :: AM_bins(cam2bins_nb_bins)
+
+!  CM - crustal material/soil dust, in CAM there is no emission for CM.
+!  CAM model will create CM flux according to meteorology condition and landuse category of each grid cell
+
+   type (species_info), target :: CM_bins(cam2bins_nb_bins)
+
+   contains
+!============================================================================
+! Name           : pkg_cam2bins_idxinit
+!
+! Description    : Initialize the indices of CAM 2 bins package.  Starts with
+!                  the index passed as a dummy argument.
+!
+! Arguments:  IN/OUT
+!                idx  -> index to start from
+!============================================================================
+      integer(kind=4) function pkg_cam2bins_idxinit(idx)
+         implicit none
+
+         integer(kind=4), intent(inout) :: idx ! the index from where to start
+
+         integer(kind=4) start_index, nb_fields
+
+         start_index = idx
+
+! Please keep alphabetical order
+         sp_AC = pre_increment(idx)
+         sp_AF = pre_increment(idx)
+         sp_AM = pre_increment(idx)
+         sp_CM = pre_increment(idx)
+         sp_EC = pre_increment(idx)
+         sp_NI = pre_increment(idx)
+         sp_OC = pre_increment(idx)
+         sp_PC = pre_increment(idx)
+         sp_SS = pre_increment(idx)
+         sp_SU = pre_increment(idx)
+
+         nb_fields = idx - start_index
+         pkg_cam2bins_idxinit = nb_fields
+
+          call zero_fields(OC_bins, cam2bins_nb_bins)
+          call zero_fields(PC_bins, cam2bins_nb_bins)
+          call zero_fields(SU_bins, cam2bins_nb_bins)
+          call zero_fields(CM_bins, cam2bins_nb_bins)
+          call zero_fields(EC_bins, cam2bins_nb_bins)
+          call zero_fields(SS_bins, cam2bins_nb_bins)
+          call zero_fields(NI_bins, cam2bins_nb_bins)
+          call zero_fields(AM_bins, cam2bins_nb_bins)
+
+      end function pkg_cam2bins_idxinit
+
+
+!============================================================================
+! Name           : pkg_cam2bins_metainit
+!
+! Description    : Initialize the meta information for each species
+!
+! Arguments:  None
+!
+! Extra info: Naming convention for bins:
+!              - The 2 first characters are used to identify the species
+!              - The other 2 are be used for the bin number
+!                 - Use numbers for variables in the dynamic bus and
+!                 - Use letters for the emissions _C for coarse, _F for fine
+!
+!============================================================================
+      subroutine pkg_cam2bins_metainit()
+         implicit none
+!
+!        local variable
+         character(len = 21) :: tr_prop_s
+
+         tr_prop_s = ',min=0'
+         select case (chm_mono_s)
+           case ('CLIP') 
+             tr_prop_s = trim(tr_prop_s)//',mono=1'
+           case ('ILMC') 
+             tr_prop_s = trim(tr_prop_s)//',mono=2'
+           case ('NIL')
+             continue
+         end select
+         select case (chm_mass_s)
+           case ('BC') 
+             tr_prop_s = trim(tr_prop_s)//',mass=1'
+           case ('NIL')
+             continue
+         end select
+         species_master(sp_OC) % dyn_name   =  'OC'
+         species_master(sp_OC) % nb_bins    =  cam2bins_nb_bins
+         species_master(sp_OC) % bins_array => OC_bins
+
+         species_master(sp_OC) % bins_array(1) % dyn_name   =  'TOC1'
+         species_master(sp_OC) % bins_array(1) % dyn_lname  =  'TR/TOC1:P'
+         species_master(sp_OC) % bins_array(1) % dyn_string =  'VN=TR/TOC1:P'//trim(tr_prop_s)//'; ON=TOC1; VD=Secondary organic carbon Fine ug/kg; VS=SLC;VB=D1'
+         species_master(sp_OC) % bins_array(1) % out_name   =  'OC1X'
+         species_master(sp_OC) % bins_array(1) % out_lname  =  'cnchOC1X'
+         species_master(sp_OC) % bins_array(1) % out_string =  'VN=cnchOC1X; ON=OC1X; VD=Secondary organic carbon Fine ug/m3; VS=SLC;VB=V1'
+         species_master(sp_OC) % bins_array(2) % dyn_name   =  'TOC2'
+         species_master(sp_OC) % bins_array(2) % dyn_lname  =  'TR/TOC2:P'
+         species_master(sp_OC) % bins_array(2) % dyn_string =  'VN=TR/TOC2:P'//trim(tr_prop_s)//'; ON=TOC2; VD=Secondary organic carbon Coarse ug/kg; VS=SLC;VB=D1'
+         species_master(sp_OC) % bins_array(2) % out_name   =  'OC2X'
+         species_master(sp_OC) % bins_array(2) % out_lname  =  'cnchOC2X'
+         species_master(sp_OC) % bins_array(2) % out_string =  'VN=cnchOC2X; ON=OC2X; VD=Secondary organic carbon Coarse ug/m3; VS=SLC;VB=V1'
+         species_master(sp_OC) % mol_wt                     =  132.13420000
+
+         species_master(sp_PC) % dyn_name   =  'PC'
+         species_master(sp_PC) % nb_bins    =  cam2bins_nb_bins
+         species_master(sp_PC) % bins_array => PC_bins
+         species_master(sp_PC) % bins_array(1) % dyn_name   =  'TPC1'
+         species_master(sp_PC) % bins_array(1) % dyn_lname  =  'TR/TPC1:P'
+         species_master(sp_PC) % bins_array(1) % dyn_string =  'VN=TR/TPC1:P'//trim(tr_prop_s)//'; ON=TPC1; VD=Primary organic carbon Fine ug/kg; VS=SLC;VB=D1'
+         species_master(sp_PC) % bins_array(1) % out_name   =  'PC1X'
+         species_master(sp_PC) % bins_array(1) % out_lname  =  'cnchPC1X'
+         species_master(sp_PC) % bins_array(1) % out_string =  'VN=cnchPC1X; ON=PC1X; VD=Primary organic carbon Fine ug/m3; VS=SLC;VB=V1'
+         species_master(sp_PC) % bins_array(1) % me_name    =  'EPC1'
+         species_master(sp_PC) % bins_array(2) % dyn_name   =  'TPC2'
+         species_master(sp_PC) % bins_array(2) % dyn_lname  =  'TR/TPC2:P'
+         species_master(sp_PC) % bins_array(2) % dyn_string =  'VN=TR/TPC2:P'//trim(tr_prop_s)//'; ON=TPC2; VD=Primary organic carbon Coarse ug/kg; VS=SLC;VB=D1'
+         species_master(sp_PC) % bins_array(2) % out_name   =  'PC2X'
+         species_master(sp_PC) % bins_array(2) % out_lname  =  'cnchPC2X'
+         species_master(sp_PC) % bins_array(2) % out_string =  'VN=cnchPC2X; ON=PC2X; VD=Primary organic carbon Coarse ug/m3; VS=SLC;VB=V1'
+         species_master(sp_PC) % bins_array(2) % me_name    =  'EPC2'
+         species_master(sp_PC) % mol_wt                     =  132.13420000
+
+         species_master(sp_SU) % dyn_name   =  'SU'
+         species_master(sp_SU) % nb_bins    =  cam2bins_nb_bins
+         species_master(sp_SU) % bins_array => SU_bins
+         species_master(sp_SU) % bins_array(1) % dyn_name   =  'TSU1'
+         species_master(sp_SU) % bins_array(1) % dyn_lname  =  'TR/TSU1:P'
+         species_master(sp_SU) % bins_array(1) % dyn_string =  'VN=TR/TSU1:P'//trim(tr_prop_s)//'; ON=TSU1; VD=Sulphate Fine ug/kg; VS=SLC;VB=D1'
+         species_master(sp_SU) % bins_array(1) % out_name   =  'SU1X'
+         species_master(sp_SU) % bins_array(1) % out_lname  =  'cnchSU1X'
+         species_master(sp_SU) % bins_array(1) % out_string =  'VN=cnchSU1X; ON=SU1X; VD=Sulphate Fine ug/m3; VS=SLC;VB=V1'
+         species_master(sp_SU) % bins_array(1) % me_name    =  'ESU1'
+         species_master(sp_SU) % bins_array(2) % dyn_name   =  'TSU2'
+         species_master(sp_SU) % bins_array(2) % dyn_lname  =  'TR/TSU2:P'
+         species_master(sp_SU) % bins_array(2) % dyn_string =  'VN=TR/TSU2:P'//trim(tr_prop_s)//'; ON=TSU2; VD=Sulphate Coarse ug/kg; VS=SLC;VB=D1'
+         species_master(sp_SU) % bins_array(2) % out_name   =  'SU2X'
+         species_master(sp_SU) % bins_array(2) % out_lname  =  'cnchSU2X'
+         species_master(sp_SU) % bins_array(2) % out_string =  'VN=cnchSU2X; ON=SU2X; VD=Sulphate Coarse ug/m3; VS=SLC;VB=V1'
+         species_master(sp_SU) % bins_array(2) % me_name    =  'ESU2'
+         species_master(sp_SU) % mol_wt                     =  96.06360000
+
+         species_master(sp_CM) % dyn_name   =  'CM'
+         species_master(sp_CM) % nb_bins    =  cam2bins_nb_bins
+         species_master(sp_CM) % bins_array => CM_bins
+         species_master(sp_CM) % bins_array(1) % dyn_name   =  'TCM1'
+         species_master(sp_CM) % bins_array(1) % dyn_lname  =  'TR/TCM1:P'
+         species_master(sp_CM) % bins_array(1) % dyn_string =  'VN=TR/TCM1:P'//trim(tr_prop_s)//'; ON=TCM1; VD=Crustal material/soil dust Fine ug/kg; VS=SLC;VB=D1'
+         species_master(sp_CM) % bins_array(1) % out_name   =  'CM1X'
+         species_master(sp_CM) % bins_array(1) % out_lname  =  'cnchCM1X'
+         species_master(sp_CM) % bins_array(1) % out_string =  'VN=cnchCM1X; ON=CM1X; VD=Crustal material/soil dust Fine ug/m3; VS=SLC;VB=V1'
+         species_master(sp_CM) % bins_array(1) % me_name    =  'ECM1'
+         species_master(sp_CM) % bins_array(2) % dyn_name   =  'TCM2'
+         species_master(sp_CM) % bins_array(2) % dyn_lname  =  'TR/TCM2:P'
+         species_master(sp_CM) % bins_array(2) % dyn_string =  'VN=TR/TCM2:P'//trim(tr_prop_s)//'; ON=TCM2; VD=Crustal material/soil dust Coarse ug/kg; VS=SLC;VB=D1'
+         species_master(sp_CM) % bins_array(2) % out_name   =  'CM2X'
+         species_master(sp_CM) % bins_array(2) % out_lname  =  'cnchCM2X'
+         species_master(sp_CM) % bins_array(2) % out_string =  'VN=cnchCM2X; ON=CM2X; VD=Crustal material/soil dust Coarse ug/m3; VS=SLC;VB=V1'
+         species_master(sp_CM) % bins_array(2) % me_name    =  'ECM2'
+         species_master(sp_CM) % mol_wt                     =  60.08000000
+
+         species_master(sp_EC) % dyn_name   =  'EC'
+         species_master(sp_EC) % nb_bins    =  cam2bins_nb_bins
+         species_master(sp_EC) % bins_array => EC_bins
+         species_master(sp_EC) % bins_array(1) % dyn_name   =  'TEC1'
+         species_master(sp_EC) % bins_array(1) % dyn_lname  =  'TR/TEC1:P'
+         species_master(sp_EC) % bins_array(1) % dyn_string =  'VN=TR/TEC1:P'//trim(tr_prop_s)//'; ON=TEC1; VD=Elemental carbon Fine ug/kg; VS=SLC;VB=D1'
+         species_master(sp_EC) % bins_array(1) % out_name   =  'EC1X'
+         species_master(sp_EC) % bins_array(1) % out_lname  =  'cnchEC1X'
+         species_master(sp_EC) % bins_array(1) % out_string =  'VN=cnchEC1X; ON=EC1X; VD=Elemental carbon Fine ug/m3; VS=SLC;VB=V1'
+         species_master(sp_EC) % bins_array(1) % me_name    =  'EEC1'
+         species_master(sp_EC) % bins_array(2) % dyn_name   =  'TEC2'
+         species_master(sp_EC) % bins_array(2) % dyn_lname  =  'TR/TEC2:P'
+         species_master(sp_EC) % bins_array(2) % dyn_string =  'VN=TR/TEC2:P'//trim(tr_prop_s)//'; ON=TEC2; VD=Elemental carbon Coarse ug/kg; VS=SLC;VB=D1'
+         species_master(sp_EC) % bins_array(2) % out_name   =  'EC2X'
+         species_master(sp_EC) % bins_array(2) % out_lname  =  'cnchEC2X'
+         species_master(sp_EC) % bins_array(2) % out_string =  'VN=cnchEC2X; ON=EC2X; VD=Elemental carbon Coarse ug/m3; VS=SLC;VB=V1'
+         species_master(sp_EC) % bins_array(2) % me_name    =  'EEC2'
+         species_master(sp_EC) % mol_wt                     =  12.01100000
+
+         species_master(sp_SS) % dyn_name   =  'SS'
+         species_master(sp_SS) % nb_bins    =  cam2bins_nb_bins
+         species_master(sp_SS) % bins_array => SS_bins
+         species_master(sp_SS) % bins_array(1) % dyn_name   =  'TSS1'
+         species_master(sp_SS) % bins_array(1) % dyn_lname  =  'TR/TSS1:P'
+         species_master(sp_SS) % bins_array(1) % dyn_string =  'VN=TR/TSS1:P'//trim(tr_prop_s)//'; ON=TSS1; VD=Sea Salt Fine ug/kg; VS=SLC;VB=D1'
+         species_master(sp_SS) % bins_array(1) % out_name   =  'SS1X'
+         species_master(sp_SS) % bins_array(1) % out_lname  =  'cnchSS1X'
+         species_master(sp_SS) % bins_array(1) % out_string =  'VN=cnchSS1X; ON=SS1X; VD=Sea Salt Fine ug/m3; VS=SLC;VB=V1'
+         species_master(sp_SS) % bins_array(2) % dyn_name   =  'TSS2'
+         species_master(sp_SS) % bins_array(2) % dyn_lname  =  'TR/TSS2:P'
+         species_master(sp_SS) % bins_array(2) % dyn_string =  'VN=TR/TSS2:P'//trim(tr_prop_s)//'; ON=TSS2; VD=Sea Salt Coarse ug/kg; VS=SLC;VB=D1'
+         species_master(sp_SS) % bins_array(2) % out_name   =  'SS2X'
+         species_master(sp_SS) % bins_array(2) % out_lname  =  'cnchSS2X'
+         species_master(sp_SS) % bins_array(2) % out_string =  'VN=cnchSS2X; ON=SS2X; VD=Sea Salt Coarse ug/m3; VS=SLC;VB=V1'
+         species_master(sp_SS) % mol_wt                     =  67.18000000
+         if ( chm_seaflux_s == 'GONG_MONAHAN_F' ) then
+            species_master(sp_SS) % bins_array(1) % ae_name    =  'ESS1'
+            species_master(sp_SS) % bins_array(1) % ae_lname   =  'sp_SS_ESS1'
+            species_master(sp_SS) % bins_array(1) % ae_string  =  'VN=sp_SS_ESS1; ON=ESS1; VD=Sea-salt emissions Fine (g/s); VS=ROW;VB=p1'
+            species_master(sp_SS) % bins_array(2) % ae_name    =  'ESS2'
+            species_master(sp_SS) % bins_array(2) % ae_lname   =  'sp_SS_ESS2'
+            species_master(sp_SS) % bins_array(2) % ae_string  =  'VN=sp_SS_ESS2; ON=ESS2; VD=Sea-salt emissions Coarse (g/s); VS=ROW;VB=p1'
+         endif
+
+         species_master(sp_NI) % dyn_name   =  'NI'
+         species_master(sp_NI) % nb_bins    =  cam2bins_nb_bins
+         species_master(sp_NI) % bins_array => NI_bins
+         species_master(sp_NI) % bins_array(1) % dyn_name   =  'TNI1'
+         species_master(sp_NI) % bins_array(1) % dyn_lname  =  'TR/TNI1:P'
+         species_master(sp_NI) % bins_array(1) % dyn_string =  'VN=TR/TNI1:P'//trim(tr_prop_s)//'; ON=TNI1; VD=CAM SPECIES Nitrate Fine ug/kg; VS=SLC;VB=D1'
+         species_master(sp_NI) % bins_array(1) % out_name   =  'NI1X'
+         species_master(sp_NI) % bins_array(1) % out_lname  =  'cnchNI1X'
+         species_master(sp_NI) % bins_array(1) % out_string =  'VN=cnchNI1X; ON=NI1X; VD=CAM SPECIES Nitrate Fine  ug/m3; VS=SLC;VB=V1'
+         species_master(sp_NI) % bins_array(2) % dyn_name   =  'TNI2'
+         species_master(sp_NI) % bins_array(2) % dyn_lname  =  'TR/TNI2:P'
+         species_master(sp_NI) % bins_array(2) % dyn_string =  'VN=TR/TNI2:P'//trim(tr_prop_s)//'; ON=TNI2; VD=CAM SPECIES Nitrate Coarse ug/kg; VS=SLC;VB=D1'
+         species_master(sp_NI) % bins_array(2) % out_name   =  'NI2X'
+         species_master(sp_NI) % bins_array(2) % out_lname  =  'cnchNI2X'
+         species_master(sp_NI) % bins_array(2) % out_string =  'VN=cnchNI2X; ON=NI2X; VD=CAM SPECIES Nitrate Coarse ug/m3; VS=SLC;VB=V1'
+         species_master(sp_NI) % mol_wt                     =  62.00500000
+
+         species_master(sp_AM) % dyn_name   =  'AM'
+         species_master(sp_AM) % nb_bins    =  cam2bins_nb_bins
+         species_master(sp_AM) % bins_array => AM_bins
+         species_master(sp_AM) % bins_array(1) % dyn_name   =  'TAM1'
+         species_master(sp_AM) % bins_array(1) % dyn_lname  =  'TR/TAM1:P'
+         species_master(sp_AM) % bins_array(1) % dyn_string =  'VN=TR/TAM1:P'//trim(tr_prop_s)//'; ON=TAM1; VD=CAM SPECIES Ammonium Fine ug/kg; VS=SLC;VB=D1'
+         species_master(sp_AM) % bins_array(1) % out_name   =  'AM1X'
+         species_master(sp_AM) % bins_array(1) % out_lname  =  'cnchAM1X'
+         species_master(sp_AM) % bins_array(1) % out_string =  'VN=cnchAM1X; ON=AM1X; VD=CAM SPECIES Ammonium Fine  ug/m3; VS=SLC;VB=V1'
+         species_master(sp_AM) % bins_array(2) % dyn_name   =  'TAM2'
+         species_master(sp_AM) % bins_array(2) % dyn_lname  =  'TR/TAM2:P'
+         species_master(sp_AM) % bins_array(2) % dyn_string =  'VN=TR/TAM2:P'//trim(tr_prop_s)//'; ON=TAM2; VD=CAM SPECIES Ammonium Coarse ug/kg; VS=SLC;VB=D1'
+         species_master(sp_AM) % bins_array(2) % out_name   =  'AM2X'
+         species_master(sp_AM) % bins_array(2) % out_lname  =  'cnchAM2X'
+         species_master(sp_AM) % bins_array(2) % out_string =  'VN=cnchAM2X; ON=AM2X; VD=CAM SPECIES Ammonium Coarse ug/m3; VS=SLC;VB=V1'
+         species_master(sp_AM) % mol_wt                     =  18.03850000
+
+         species_master(sp_AF) % out_name    =  'AF'
+         species_master(sp_AF) % out_lname   =  'AF_vol_std'
+         species_master(sp_AF) % out_string  =  'VN=AF_vol_std; ON=AF; VD= PM2.5 (ug/m3); VS=SLC;VB=v1'
+
+         species_master(sp_AC) % out_name    =  'AC'
+         species_master(sp_AC) % out_lname   =  'AC_vol_std'
+         species_master(sp_AC) % out_string  =  'VN=AC_vol_std; ON=AC; VD= PM10 (ug/m3); VS=SLC;VB=v1'
+         
+         if (chm_get_ae_emis_l) then
+            species_master(sp_PC) % bins_array(1) % ae_name    =  'EPC1'
+            species_master(sp_PC) % bins_array(1) % ae_lname   =  'sp_PC_EPC1'
+            species_master(sp_PC) % bins_array(1) % ae_string  =  'VN=sp_PC_EPC1; ON=EPC1; VD=Primary organic carbon emissions fine(g/s); VS=ROW;VB=p1'
+            species_master(sp_PC) % bins_array(2) % ae_name    =  'EPC2'
+            species_master(sp_PC) % bins_array(2) % ae_lname   =  'sp_PC_EPC2'
+            species_master(sp_PC) % bins_array(2) % ae_string  =  'VN=sp_PC_EPC2; ON=EPC2; VD=Primary organic carbon emissions coarse(g/s); VS=ROW;VB=p1'
+            species_master(sp_SU) % bins_array(1) % ae_name    =  'ESU1'
+            species_master(sp_SU) % bins_array(1) % ae_lname   =  'sp_SU_ESU1'
+            species_master(sp_SU) % bins_array(1) % ae_string  =  'VN=sp_SU_ESU1; ON=ESU1; VD=Sulphate emissions Fine (g/s); VS=ROW;VB=p1'
+            species_master(sp_SU) % bins_array(2) % ae_name    =  'ESU2'
+            species_master(sp_SU) % bins_array(2) % ae_lname   =  'sp_SU_ESU2'
+            species_master(sp_SU) % bins_array(2) % ae_string  =  'VN=sp_SU_ESU2; ON=ESU2; VD=Sulphate emissions Coarse (g/s); VS=ROW;VB=p1'
+            species_master(sp_CM) % bins_array(1) % ae_name    =  'ECM1'
+            species_master(sp_CM) % bins_array(1) % ae_lname   =  'sp_CM_ECM1'
+            species_master(sp_CM) % bins_array(1) % ae_string  =  'VN=sp_CM_ECM1; ON=ECM1; VD=Crustal material Fine emissions g/s; VS=ROW;VB=p1'
+            species_master(sp_CM) % bins_array(2) % ae_name    =  'ECM2'
+            species_master(sp_CM) % bins_array(2) % ae_lname   =  'sp_CM_ECM2'
+            species_master(sp_CM) % bins_array(2) % ae_string  =  'VN=sp_CM_ECM2; ON=ECM2; VD=Crustal material Coarse emissions g/s; VS=ROW;VB=p1'
+            species_master(sp_EC) % bins_array(1) % ae_name    =  'EEC1'
+            species_master(sp_EC) % bins_array(1) % ae_lname   =  'sp_EC_EEC1'
+            species_master(sp_EC) % bins_array(1) % ae_string  =  'VN=sp_EC_EEC1; ON=EEC1; VD=Elemental carbon emissions (g/s); VS=ROW;VB=p1'
+            species_master(sp_EC) % bins_array(2) % ae_name    =  'EEC2'
+            species_master(sp_EC) % bins_array(2) % ae_lname   =  'sp_EC_EEC2'
+            species_master(sp_EC) % bins_array(2) % ae_string  =  'VN=sp_EC_EEC2; ON=EEC2; VD=Elemental carbon emissions Coarse (g/s); VS=ROW;VB=p1'
+         endif
+
+
+      end subroutine pkg_cam2bins_metainit
+
+end module mach_pkg_cam2bins_mod

@@ -1,0 +1,624 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_pm_chem.ftn90
+! Creation       : P. Huang, W. Gong, Mar. 2008 for adapting AURAMS version CAM
+!                  P. Huang, Dec. 2007 for GEM-MACH
+!
+! Description    : Entry point for aerosol processes
+!
+! Extra info     : Including calculations of Sea-salt surface flux
+!
+! Arguments:  IN 
+!               metvar3d(ix, kz, MV3D_FTOT)             -> Total cloud fraction at each layer (0.0-1.0)
+!               metvar3d(ix, kz, MV3D_QCPLUS)             -> Cloud water/ice (kg/kg) air
+!               metvar3d(ix, kz, MV3D_TPLUS)             -> Temperature (K)
+!               metvar3d(ix, kz, MV3D_HUPLUS)             -> Specific humidity (kg H2O/kg air)
+!               pres           -> 3-D pressure (Pa)
+!               rho            -> 3-D air density array (kg/m^3)
+!               cx             -> Cosine of solar zenith angle
+!               f_step         -> Flag for first chem. step in current
+!               f_j            -> Slice number
+!               metvar3d(ix, kz, MV3D_FDC)       -> Deep convective cloud cover
+!               metvar3d(ix, kz, MV3D_FXP)       -> Stratiform cloud cover
+!               psfc           -> Surface pressure (Pa)
+!               metvar3d(ix, kz, MV3D_RNFLX)      -> Liquid precipitation flux
+!               metvar3d(ix, kz, MV3D_SNOFLX)     -> Solid precipitation flux
+!               metvar3d(ix, kz, MV3D_PPRO)       -> CLOUD TO RAIN COLL TEND (CONSUN + KFC)
+!               metvar3d(ix, kz, MV3D_PEVP)       -> EVAP. OF PRECIP (CONSUN + KFC)
+!               sig            -> Local sigma values
+!               fws            -> Vertical velocity (m/s)
+!               metvar2d(ix, MV2D_KCL)        -> First level in the PBL
+!               metvar2d(ix, MV2D_GLSEA)      -> Sea ice fraction
+!               metvar2d(ix, MV2D_UDIAG)      -> Screen level X-component of wind
+!               metvar2d(ix, MV2D_VDIAG)      -> Screen level Y-component of wind
+!               busvol         -> Volatile bus for chemistry
+!               metvar3d(ix, kz, MV3D_UPLUS)         -> Wind components (X)
+!               metvar3d(ix, kz, MV3D_VPLUS)         -> Wind components (Y)
+!
+!             IN/OUT
+!               busdyn    -> Dynamic bus for chemistry
+!               busper    -> Permanent bus for chemistry
+!
+!             LOCAL
+!               seasn          -> Seasonal categories for calculation of PM dry deposition
+!               fland          -> Landuse
+!               ra             -> Aerodynamic resistance
+!
+!============================================================================
+!
+!!if_on
+subroutine mach_pm_chem(busdyn, busvol, busper, busdyn_size, busvol_size, busper_size, &
+                        f_step, f_j, oldso4, metvar2d, metvar3d)
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   use chm_metvar_mod,       only: SIZE_MV2D, SIZE_MV3D
+!!if_off
+   use chm_metvar_mod,       only: mv3d_qcplus, mv3d_tplus,  mv3d_huplus, mv3d_uplus, mv3d_vplus,  &
+                                   mv3d_ftot,   mv3d_fdc,    mv3d_fxp,    mv3d_rnflx, mv3d_snoflx, &
+                                   mv3d_ppro,   mv3d_pevp,   mv3d_sigt,   mv3d_wplus, mv2d_cang,   &
+                                   mv2d_pplus,  mv2d_kcl,    mv2d_glsea,  mv2d_udiag, mv2d_vdiag,  &
+                                   mv2d_ue
+   use chm_utils_mod,        only: chm_timestep, chm_lun_out, ik, global_debug
+   use mach_cam_headers_mod, only: mach_cam_pre, mach_cam_main, mach_cam_sfss
+   use chm_consphychm_mod,   only: grav, rgasi, consth, rgasd, delta
+   use chm_nml_mod,          only: id, jd, it,              &
+                                   dlev, itr, nk_start,     &
+                                   chm_soa_s, chm_seaflux_s,&
+                                   chm_diag_wetdep_l,       &
+                                   chm_diag_drydep_l,       &
+                                   chm_strato_s
+   use chm_species_info_mod, only: sm, unassigned
+   use linoz_mod,            only: hu_linoz
+   use chm_species_idx_mod
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   use mach_gas_chemicbi_mod,only: lucprm, nsn
+   use mach_cam_pre_mod,     only: icom, aeroname, rhop0, maxngs, gasextr, camextr, nswdep
+   use mach_cam_pre_mod,     only: iae1, iae2
+   use mach_cam_pre_mod,     only: igs_SO2, igs_SO4, igs_NO, igs_NO2, igs_O3, igs_H2O2, igs_HNO3, igs_PAN, igs_C3H8
+   use mach_cam_pre_mod,     only: igs_ALKA, igs_ETHE, igs_ALKE, igs_TOLU, igs_AROM, igs_HCHO, igs_ALD2, igs_MEK, igs_MGLY
+   use mach_cam_pre_mod,     only: igs_DIAL, igs_ROOH, igs_CRES, igs_HONO, igs_RNO3, igs_ISOP, igs_HO2, igs_RO2, igs_MCO3 
+   use mach_cam_pre_mod,     only: igs_CO, igs_NH3, igs_DUST, igs_OSD, igs_O, igs_NO3, igs_N2O5, igs_HNO4, igs_OH
+   use mach_cam_pre_mod,     only: igs_RO2R, igs_R2O2, igs_RO2N, igs_BZO, igs_CRG1, igs_CRG2, igs_CH4, igs_C2H6
+   use mach_cam_pre_mod,     only: igs_H2O, igs_O2, igs_M, igs_H2S, igs_DMS, igs_CCN
+   use mach_cam_pre_mod,     only: iae_SU, iae_SS, iae_OC, iae_NI, iae_AM, iae_SD, iae_EC, iae_PC
+   use mach_cam_utils_mod,   only: isize, delt, cam, idebug, icob, sigmathck, chk_trc 
+   implicit none
+
+!!if_on
+   integer(kind=4), intent   (in) :: busper_size
+   integer(kind=4), intent   (in) :: busvol_size
+   integer(kind=4), intent   (in) :: busdyn_size
+   integer(kind=4), intent   (in) :: f_step
+   integer(kind=4), intent   (in) :: f_j
+   real(kind=4),    intent(inout) :: busdyn  (busdyn_size)
+   real(kind=4),    intent   (in) :: busvol  (busvol_size)
+   real(kind=4),    intent(inout) :: busper  (busper_size)
+   real(kind=4),    intent   (in) :: oldso4  (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+!!if_off
+!
+!  Declare local variables
+!
+   real(kind=4)               :: rso2oh2so4 = -64.6 / 98.1
+   real(kind=4)               :: hu_linoz_consth
+   integer(kind=4)            :: n, l, isz, lon, irest, il1, il2
+   integer(kind=4)            :: msg, nn, i, k, this_ik, ix, kz
+   integer(kind=4)            :: gn_aerochem, iti, mae
+   real(kind=4)               :: pop, pop1, tmin
+   real(kind=4)               :: smf
+   real(kind=4)               :: c_so4
+   real(kind=4)               :: tt, hu, udiag, vdiag
+   real(kind=4)               :: oh_cf, no3_cf
+   real(kind=4)               :: seasn    (chm_ni)
+   real(kind=4)               :: psfc     (chm_ni)
+   real(kind=4)               :: glsea    (chm_ni)
+   real(kind=4)               :: surfwd   (chm_ni)
+   real(kind=4)               :: fland    (chm_ni, lucprm)
+   real(kind=4)               :: ra       (chm_ni, lucprm)
+   real(kind=4)               :: usi      (chm_ni, lucprm)
+   real(kind=4)               :: rho      (chm_ni, chm_nk)
+   real(kind=4)               :: pres     (chm_ni, chm_nk)
+   real(kind=4)               :: sig      (chm_ni, chm_nk)
+   real(kind=4)               :: tcld3    (chm_ni, chm_nk)
+   real(kind=4)               :: fctr     (chm_ni, chm_nk)
+   real(kind=4)               :: frevp    (chm_ni, chm_nk)
+   real(kind=4)               :: dsig     (chm_ni, chm_nk)
+   real(kind=4)               :: wrow     (chm_ni, chm_nk)
+   real(kind=4)               :: ohrow    (chm_ni, chm_nk)
+   real(kind=4)               :: no3row   (chm_ni, chm_nk)
+   real(kind=4)               :: thlev    (chm_ni, chm_nk)
+   real(kind=4)               :: rtnucl   (chm_ni, chm_nk)
+   real(kind=4)               :: soa      (chm_ni, chm_nk)
+   real(kind=4)               :: throw    (chm_ni, chm_nk+1)
+   real(kind=4)               :: rhrow    (chm_ni, chm_nk+1)
+   real(kind=4)               :: pretrow  (chm_ni, chm_nk, 2)
+   real(kind=4)               :: cldcv    (chm_ni, chm_nk, 2)
+   real(kind=4)               :: zmlwc    (chm_ni, chm_nk, 2)
+   real(kind=4)               :: rtso2    (chm_ni, chm_nk, 2)
+   real(kind=4)               :: wetflx   (chm_ni, nswdep)
+   real(kind=4)               :: ts2      (chm_ni, chm_nk, 3, 2)
+   real(kind=4)               :: ts4      (chm_ni, chm_nk, 3, 2)
+   real(kind=4)               :: clts     (chm_ni, 4, 2)
+   real(kind=4)               :: cls4     (chm_ni, 4, 2)
+   real(kind=4)               :: condnu   (15)
+   real(kind=4)               :: cld_chm  (chm_ni, chm_nk, 7)
+!
+! A bit down bellow, gn_aerochem = isize * icom + maxngs + gasextr + camextr
+!
+   integer(kind=4)            :: igf      (isize)
+   integer(kind=4)            :: iaer_sp  (icom, isize)
+   integer(kind=4)            :: igfij    (isize, isize * isize, 2)
+   real   (kind=4)            :: pvol     (isize)
+   real   (kind=4)            :: coagfr   (isize, isize, isize)
+   real   (kind=4)            :: dryflx   (chm_ni, icom)
+   real   (kind=4)            :: rsfrow   (chm_ni, isize)
+   real   (kind=4)            :: rtcond   (chm_ni, chm_nk, isize)
+   real   (kind=4)            :: trwtrow  (chm_ni, chm_nk, isize)
+   real   (kind=4)            :: aerosize1(2, isize)
+   real   (kind=4)            :: aero_tr  (chm_ni, chm_nk+1, isize*icom+maxngs+gasextr + camextr)
+
+!  for unit convertion
+   real(kind=4),    parameter ::  ug2kg = 1.E-9
+   real(kind=4),    parameter ::  kg2ug = 1.E+9
+!
+   logical :: local_dbg
+
+   real sfohra
+   external sfohra
+!
+! CODE BEGINS HERE
+!
+   smf = 1.0e-15
+
+   aero_tr     = 1.0e-33
+   aerosize1   = 0.0
+   cld_chm     = 0.0
+   cldcv       = 0.0
+   cls4        = 0.0
+   clts        = 0.0
+   coagfr      = 0.0
+   condnu      = 0.0
+   dryflx      = 0.0
+   dsig        = 0.0
+   fctr        = 0.0
+   frevp       = 0.0
+   iaer_sp     = 0.0
+   igf         = 0.0
+   igfij       = 0.0
+   no3row      = 0.0
+   ohrow       = 0.0
+   pop         = 0.0
+   pop1        = 0.0
+   pretrow     = 0.0
+   pvol        = 0.0
+   rhrow       = 0.0
+   rsfrow      = 0.0
+   rtcond      = 0.0
+   rtnucl      = 0.0
+   rtso2       = 0.0
+   soa         = 0.0
+   surfwd      = 0.0
+   tcld3       = 0.0
+   thlev       = 0.0
+   throw       = 0.0
+   tmin        = 0.0
+   trwtrow     = 0.0
+   ts2         = 0.0
+   ts4         = 0.0
+   wetflx      = 0.0
+   wrow        = 0.0
+   zmlwc       = 0.0
+
+   gn_aerochem = isize * icom + maxngs + gasextr + camextr
+
+   hu_linoz_consth = hu_linoz / consth
+
+! 3D Fields
+   do kz = 1, chm_nk
+      do ix = 1, chm_ni
+         this_ik = ik(ix, kz, chm_ni)
+         pres(ix, kz)    = busvol(sm(sp_pressure) % vol_offset     + this_ik)
+         rho(ix, kz)     = busvol(sm(sp_density)  % vol_offset     + this_ik)
+         sig(ix, kz)     = metvar3d(ix, kz, MV3D_SIGT)
+      end do
+   end do
+
+! 2D fields
+   do ix = 1, chm_ni
+      psfc(ix)     = metvar2d(ix, MV2D_PPLUS)
+      glsea(ix)    = metvar2d(ix, MV2D_GLSEA)
+   end do
+!
+   do i = 1, chm_ni
+      seasn(i) = busper(sm(sp_SESN) % per_offset + i -1)
+      do l = 1, lucprm
+         fland(i,l) = busper(sm(sp_LU15) % per_offset + ik(i, l, chm_ni))
+         ra(i,l)    = busvol(sm(sp_LU15) % ra_offset + ik(i, l, chm_ni))
+         usi(i, l)  = max(metvar2d(i, MV2D_UE), 0.001)
+      end do
+   end do
+
+   local_dbg = (.false. .or. global_debug)
+
+   call mach_cam_pre(AEROSIZE1, PVOL, IGF, IGFIJ, COAGFR, IAER_SP)
+
+   call sigmathck(DSIG,sig)
+
+!   call sigmacal(SHJ, SHTJ, DSHJ, sig)
+!>> sg:
+!>> after call to sigmacal SHJ contains sigma levels where chemicals are located
+!>> SHTJ contains the half-way values, except for SHTJ(1) = SHJ(1)
+!>> and SHTJ(chm_nk + 1) = 1
+!>> DSHJ are the thickness in sigma of the layers that have SHJ as their centers.
+
+   delt   = 0.5 * chm_timestep
+   msg    = 0
+   il1    = 1
+   il2    = chm_ni
+   lon    = chm_ni / 2
+   iti    = it
+   mae    = 0
+
+   if (local_dbg .and. f_j == 1) then       !to print details of PM name and size bin structure
+         write (chm_lun_out, *) 'cam -> id, jd, iti, cam, idebug, dlev, isize, icob, iat, mae, local_dbg'
+         write (chm_lun_out, 333)  id, jd, iti, int(cam), idebug, dlev, isize, icob, icom, mae, local_dbg
+         write (chm_lun_out, 1111) (aeroname(n), n = 1, icom)
+         write (chm_lun_out, 2222) (rhop0(n), n = 1, icom)
+         write (chm_lun_out, *) '       cam size bin configurations '
+         do n = 1, isize
+            write (chm_lun_out, *) aerosize1(1, n), '   ', aerosize1(2, n)
+         end do
+   end if
+ 1111 format (' aerosol type(s) -> ', 8('| ', a8, ' |', 1x))
+ 2222 format ('     density(kg/m3) ', 9('  ', f8.2, '  ', 1x))
+ 333  format (8x, i3, 1x, i3, 1x, i3, 1x, i3, 2x, i3, 3x, i4, 1x, i4, 1x, i4, 1x, i3, 1x, i3, 4x, i3)
+
+!  load from chmbusdyn
+   if ( chm_soa_s /= 'NIL')  then
+      do k = 1, chm_nk
+         do i = 1, chm_ni
+            SOA(i, k) = busvol(sm(sp_NWOC) % vol_offset + ik(i, k, chm_ni)) * ug2kg/chm_timestep             !ug/kg->kg/kg/s
+         end do
+      end do
+   endif
+   do k = 1, chm_nk
+      do i = 1, chm_ni
+         aero_tr(i, k+1, igs_SO2)   = busdyn(sm(sp_SO2 ) % dyn_offset + ik(i, k, chm_ni)) * ug2kg  !ug/kg -> kg/kg
+!        aero_tr(i, k+1, igs_SO4)   = busdyn(sm(sp_SO4  ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_SO4)   = oldso4(i, k) * ug2kg                                         !using [SO4]g before gas chemistry for use in CAM
+         aero_tr(i, k+1, igs_NO)    = busdyn(sm(sp_NO  ) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+         aero_tr(i, k+1, igs_NO2)   = busdyn(sm(sp_NO2) % dyn_offset + ik(i, k, chm_ni))  * ug2kg
+         aero_tr(i, k+1, igs_O3)    = busdyn(sm(sp_O3) % dyn_offset + ik(i, k, chm_ni))   * ug2kg
+         aero_tr(i, k+1, igs_H2O2)  = busdyn(sm(sp_H2O2 ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_HNO3)  = busdyn(sm(sp_HNO3 ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+
+         aero_tr(i, k+1, igs_PAN)   = busdyn(sm(sp_PAN ) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+         aero_tr(i, k+1, igs_C3H8)  = busdyn(sm(sp_C3H8 ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_ALKA)  = busdyn(sm(sp_ALKA ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_ETHE)  = busdyn(sm(sp_ETHE ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_ALKE)  = busdyn(sm(sp_ALKE ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_TOLU)  = busdyn(sm(sp_TOLU ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_AROM)  = busdyn(sm(sp_AROM ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_HCHO)  = busdyn(sm(sp_HCHO ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_ALD2)  = busdyn(sm(sp_ALD2 ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_MEK)   = busdyn(sm(sp_MEK ) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+
+         aero_tr(i, k+1, igs_MGLY)  = busdyn(sm(sp_MGLY ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_DIAL)  = busdyn(sm(sp_DIAL ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_ROOH)  = busdyn(sm(sp_ROOH ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_CRES)  = busdyn(sm(sp_CRES ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_HONO)  = busdyn(sm(sp_HONO ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_RNO3)  = busdyn(sm(sp_RNO3 ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_ISOP)  = busdyn(sm(sp_ISOP ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_HO2)   = busdyn(sm(sp_HO2 ) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+         aero_tr(i, k+1, igs_RO2)   = busdyn(sm(sp_RO2 ) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+         aero_tr(i, k+1, igs_MCO3)  = busdyn(sm(sp_MCO3 ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+
+         aero_tr(i, k+1, igs_CO)    = busdyn(sm(sp_CO ) % dyn_offset + ik(i, k, chm_ni))  * ug2kg
+         aero_tr(i, k+1, igs_NH3)   = busdyn(sm(sp_NH3 ) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+         aero_tr(i, k+1, igs_DUST)  = 1.E-23 !busdyn(sm(sp_DUST ) % dyn_offset + ik(i, k, chm_ni))         !this species is deleted in gem-mach
+         aero_tr(i, k+1, igs_OSD)   = busdyn(sm(sp_OSD ) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+         aero_tr(i, k+1, igs_O)     = busdyn(sm(sp_O ) % dyn_offset + ik(i, k, chm_ni))   * ug2kg
+         aero_tr(i, k+1, igs_NO3)   = busdyn(sm(sp_NO3 ) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+         aero_tr(i, k+1, igs_N2O5)  = busdyn(sm(sp_N2O5 ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_HNO4)  = busdyn(sm(sp_HNO4 ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_OH)    = busdyn(sm(sp_OH ) % dyn_offset + ik(i, k, chm_ni))  * ug2kg
+         aero_tr(i, k+1, igs_RO2R)  = busdyn(sm(sp_RO2R ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+
+         aero_tr(i, k+1, igs_R2O2)  = busdyn(sm(sp_R2O2 ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_RO2N)  = busdyn(sm(sp_RO2N ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_BZO)   = busdyn(sm(sp_BZO ) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+         aero_tr(i, k+1, igs_CRG1)  = busdyn(sm(sp_CRG1 ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_CRG2)  = busdyn(sm(sp_CRG2 ) % dyn_offset + ik(i, k, chm_ni))* ug2kg
+         aero_tr(i, k+1, igs_CH4)   = 1.E-12 !ch4(k)  ! see gas_chem.
+         aero_tr(i, k+1, igs_C2H6)  = 1.E-12 !c2h6(k) ! see gas_chem.
+         aero_tr(i, k+1, igs_H2O)   = 1.E-13 !busdyn(sm(sp_H2O ) % dyn_offset + ik(i, k, chm_ni))* ug2kg  !GEM-MACH dosen't have this index
+         aero_tr(i, k+1, igs_O2)    = 1.E-13 !busdyn(sm(sp_O2 ) % dyn_offset + ik(i, k, chm_ni)) * ug2kg  !GEM-MACH dosen't have this index
+         aero_tr(i, k+1, igs_M)     = 1.E-13 !busdyn(sm(sp_M ) % dyn_offset + ik(i, k, chm_ni))  * ug2kg  !GEM-MACH dosen't have this index
+            do isz=1, isize
+               aero_tr(i, k+1, iaer_sp(iae_SU, isz)) = busdyn(sm(sp_SU) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+               aero_tr(i, k+1, iaer_sp(iae_SS, isz)) = busdyn(sm(sp_SS) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+               aero_tr(i, k+1, iaer_sp(iae_OC, isz)) = busdyn(sm(sp_OC) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+               aero_tr(i, k+1, iaer_sp(iae_NI, isz)) = busdyn(sm(sp_NI) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+               aero_tr(i, k+1, iaer_sp(iae_AM, isz)) = busdyn(sm(sp_AM) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+               aero_tr(i, k+1, iaer_sp(iae_SD, isz)) = busdyn(sm(sp_CM) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+               aero_tr(i, k+1, iaer_sp(iae_EC, isz)) = busdyn(sm(sp_EC) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+               aero_tr(i, k+1, iaer_sp(iae_PC, isz)) = busdyn(sm(sp_PC) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) * ug2kg
+         end do
+      end do
+   end do
+
+   irest = 1
+
+   do i = 1, chm_ni
+      udiag    = metvar2d(i, MV2D_UDIAG)
+      vdiag    = metvar2d(i, MV2D_VDIAG)
+      surfwd(i) = sqrt(udiag**2 + vdiag**2)
+   end do
+
+!  Calculate the average production rate of SO4 for use in CAM
+!  in ug/kg/s converted to SO2 oxidation rate in kg of so2/kg/s for CAM
+
+   c_so4 =  rso2oh2so4 * ug2kg / delt
+   oh_cf = (rgasi * 1.E3) / (rgasd * (sm(sp_OH) % mol_wt))
+   no3_cf = (rgasi * 1.E3) / (rgasd * (sm(sp_NO3) % mol_wt))
+   do k=1, chm_nk
+      do i=1, chm_ni
+         rtso2(i, k, 1)   = (busdyn(sm(sp_SO4  ) % dyn_offset + ik(i, k, chm_ni)) - oldso4(i, k)) * c_so4
+         thlev(i, k)      = dsig(i, k) * psfc(i) / grav/rho(i, k)
+         pretrow(i, k, 1) = metvar3d(i, k, MV3D_RNFLX)  !liquid precip.
+         pretrow(i, k, 2) = metvar3d(i, k, MV3D_SNOFLX) !solid precip.
+         frevp(i, k)      = metvar3d(i, k, MV3D_PEVP)
+         fctr(i, k)       = metvar3d(i, k, MV3D_PPRO)/(metvar3d(i, k, MV3D_QCPLUS) + smf)
+         fctr(i, k)       = min(1.0, fctr(i, k))
+         tt               = metvar3d(i, k, MV3D_TPLUS)
+         hu               = metvar3d(i, k, MV3D_HUPLUS)
+         throw(i, k+1)    = tt
+         rhrow(i, k+1)    = sfohra(hu, tt, pres(i,k))
+         rhrow(i, k+1)    = min(max(rhrow(i, k + 1),0.0), 1.0)
+         ohrow(i, k)      = aero_tr(i, k+1, igs_oh)  / (1. + delta * hu) * oh_cf  ! gas unit in m**3/m**3
+         no3row(i, k)     = aero_tr(i, k+1, igs_no3) / (1. + delta * hu) * no3_cf ! gas unit in m**3/m**3
+         cldcv(i, k, 1)   = metvar3d(i, k, MV3D_FXP)
+         cldcv(i, k, 2)   = metvar3d(i, k, MV3D_FDC)
+         tcld3(i, k)      = metvar3d(i, k, MV3D_FTOT)
+         zmlwc(i, k, 1)   = metvar3d(i, k, MV3D_QCPLUS) !strat.+conv. aurams needs this format
+         zmlwc(i, k, 2)   = 0.0
+         if (zmlwc(i, k, 1) < 1.e-7) then
+            zmlwc(i, k, 1) = 0.0
+            tcld3(i, k)    = 0.0
+         endif
+!   vertical motion is dz/dt (m/s)
+         wrow(i, k)     = metvar3d(i, k, MV3D_WPLUS) !model vertical wind speed 
+      enddo
+   enddo
+
+!  compute the condensation/nucleation time intervals
+   do i = 1, 15
+      pop1 = 2. * delt / exp(real(15 - i) / 1.7)
+      if (i >= 2) then
+         condnu(i) = pop1 - pop
+         pop = pop1
+      else
+         condnu(i) = pop1
+         pop = pop1
+      end if
+   end do
+
+!  call aerosol physics
+   ! call tmg_start0 ( 90, 'mach_cam_main')
+
+   call mach_cam_main(chm_nk + 1, IL1, IL2, f_j, THROW, RHROW, LON, aero_tr, psfc, &
+                      sig, ITI, ITR, WROW, IREST, gn_aerochem, f_step, lucprm,     &
+                      AEROSIZE1, OHROW, NO3ROW, CLDCV, ZMLWC, PRETROW, TRWTROW,    &
+                      PRES, RHO, THLEV, DSIG, RTSO2, FLAND, RTNUCL, COAGFR, PVOL,  &
+                      TMIN, nsn, SOA, seasn, ra, usi, IGF, CONDNU, IGFIJ, tcld3,   &
+                      cld_chm, fctr, frevp, wetflx, ts2, ts4, clts, cls4, dryflx)
+  ! call tmg_stop0 ( 90 )
+
+   call chk_trc(aero_tr, 1, chm_nk+1, IL1, IL2, gn_aerochem, IAE1, IAE2, f_j, 'aft_camV', f_step, 0)
+
+!  surface flux
+   
+   select case (chm_seaflux_s)
+      case ('GONG_MONAHAN')
+         if(local_dbg) then
+            write (chm_lun_out, *) 'Compute sea-salt surface flux by cam scheme: ', chm_seaflux_s
+         end if
+
+!  sea-salt surface flux
+!  nprocess is the counter for various physical processes for the sea salt generation
+!  1. wave breaking; 2. bubble bursting; 3. space holder for fetch correction... not currently implemented
+!  integer, parameter :: nprocess = 3
+         do nn = 1, icom
+            if (aeroname(nn) == 'SEA-SALT') then
+   ! call tmg_start0 ( 91, 'mach_cam_sfss')
+           
+               call mach_cam_sfss(aero_tr, dsig, chm_nk+1, throw, gn_aerochem, nn, &
+                                  aerosize1, surfwd, rsfrow, psfc, glsea, fland,   &
+                                  il1, il2, iae1, .false.)
+  ! call tmg_stop0 ( 91 )
+             end if
+         end do
+      case ('GONG_MONAHAN_F')
+         if(local_dbg) then
+            write (chm_lun_out, *) '> Warning '
+            write (chm_lun_out, *) '> sea-salt flux treated as emission : ', chm_seaflux_s
+         end if
+      case default
+         if(local_dbg) then
+            write (chm_lun_out, *) '> Warning '
+            write (chm_lun_out, *) '> No surface flux scheme for sea-salt selected: ', chm_seaflux_s
+         end if
+   end select
+!
+! Apply top for CAM2 tendencies of nk_start=36 (as for ADOM2 tendencies)
+!
+   do k = 1, chm_nk
+     do i = 1, chm_ni
+!
+! Apply lid for CAM2 tendencies of 10 ppmv specific humidity
+!
+!         hu_vmr(i, k)  = consth * metvar3d(i, k, MV3D_HUPLUS)      ! ppmv
+!         if (  (chm_strato_s == 'NIL') .or. (hu_vmr(i,k) >= hu_linoz ) ) then  ! 10 ppmv
+       if (  (chm_strato_s == 'NIL') .or. (metvar3d(i, k, MV3D_HUPLUS) >= hu_linoz_consth ) ) then  ! 10 ppmv
+!
+         busdyn(sm(sp_SO2  ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_SO2) * kg2ug      !kg/kg -> ug/kg
+         busdyn(sm(sp_SO4  ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_SO4) * kg2ug
+         busdyn(sm(sp_NO   ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_NO)  * kg2ug
+         busdyn(sm(sp_NO2  ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_NO2) * kg2ug
+         busdyn(sm(sp_O3   ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_O3)  * kg2ug
+         busdyn(sm(sp_H2O2 ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_H2O2)* kg2ug
+         busdyn(sm(sp_HNO3 ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_HNO3)* kg2ug
+
+         busdyn(sm(sp_PAN  ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_PAN) * kg2ug
+         busdyn(sm(sp_C3H8 ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_C3H8)* kg2ug
+         busdyn(sm(sp_ALKA ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_ALKA)* kg2ug
+         busdyn(sm(sp_ETHE ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_ETHE)* kg2ug
+         busdyn(sm(sp_ALKE ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_ALKE)* kg2ug
+         busdyn(sm(sp_TOLU ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_TOLU)* kg2ug
+         busdyn(sm(sp_AROM ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_AROM)* kg2ug
+         busdyn(sm(sp_HCHO ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_HCHO)* kg2ug
+         busdyn(sm(sp_ALD2 ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_ALD2)* kg2ug
+         busdyn(sm(sp_MEK  ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_MEK) * kg2ug
+
+         busdyn(sm(sp_MGLY ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_MGLY)* kg2ug
+         busdyn(sm(sp_DIAL ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_DIAL)* kg2ug
+         busdyn(sm(sp_ROOH ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_ROOH)* kg2ug
+         busdyn(sm(sp_CRES ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_CRES)* kg2ug
+         busdyn(sm(sp_HONO ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_HONO)* kg2ug
+         busdyn(sm(sp_RNO3 ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_RNO3)* kg2ug
+         busdyn(sm(sp_ISOP ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_ISOP)* kg2ug
+         busdyn(sm(sp_HO2  ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_HO2) * kg2ug
+         busdyn(sm(sp_RO2  ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_RO2) * kg2ug
+         busdyn(sm(sp_MCO3 ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_MCO3)* kg2ug
+
+         busdyn(sm(sp_CO   ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_CO)  * kg2ug
+         busdyn(sm(sp_NH3  ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_NH3) * kg2ug
+         busdyn(sm(sp_OSD  ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_OSD) * kg2ug
+         busdyn(sm(sp_O    ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_O)   * kg2ug
+         busdyn(sm(sp_NO3  ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_NO3) * kg2ug
+         busdyn(sm(sp_N2O5 ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_N2O5)* kg2ug
+         busdyn(sm(sp_HNO4 ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_HNO4)* kg2ug
+         busdyn(sm(sp_OH   ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_OH)  * kg2ug
+         busdyn(sm(sp_RO2R ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_RO2R)* kg2ug
+
+         busdyn(sm(sp_R2O2 ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_R2O2)* kg2ug
+         busdyn(sm(sp_RO2N ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_RO2N)* kg2ug
+         busdyn(sm(sp_BZO  ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_BZO) * kg2ug
+         busdyn(sm(sp_CRG1 ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_CRG1)* kg2ug
+         busdyn(sm(sp_CRG2 ) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i,k+1,igs_CRG2)* kg2ug
+         do isz = 1, isize
+           busdyn(sm(sp_SU) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i, k+1, iaer_sp(iae_SU, isz)) * kg2ug  !kg/kg -> ug/kg
+           busdyn(sm(sp_SS) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i, k+1, iaer_sp(iae_SS, isz)) * kg2ug
+           busdyn(sm(sp_OC) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i, k+1, iaer_sp(iae_OC, isz)) * kg2ug
+           busdyn(sm(sp_NI) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i, k+1, iaer_sp(iae_NI, isz)) * kg2ug
+           busdyn(sm(sp_AM) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i, k+1, iaer_sp(iae_AM, isz)) * kg2ug
+           busdyn(sm(sp_CM) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i, k+1, iaer_sp(iae_SD, isz)) * kg2ug
+           busdyn(sm(sp_EC) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i, k+1, iaer_sp(iae_EC, isz)) * kg2ug
+           busdyn(sm(sp_PC) % bins_array(isz) % dyn_offset + ik(i, k, chm_ni)) = aero_tr(i, k+1, iaer_sp(iae_PC, isz)) * kg2ug
+         end do
+!
+       end if      !  if (  (chm_strato_s == 'NIL') .or. (hu_vmr(i,k) >= hu_linoz ) ) 
+!
+     end do
+   end do
+
+! Wet deposition diagnostic
+   if (chm_diag_wetdep_L) then
+     busper(sm(sp_HSO3) % wd_offset : sm(sp_HSO3) % wd_offset + chm_ni - 1) = - wetflx(:,1) + &
+                               busper(sm(sp_HSO3) % wd_offset : sm(sp_HSO3) % wd_offset + chm_ni - 1)
+     busper(sm(sp_HPXA) % wd_offset : sm(sp_HPXA) % wd_offset + chm_ni - 1) = - wetflx(:,2) + &
+                               busper(sm(sp_HPXA) % wd_offset : sm(sp_HPXA) % wd_offset + chm_ni - 1)
+     busper(sm(sp_RPXA) % wd_offset : sm(sp_RPXA) % wd_offset + chm_ni - 1) = - wetflx(:,3) + &
+                               busper(sm(sp_RPXA) % wd_offset : sm(sp_RPXA) % wd_offset + chm_ni - 1)
+     busper(sm(sp_WSO4) % wd_offset : sm(sp_WSO4) % wd_offset + chm_ni - 1) = - wetflx(:,4) + &
+                               busper(sm(sp_WSO4) % wd_offset : sm(sp_WSO4) % wd_offset + chm_ni - 1)
+     busper(sm(sp_WNO3) % wd_offset : sm(sp_WNO3) % wd_offset + chm_ni - 1) = - wetflx(:,5) + &
+                               busper(sm(sp_WNO3) % wd_offset : sm(sp_WNO3) % wd_offset + chm_ni - 1)
+     busper(sm(sp_WNH4) % wd_offset : sm(sp_WNH4) % wd_offset + chm_ni - 1) = - wetflx(:,6) + &
+                               busper(sm(sp_WNH4) % wd_offset : sm(sp_WNH4) % wd_offset + chm_ni - 1)
+     busper(sm(sp_CAT)  % wd_offset : sm(sp_CAT)  % wd_offset + chm_ni - 1) = - wetflx(:,7) + &
+                               busper(sm(sp_CAT)  % wd_offset : sm(sp_CAT)  % wd_offset + chm_ni - 1)
+     busper(sm(sp_HCO3) % wd_offset : sm(sp_HCO3) % wd_offset + chm_ni - 1) = - wetflx(:,8) + &
+                               busper(sm(sp_HCO3) % wd_offset : sm(sp_HCO3) % wd_offset + chm_ni - 1)
+     busper(sm(sp_HION) % wd_offset : sm(sp_HION) % wd_offset + chm_ni - 1) = - wetflx(:,9) + &
+                               busper(sm(sp_HION) % wd_offset : sm(sp_HION) % wd_offset + chm_ni - 1)
+     busper(sm(sp_SSLT) % wd_offset : sm(sp_SSLT) % wd_offset + chm_ni - 1) = - wetflx(:,10) + &
+                               busper(sm(sp_SSLT) % wd_offset : sm(sp_SSLT) % wd_offset + chm_ni - 1)
+     busper(sm(sp_OCBN) % wd_offset : sm(sp_OCBN) % wd_offset + chm_ni - 1) = - wetflx(:,11) + &
+                               busper(sm(sp_OCBN) % wd_offset : sm(sp_OCBN) % wd_offset + chm_ni - 1)
+     busper(sm(sp_WH2O) % wd_offset : sm(sp_WH2O) % wd_offset + chm_ni - 1) = - wetflx(:,12) + &
+                               busper(sm(sp_WH2O) % wd_offset : sm(sp_WH2O) % wd_offset + chm_ni - 1)
+     busper(sm(sp_DUST) % wd_offset : sm(sp_DUST) % wd_offset + chm_ni - 1) = - wetflx(:,13) + &
+                               busper(sm(sp_DUST) % wd_offset : sm(sp_DUST) % wd_offset + chm_ni - 1)
+     busper(sm(sp_BLC)  % wd_offset : sm(sp_BLC)  % wd_offset + chm_ni - 1) = - wetflx(:,14) + &
+                               busper(sm(sp_BLC)  % wd_offset : sm(sp_BLC)  % wd_offset + chm_ni - 1)
+     busper(sm(sp_PCBN) % wd_offset : sm(sp_PCBN) % wd_offset + chm_ni - 1) = - wetflx(:,15) + &
+                               busper(sm(sp_PCBN) % wd_offset : sm(sp_PCBN) % wd_offset + chm_ni - 1)
+   endif
+ 
+! Dry deposition diagnostic for aerosols
+   if (chm_diag_drydep_L) then
+      if(sm(sp_SU) % dd_name /=  UNASSIGNED) &
+        busper(sm(sp_SU) % dd_offset : sm(sp_SU) % dd_offset + chm_ni - 1) = & 
+                                 dryflx(:,1) * 1.e3 * rho(:,chm_nk) /  sm(sp_SU) % mol_wt + &
+                                 busper(sm(sp_SU) % dd_offset : sm(sp_SU) % dd_offset + chm_ni - 1)
+      if(sm(sp_SS) % dd_name /=  UNASSIGNED) &
+        busper(sm(sp_SS) % dd_offset : sm(sp_SS) % dd_offset + chm_ni - 1) = & 
+                                 dryflx(:,2) * 1.e3 * rho(:,chm_nk) /  sm(sp_SS) % mol_wt + &
+                                 busper(sm(sp_SS) % dd_offset : sm(sp_SS) % dd_offset + chm_ni - 1)
+      if(sm(sp_OC) % dd_name /=  UNASSIGNED) &
+        busper(sm(sp_OC) % dd_offset : sm(sp_OC) % dd_offset + chm_ni - 1) = & 
+                                 dryflx(:,3) * 1.e3 * rho(:,chm_nk) /  sm(sp_OC) % mol_wt + &
+                                 busper(sm(sp_OC) % dd_offset : sm(sp_OC) % dd_offset + chm_ni - 1)
+      if(sm(sp_NI) % dd_name /=  UNASSIGNED) &
+        busper(sm(sp_NI) % dd_offset : sm(sp_NI) % dd_offset + chm_ni - 1) = & 
+                                 dryflx(:,4) * 1.e3 * rho(:,chm_nk) /  sm(sp_NI) % mol_wt + &
+                                 busper(sm(sp_NI) % dd_offset : sm(sp_NI) % dd_offset + chm_ni - 1)
+      if(sm(sp_AM) % dd_name /=  UNASSIGNED) &
+        busper(sm(sp_AM) % dd_offset : sm(sp_AM) % dd_offset + chm_ni - 1) = & 
+                                 dryflx(:,5) * 1.e3 * rho(:,chm_nk) /  sm(sp_AM) % mol_wt + &
+                                 busper(sm(sp_AM) % dd_offset : sm(sp_AM) % dd_offset + chm_ni - 1)
+      if(sm(sp_CM) % dd_name /=  UNASSIGNED) &
+        busper(sm(sp_CM) % dd_offset : sm(sp_CM) % dd_offset + chm_ni - 1) = & 
+                                 dryflx(:,6) * 1.e3 * rho(:,chm_nk) /  sm(sp_CM) % mol_wt + &
+                                 busper(sm(sp_CM) % dd_offset : sm(sp_CM) % dd_offset + chm_ni - 1)
+      if(sm(sp_EC) % dd_name /=  UNASSIGNED) &
+        busper(sm(sp_EC) % dd_offset : sm(sp_EC) % dd_offset + chm_ni - 1) = & 
+                                 dryflx(:,7) * 1.e3 * rho(:,chm_nk) /  sm(sp_EC) % mol_wt + &
+                                 busper(sm(sp_EC) % dd_offset : sm(sp_EC) % dd_offset + chm_ni - 1)
+      if(sm(sp_PC) % dd_name /=  UNASSIGNED) &
+        busper(sm(sp_PC) % dd_offset : sm(sp_PC) % dd_offset + chm_ni - 1) = & 
+                                 dryflx(:,8) * 1.e3 * rho(:,chm_nk) /  sm(sp_PC) % mol_wt + &
+                                 busper(sm(sp_PC) % dd_offset : sm(sp_PC) % dd_offset + chm_ni - 1)
+   endif
+end subroutine mach_pm_chem

@@ -1,0 +1,602 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_gas_uprate.ftn90
+! Creation       : P. Makar  , GEM-MACH, Feb 2007
+!                  Pudykiewicz / A. Kallaur, CHRONOS , 1997-2000
+! Description    : Gas phase chemical mechanism - version ii
+!                  (including isoprene chemistry), version 4.11.88
+!
+! Extra info     : For CTM see : J. Pudykiewicz et. al. "Semi-Lagrangian Modelling of
+!                  Tropospheric Ozone" Tellus 49B, pp 231-248 1997
+!
+! Arguments:  IN
+!
+!                 znode    -> layer midpoint elevation  (m)
+!                 zpres    -> atmospheric pressuure (mb)
+!                 metvar3d(i, k, MV3D_TPLUS)    -> temperature (deg k)
+!                 sky      -> sky clearness ratio (0. to 1.)
+!                 zen      -> solar zenith angle (deg)
+!                 cno      -> no concentration (ppm)
+!                 nreac    -> number of chemical reactions in the chemical solver
+!                 nprcf    -> number of variable stoichiometric coefficients
+!                 npt      -> number of grid points (passed through argument list of subr. call)
+!                 chm_ni -> number of grid point along X
+!             OUT
+!                 bg     -> ???? to be described
+!          IN/OUT
+!                 rg     -> reaction rate
+!============================================================================
+!
+!!if_on
+subroutine mach_gas_uprate(zmount, zpres, sky, zen, cno, RG, BG, metvar3d, nreac, nprcf, npt)
+   use chm_metvar_mod,       only: SIZE_MV3D
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+!!if_off
+   use chm_metvar_mod,       only: MV3D_TPLUS, MV3D_ZPLUS
+   use chm_utils_mod,        only: ik
+   use chm_nml_mod,          only: nk_start
+   use mach_gas_chemicbi_mod
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: npt
+   integer(kind=4), intent   (in) :: nprcf
+   integer(kind=4), intent   (in) :: nreac
+   real(kind=4),    intent   (in) :: zmount  (chm_ni)
+   real(kind=4),    intent   (in) :: zpres   (npt)
+   real(kind=4),    intent   (in) :: sky     (npt)
+   real(kind=4),    intent   (in) :: zen     (npt)
+   real(kind=4),    intent   (in) :: cno     (npt)
+   real(kind=8),    intent(inout) :: rg      (npt,nreac)
+   real(kind=8),    intent  (out) :: bg      (npt,nprcf)
+   real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+!!if_off
+!
+! Local variables
+!
+   integer(kind=4), parameter     :: nzenth = 12, nzenm1 = nzenth - 1
+   integer(kind=4), parameter     :: nzhite = 4,  nzhim1 = nzhite - 1
+   integer(kind=4)                :: i, j, k, jpt, iz1, kp, jt
+! Values of zenith angles (degrees)
+   real(kind=4), dimension(nzenth) :: zenith = (/ 0.0, 10.0, 20.0, 30.0, 40.0, 50.0, 60.0, 70.0, 78.0, 86.0, 90.0, 180.0 /)
+
+! Elevations for which type 2 data are given (m)
+   real(kind=4), dimension(nzhite) :: zhite = (/ 0.0, 1000.0, 4200.0, 14000.0 /)
+
+! Rate constant data for the version II mechanism
+! a)Type 0 rate constant: constant value (in molecules-cc-sec units)
+   integer(kind=4), parameter :: ntype0 = 29
+   integer(kind=4), dimension(ntype0) :: indx0 = (/ 11, 17, 18, 21, 46, 47, 60, 65, 74, 75, 78, 79,   &
+                                                    82, 83, 92, 93, 94, 95, 96, 97, 98, 99, 102, 104, &
+                                                    105, 106, 108, 111, 112/)
+   integer(kind=4), dimension(ntype0) :: jord0 = (/ 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, &
+                                                    2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, &
+                                                    2, 2, 1, 2, 2/)
+   real(kind=4), dimension(ntype0) :: arat0 = (/ 1.00e-21, 2.20e-10, 2.90e-11, 1.00e-24, 1.00e-15, 3.00e-12, &
+                                         5.30e-12, 1.70e-11, 1.00e-15, 3.00e-12, 1.00e-15, 3.00e-12,         &
+                                         1.00e-15, 3.00e-12, 1.00e-13, 1.00e-13, 2.30e-17, 2.30e-17,         &
+                                         2.50e-14, 2.50e-14, 2.50e-14, 2.50e-14, 3.00e-11, 4.00e-11,         &
+                                         2.20e-11, 1.50e-11, 1.00e-03, 1.80e-11, 3.20e-13/)
+
+! b)Type 1 rate constant: function of temperature
+   integer(kind=4), parameter :: ntype1 = 48
+   real(kind=8), dimension(ntype1) :: arat1 = (/ 6.50d-12, 1.80d-12, 1.20d-13, 1.70d-11, 3.30d-39, 2.50d-14,  &
+                                                 9.40d-15, 1.60d-12, 3.70d-12, 1.30d-12, 1.10d-14, 2.20d-13,  &
+                                                 1.90d-33, 3.10d-34, 3.30d-12, 2.27d-13, 1.90d-33, 3.10d-34,  &
+                                                 4.20d-12, 1.75d-13, 1.60d-11, 2.80d-12, 5.60d-12, 1.40d-12,  &
+                                                 4.20d-12, 1.75d-13, 2.00d+16, 1.20d-11, 3.00d-13, 2.40d-12,  &
+                                                 1.70d-11, 2.19d-11, 4.20d-12, 1.75d-13, 4.20d-12, 1.75d-13,  &
+                                                 4.20d-12, 1.75d-13, 2.15d-12, 1.20d-14, 1.04d-11, 3.70d-12,  &
+                                                 2.10d-12, 1.75d-13, 1.50d-11, 7.00d-15, 4.60d-11, 4.00d-12 /)
+   real(kind=4), dimension(ntype1) :: brat1= (/ 120.0, -1370.0,  -2450.0,   150.0,   529.0, -1229.0,          &
+                                                778.0,  -942.0,    240.0,   380.0,  -502.0,   619.0,          &
+                                                982.0,  2818.0,   -200.0,   771.0,   982.0,  2818.0,          &
+                                                180.0,  1000.0,   -110.0, -2518.0,   311.0, -1867.0,          &
+                                                180.0,  1000.0, -13542.0,  -745.0, -1427.0, -1710.0,          &
+                                              -1232.0,  -709.0,    180.0,  1000.0,   180.0,  1000.0,          &
+                                                180.0,  1000.0,    411.0, -2634.0,  -792.0, -2925.0,          &
+                                                322.0,  1000.0,    500.0, -1900.0,   230.0,   180.0/)
+   integer(kind=4), dimension(ntype1) :: indx1 = (/  3,  5,  6,  7,  8, 12,  24,  26,  27,  31,  32,  33,     &
+                                                     34, 35, 38, 39, 40, 41,  44,  45,  51,  52,  54,  56,    &
+                                                     57, 59, 61, 63, 66, 67,  68,  71,  72,  73,  76,  77,    &
+                                                     80, 81, 84, 85, 86, 87, 100, 107, 109, 110, 113, 114/)
+   integer(kind=4), dimension(ntype1) :: jord1 = (/  2, 2, 2, 2, 3, 2, 2, 2, 2, 2, 2, 2,        &
+                                                     3, 3, 2, 2, 3, 3, 2, 2, 2, 2, 2, 2,        &
+                                                     2, 2, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2,        &
+                                                     2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2/)
+
+! c)Type 2 rate constant: photolysis of no2 and o3 ---> o*sd
+! ---   function of zenith angle and altitude
+   integer(kind=4), parameter         :: ntype2 = 2
+   integer(kind=4), dimension(ntype2) :: indx2 = (/1, 16/)
+   integer(kind=4), dimension(ntype2) :: jord2 = (/1, 1/)
+! Specify type 2 photolytic rates for k1 & k16 at nzhite elevations
+   real(kind=4), dimension(nzenth, nzhite, ntype2) :: ratz2 = reshape( &
+                                       (/ .898e-02, .891e-02, .869e-02, .830e-02, .769e-02, .679e-02,   &
+                                          .548e-02, .360e-02, .178e-02, .381e-03, .100e-09, .100e-09,   &
+                                          .109e-01, .108e-01, .107e-01, .103e-01, .978e-02, .893e-02,   &
+                                          .761e-02, .548e-02, .301e-02, .191e-02, .100e-09, .100e-09,   &
+                                          .127e-01, .127e-01, .126e-01, .123e-01, .118e-01, .111e-01,   &
+                                          .980e-02, .759e-02, .473e-02, .343e-02, .100e-09, .100e-09,   &
+                                          .152e-01, .152e-01, .151e-01, .147e-01, .141e-01, .133e-01,   &
+                                          .117e-01, .912e-02, .568e-02, .419e-02, .100e-09, .100e-09,   &
+                                          .378e-04, .366e-04, .330e-04, .272e-04, .203e-04, .129e-04,   &
+                                          .636e-05, .199e-05, .459e-06, .541e-07, .100e-12, .100e-12,   &
+                                          .561e-04, .539e-04, .497e-04, .416e-04, .316e-04, .207e-04,   &
+                                          .104e-04, .335e-05, .775e-06, .812e-07, .100e-12, .100e-12,   &
+                                          .786e-04, .759e-04, .705e-04, .602e-04, .468e-04, .316e-04,   &
+                                          .168e-04, .584e-05, .125e-05, .108e-06, .100e-12, .100e-12,   &
+                                          .102e-03, .984e-04, .916e-04, .783e-04, .609e-04, .412e-04,   &
+                                          .218e-04, .758e-05, .161e-05, .135e-06, .100e-12, .100e-12/), &
+                                          (/nzenth, nzhite, ntype2/) )
+
+
+! d)Type 4 rate constant: other photolysis reactions; proportional
+! ---   to no2 photolysis rates as a function of zenith angle
+   integer(kind=4), parameter               :: ntype4 = 14
+   integer(kind=4), dimension(ntype4)       :: indx4  = (/ 13, 14, 15, 20, 23, 30, 37, 48, 49, 50, 55, 62, 64, 103/)
+   real(kind=4),  dimension(nzenth, ntype4) :: ratz4 ! This one has to be initialized with data statement, see below
+! e)Type 5 rate constant: temperature and pressure dependent
+   integer(kind=4), parameter               :: ntype5 = 7
+   integer(kind=4), dimension(ntype5)       :: indx5  = (/4, 9, 19, 22, 28, 43, 58/)
+   integer(kind=4), dimension(ntype5)       :: jord5  = (/2, 2, 2, 2, 2, 2, 2/)
+   real(kind=4),    dimension(ntype5)       :: a5     = (/0.60, 0.60, 0.60, 0.60, 0.60, 0.60, 0.19/)
+   real(kind=4),    dimension(ntype5)       :: b5     = (/8.10e-27, 9.86e-20, 1.93e-24, 2.20e-22, 1.52e-23, 4.48e-23, 6.29e-19/)
+   real(kind=4),    dimension(ntype5)       :: c5     = (/-2.0, -4.3, -2.6, -3.2, -3.2, -3.3, -4.1/)
+   real(kind=4),    dimension(ntype5)       :: d5     = (/2.20e-11, 2.60e-11, 2.60e-10, 4.00e-08, 1.38e-08, 1.50e-12, 4.92e-03/)
+   real(kind=4),    dimension(ntype5)       :: e5     = (/0.0, -0.5, -0.5, -1.3, -1.4, 0.0, -3.6/)
+   integer(kind=4), parameter               :: npm1   = 4
+   integer(kind=4), parameter               :: ntm1   = 5
+   real(kind=4),    parameter               :: inv_norm_press = (1 / 1013.25)
+   real(kind=8)                             :: ttmp
+   real(kind=4)                             :: znode(npt)
+   real(kind=4)                             :: a(npt, 3)
+   real(kind=4)                             :: airm(npt), atpres(npt), ee(npt)
+   real(kind=4)                             :: riz1(npt), riz2(npt)
+   real(kind=4)                             :: px(npt),  pf(npt),    tx(npt), tf(npt), t(npt), ti(npt), pt(npt)
+   real(kind=4)                             :: rkif(npt), rkm(npt), rkmok(npt), rk0(npt)
+   real(kind=4)                             :: bt1(npt, ncoeff), bt2(npt, ncoeff)
+
+   integer(kind=4)  :: iza1(npt), iza2(npt), izen1(npt), izen2(npt), kp1(npt), kp2(npt)
+   integer(kind=4)  :: jt1(npt), jt2(npt), isw(npt)
+
+! --- reaction 13: no3 + hv ---> no
+   data (ratz4(i, 1), i = 1, 12)/ &
+      2.08e+00, 2.09e+00, 2.11e+00, 2.14e+00, 2.20e+00, 2.36e+00,      &
+      2.61e+00, 3.08e+00, 3.75e+00, 2.57e+00, 0.00e-01, 0.00e-01/
+
+! --- reaction 14: no3 + hv ---> no2
+   data (ratz4(i, 2), i = 1, 12)/ &
+      1.89e+01, 1.89e+01, 1.91e+01, 1.95e+01, 2.01e+01, 2.13e+01,      &
+      2.34e+01, 2.74e+01, 3.28e+01, 2.37e+01, 0.00e-01, 0.00e-01/
+
+! --- reaction 15: o3 + hv ---> o
+   data (ratz4(i, 3), i = 1, 12)/ &
+      5.19e-02, 5.20e-02, 5.23e-02, 5.26e-02, 5.36e-02, 5.60e-02,      &
+      6.01e-02, 6.90e-02, 8.24e-02, 6.10e-02, 0.00e-01, 0.00e-01/
+
+! --- reaction 20: hono photolysis
+   data (ratz4(i, 4), i = 1, 12)/ &
+      1.81e-01, 1.81e-01, 1.81e-01, 1.80e-01, 1.79e-01, 1.78e-01,      &
+      1.75e-01, 1.70e-01, 1.67e-01, 1.73e-01, 0.00e-01, 0.00e-01/
+
+! --- reaction 23: hno3 photolysis
+   data (ratz4(i, 5), i = 1, 12)/ &
+      6.49e-05, 6.41e-05, 6.08e-05, 5.51e-05, 4.77e-05, 3.85e-05,      &
+      2.82e-05, 1.80e-05, 1.15e-05, 7.30e-06, 0.00e-01, 0.00e-01/
+
+! --- reaction 30: hno4 photolysis
+   data (ratz4(i, 6), i = 1, 12)/ &
+      9.03e-04, 8.95e-04, 8.62e-04, 8.05e-04, 7.27e-04, 6.25e-04,      &
+      5.01e-04, 3.64e-04, 2.68e-04, 1.90e-04, 0.00e-01, 0.00e-01/
+
+! --- reaction 37: h2o2 photolysis
+   data (ratz4(i, 7), i = 1, 12)/ &
+      8.38e-04, 8.33e-04, 8.14e-04, 7.79e-04, 7.30e-04, 6.62e-04,      &
+      5.76e-04, 4.72e-04, 3.97e-04, 3.52e-04, 0.00e-01, 0.00e-01/
+
+! --- reaction 48: rooh photolysis
+   data (ratz4(i, 8), i = 1, 12)/ &
+      8.23e-04, 8.18e-04, 8.00e-04, 7.67e-04, 7.21e-04, 6.57e-04,      &
+      5.75e-04, 4.76e-04, 4.04e-04, 3.64e-04, 0.00e-01, 0.00e-01/
+
+! --- reaction 49: hcho + hv ---> radicals
+   data (ratz4(i, 9), i = 1, 12)/ &
+      3.35e-03, 3.33e-03, 3.23e-03, 3.07e-03, 2.83e-03, 2.51e-03,      &
+      2.10e-03, 1.61e-03, 1.24e-03, 9.25e-04, 0.00e-01, 0.00e-01/
+
+! --- reaction 50: hcho + hv ---> stable
+   data (ratz4(i, 10), i = 1, 12)/ &
+      4.79e-03, 4.77e-03, 4.71e-03, 4.60e-03, 4.42e-03, 4.17e-03,      &
+      3.81e-03, 3.33e-03, 2.96e-03, 2.79e-03, 0.00e-01, 0.00e-01/
+
+! --- reaction 55: ald2 photolysis
+   data (ratz4(i, 11), i = 1, 12)/ &
+      6.61e-04, 6.54e-04, 6.22e-04, 5.68e-04, 4.96e-04, 4.05e-04,      &
+      2.99e-04, 1.90e-04, 1.20e-04, 7.13e-05, 0.00e-01, 0.00e-01/
+
+! --- reaction 62: mek photolysis
+   data (ratz4(i, 12), i = 1, 12)/ &
+      1.76e-04, 1.74e-04, 1.68e-04, 1.56e-04, 1.39e-04, 1.18e-04,      &
+      9.29e-05, 6.55e-05, 4.68e-05, 3.28e-05, 0.00e-01, 0.00e-01/
+
+! --- reaction 64: mgly photolysis
+   data (ratz4(i, 13), i = 1, 12)/ &
+      1.67e-02, 1.67e-02, 1.68e-02, 1.69e-02, 1.73e-02, 1.78e-02,      &
+      1.87e-02, 2.03e-02, 2.21e-02, 1.99e-02, 0.00e-01, 0.00e-01/
+
+! --- reaction 103: dial photolysis
+   data (ratz4(i, 14), i = 1, 12)/ &
+      5.89e-02, 5.87e-02, 5.80e-02, 5.68e-02, 5.49e-02, 5.22e-02,      &
+      4.84e-02, 4.33e-02, 3.96e-02, 3.93e-02, 0.00e-01, 0.00e-01/
+
+
+!!!#  TODO transformer tableau en vrai 2d et eliminer npt et remplacer par (chm_ni, chm_nk)...
+
+  do k = 1,chm_nk 
+    do i = 1, chm_ni
+      t(ik(i, k, chm_ni) + 1) = metvar3d(i, k, MV3D_TPLUS) 
+      znode(ik(i, k, chm_ni) + 1) = metvar3d(i, k, MV3D_ZPLUS) + max(0.0, zmount(i))
+    end do
+  end do
+
+
+   do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+      atpres(jpt) = zpres(jpt) * inv_norm_press
+      ti(jpt) = 1.0 / t(jpt)
+      pt(jpt) = atpres(jpt) * ti(jpt)
+
+!     compute concentration of air in molecules/cc
+
+      airm(jpt) = 7.3387e21 * pt(jpt)
+      a(jpt, 1) = 60.0
+      a(jpt, 2) = 4.40e17  * pt(jpt)
+      a(jpt, 3) = 3.23e33  * (pt(jpt) ** 2)
+   end do
+
+
+!__type 0 rate constants: k =  arat0 (in cc/(molecule-sec)
+!  convert rate constants to ppm-min units
+
+   do i = 1, ntype0
+      j = jord0(i)
+      k = indx0(i)
+
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         rg(jpt, k) = dble(a(jpt, j) * arat0(i))
+      end do
+   end do
+
+   do i = 1, ntype1
+      j = jord1(i)
+      k = indx1(i)
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         rg(jpt, k) = dble(a(jpt, j)) * arat1(i) * dble(exp(brat1(i) * ti(jpt)))
+      end do
+   end do
+
+!------------------------------------------------------------------
+!-----type 2 rate constants
+
+! --- retrieve photolytic rates stored as a function of
+! --- solar zenith angle and elevation.
+!------------------------------------------------------------------------
+
+   do iz1 = 1, nzhim1
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         if(znode(jpt) >= zhite(iz1) .and. znode(jpt) < zhite(iz1 + 1)) then
+            iza1(jpt) = iz1
+            iza2(jpt) = iz1 + 1
+         end if
+      end do
+   end do
+
+!  use top of lookup table as upper cutoff on heights ;
+!  prevent extrapolation (and code errors) above lookup table
+!  top.
+
+   do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+      if(znode(jpt) >= zhite(nzhite)) then
+         iza1(jpt) = nzhite
+         iza2(jpt) = nzhite
+      end if
+      if(znode(jpt) < zhite(1)) then
+! this can occur if surface geopotential is less than reference
+! (either round off or places like dead sea)
+         iza1(jpt) = 1
+         iza2(jpt) = 1
+      end if
+   end do
+
+!------------------------------------------------------------------------
+! --- determine upper and lower bounds of zenith angle
+!       do 100 izen1 = 1, nzenm1
+!-------------------------------------------------------------------------
+
+   do iz1 = 1, nzenm1
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         if(zen(jpt) >= zenith(iz1) .and. zen(jpt) <= zenith(iz1+1)) then
+            izen1(jpt) = iz1
+            izen2(jpt) = iz1 + 1
+         end if
+      end do
+   end do
+
+! --- interpolate absolute rates to zenith angle
+
+   do i = 1, ntype2
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         riz1(jpt) = ratz2(izen1(jpt), iza1(jpt), i) +   &
+                     (ratz2(izen2(jpt), iza1(jpt), i) -  &
+                     ratz2(izen1(jpt), iza1(jpt), i)) *  &
+                     (zen(jpt) - zenith(izen1(jpt))) /   &
+                     (zenith(izen2(jpt)) - zenith(izen1(jpt)))
+
+         riz2(jpt) = ratz2(izen1(jpt), iza2(jpt), i) +   &
+                     (ratz2(izen2(jpt), iza2(jpt), i) -  &
+                     ratz2(izen1(jpt), iza2(jpt), i)) *  &
+                     (zen(jpt) - zenith(izen1(jpt))) /   &
+                     (zenith(izen2(jpt)) - zenith(izen1(jpt)))
+      end do
+      j = jord2(i)
+      k = indx2(i)
+
+! --- interpolate to node elevation & adjust for uv attenuation
+
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+
+         if(znode(jpt) < zhite(nzhite) .and. znode(jpt) >= zhite(1) ) then
+!  height of model gridpoint is less than upper limit in lookup table;
+
+            rg(jpt, k) =  dble(                                                          &
+                          a(jpt, j) * sky(jpt) * (riz1(jpt) + (riz2(jpt) - riz1(jpt)) *  &
+                          (znode(jpt) - zhite(iza1(jpt))) /                              &
+                          (zhite(iza2(jpt)) - zhite(iza1(jpt)))) )
+         else
+!  height of model gridpoint is greater than upper limit in lookup table;
+!  use uppermost lookup table value for all model gridpoint heights greater
+!  than top of lookup table:
+            rg(jpt, k) = dble( a(jpt, j) * sky(jpt) * riz1(jpt) )
+         end if
+      end do
+   end do
+
+!------- type 4 rate constants------------------------------------------
+!
+!       proportional to type2 based on zenith angle
+!       all type 4 are 1st order
+!       all type 4 are proportional to rate for reaction no. 1
+! --- interpolate proportionality factor to the zenith angle
+!-----------------------------------------------------------------------
+
+   do i = 1, ntype4
+      k = indx4(i)
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         rg(jpt, k) = rg(jpt, 1) *  dble(                             &
+                     (ratz4(izen1(jpt), i) +                          &
+                     (ratz4(izen2(jpt), i) - ratz4(izen1(jpt), i)) *  &
+                     (zen(jpt) - zenith(izen1(jpt))) /                &
+                     (zenith(izen2(jpt)) - zenith(izen1(jpt)))) )
+      end do
+   end do
+
+!-----------------------------------------------------------------------
+!-------- type 5 rate constants (temperature & pressure dependent)
+!
+!               b*(t**c)m                       1
+!     type 5 = ----------- a**ee   , ee = -------------------
+!              1+b(t**c)m                           b(t**c)m
+!                --------              1 + ( log10( -------- ) )**2
+!                 d(t**e)                          d(t**e)
+!------------------------------------------------------------------------
+
+   do i = 1, ntype5
+      k = indx5(i)
+      j = jord5(i)
+
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         rk0(jpt) = b5(i) * (t(jpt) ** c5(i))
+      end do
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         rkif(jpt) = d5(i) * (t(jpt) ** e5(i))
+      end do
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         rkm(jpt) = rk0(jpt) * airm(jpt)
+      end do
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         rkmok(jpt) = rkm(jpt) / rkif(jpt)
+      end do
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         ee(jpt) = 1.0 / (1.0 + (alog10(rkmok(jpt))) ** 2)
+      end do
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         rg(jpt, k) = dble(a(jpt, j) * (rkm(jpt) / (1.0 + rkmok(jpt))) *  &
+                     (a5(i)) ** ee(jpt) )
+      end do
+   end do
+
+!------------------------------------------------------------------------
+!
+!------- type 6 (special functions)
+
+   do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+      rg(jpt, 2)  = dble(a(jpt, 3) * 3.0e-28 / (t(jpt) ** 2.3))
+      rg(jpt, 10) = dble(a(jpt, 1)) * rg(jpt, 9) * dble( 9.09e26 *   &
+                    exp(-11200.0 * ti(jpt)) / a(jpt, 2))
+      rg(jpt, 25) = dble(a(jpt, 2) * 1.50e-13 * (1.0 + 0.6 * atpres(jpt)))
+   end do
+
+   do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+      rg(jpt, 29) = dble(a(jpt, 1)) * rg(jpt, 28) * dble( 4.76e26 *  &
+                    exp(-10940.0 * ti(jpt)) / a(jpt, 2))
+
+!      rg(jpt, 36) =  a(jpt, 3)*2.7e-54*airm(jpt)*exp(3137*ti(jpt))
+
+      rg(jpt, 36) = dble(a(jpt, 3) * 1.6432e-27 * airm(jpt) * exp(3137.0 * ti(jpt)))
+      rg(jpt, 36) = rg(jpt, 36) * 1.6432d-27
+      rg(jpt, 42) = rg(jpt, 36)
+   end do
+
+   do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+!  the original formulation for this rate allows for a difference term
+!  severely prone to round-off error.  a revised form will be used
+!  here.  p.a. makar, march 2007
+!         rg(jpt, 53) = dble(a(jpt, 2) * 1.1e-13 * (1.0 - 20.0 /  &
+!                     (20.0 + 4.2e-18 * exp(180.0 / t(jpt)) *  &
+!                      cno(jpt) * airm(jpt))) )
+
+      ttmp = 4.2d-18 * exp( 180.0d0 / dble(t(jpt)) )*dble(cno(jpt)) * dble(airm(jpt))
+      rg(jpt, 53) = dble(a(jpt, 2)) * 1.1d-13 * &
+                    ( ttmp / (20.d0 + ttmp))
+      rg(jpt, 69) = dble(a(jpt, 2) * 1.27e-17 * (t(jpt) ** 2) * exp(14.0 * ti(jpt)))
+   end do
+   do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+
+! --- alka + oh    reaction rate
+      rg(jpt, 70) = dble(a(jpt, 2) * (1.017e-11 * exp(-354.0 * ti(jpt)) * xx +  &
+                     2.312e-11 * exp(-289.0 * ti(jpt)) * xc))
+
+! --- alke + oh    reaction rate
+      rg(jpt, 88) = dble(a(jpt, 2) * (5.323e-12 * exp(504.0 * ti(jpt)) * y +    &
+                     1.074e-11 * exp(549.0 * ti(jpt)) * yc))
+
+! --- alke + o3    reaction rate
+      rg(jpt, 89) = dble(a(jpt, 2) * (1.323e-14 * exp(-2105.0 * ti(jpt)) * y +  &
+                     7.333e-15 * exp(-1137.0 * ti(jpt)) * yc))
+      rg(jpt, 90) = dble(a(jpt, 2) * (1.18e-11 * exp(-324.0 * ti(jpt)) * y +    &
+                     2.26e-11 * exp(10.0 * ti(jpt)) * yc))
+   end do
+
+   do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+
+! --- alke + no3    reaction rate
+      rg(jpt, 91) = dble(a(jpt, 2) * (1.143e-11 * exp(-1935.0 * ti(jpt)) * y +  &
+                     3.23e-11 * exp(-975.0 * ti(jpt)) * yc))
+
+! --- arom + oh    reaction rate
+      rg(jpt, 101) = dble(a(jpt, 2) *  &
+                     (1.407e-11 * exp(116.0 * ti(jpt)) * z + 4.77e-11 * zc))
+   end do
+
+!-------------------------------------------------------------------------
+!
+! --- calculate pressure/temp. dependent alkane coefficients
+! --- prevent extrapolation outside pressure and temperature ranges
+!     px = min(atpres, pres(npres)) and px = max(px, pres(1))
+!     tx = min(t, temp(ntemp)) and tx = max(tx, temp(1))
+!-------------------------------------------------------------------------
+
+   do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+      px(jpt) = max(min(atpres(jpt), pres(npres)), pres(1))
+   end do
+   do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+      tx(jpt) = max(min(t(jpt), temp(ntemp)), temp(1))
+   end do
+
+!-------------------------------------------------------------------------
+! --- find pressure indices
+!-------------------------------------------------------------------------
+
+   isw(1:npt) = 0
+
+   do kp = npm1, 1, -1
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         if (isw(jpt) /= 1) kp1(jpt) = kp
+      end do
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         if (px(jpt) >= pres(kp)) then
+            isw(jpt) = 1
+         else
+            isw(jpt) = 0
+         end if
+      end do
+   end do
+   do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+      kp1(jpt) = max(kp1(jpt), 1)
+   end do
+   do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+      kp2(jpt) = kp1(jpt) + 1
+   end do
+   do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+      pf(jpt) = (px(jpt) - pres(kp1(jpt))) /  &
+               (pres(kp2(jpt)) - pres(kp1(jpt)))
+   end do
+
+!--------------------------------------------------------------------------
+! --- find temperature indices
+!-------------------------------------------------------------------------
+
+   isw(1:npt) = 0
+
+   do jt = ntm1, 1, -1
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         if (isw(jpt) /= 1) jt1(jpt) = jt
+      end do
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         if (tx(jpt) >= temp(jt)) then
+            isw(jpt) = 1
+         else
+            isw(jpt) = 0
+         end if
+      end do
+   end do
+
+   do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+      jt1(jpt) = max(jt1(jpt), 1)
+   end do
+   do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+      jt2(jpt) = jt1(jpt) + 1
+   end do
+   do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+      tf(jpt) = (tx(jpt) - temp(jt1(jpt))) / (temp(jt2(jpt)) - temp(jt1(jpt)))
+   end do
+
+! --- interpolate product coefficient data to desired pressure
+   do i = 1, ncoeff
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         bt1(jpt, i) = balka(i, jt1(jpt), kp1(jpt)) +                     &
+                       pf(jpt) * (balka(i, jt1(jpt), kp2(jpt)) - balka(i, jt1(jpt), kp1(jpt)))
+
+         bt2(jpt, i) = balka(i, jt2(jpt), kp1(jpt)) +                     &
+                       pf(jpt) * (balka(i, jt2(jpt), kp2(jpt)) - balka(i, jt2(jpt), kp1(jpt)))
+      end do
+
+!     interpolate product coefficient data to desired temperature
+      do jpt = (((nk_start - 1) * chm_ni) + 1), npt
+         bg(jpt, i) = dble(bt1(jpt, i) + tf(jpt) * (bt2(jpt, i) - bt1(jpt, i)))
+      end do
+   end do
+!     remaining coefficients (alkenes and aromatics) are constant and
+!     are calculated at the beginning of the simulation in routine
+!     chemi.
+
+   return
+end

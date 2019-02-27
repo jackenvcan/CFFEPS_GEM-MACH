@@ -1,0 +1,184 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_hetv_case9.ftn90
+! Creation       : P. Makar,  V. Bouchet,  A. Nenes,  S. Gravel,  B. Pabla,  S. Menard
+! Description    : Heterogeneous chemistry solver for case9.  Based on algorithm's
+!                  in Nenes et al's ISORROPIA solver, recoded to vectorize over the
+!                  gridpoint dimension.  All input arrays are of length npts (total
+!                  number of gridpoints submitted from the calling code.  The
+!                  subsection of each 1-D array between index ns9 and ne9 (inclusive)
+!                  has been pre-sorted, and contains the gridpoint data that must
+!                  be solved using case 9's algorithm.  Operations within this
+!                  subroutine therefore take place over array bounds from ns9 to ne9.
+!
+!                  Units on input are moles/kg air!
+!
+! Extra info     : Athanasios Nenes, Mail Code 210-41, Dept. of Chemical Engineering,
+!                  California Institute of Technology, Pasadena, Ca., 91125, USA
+!                  nenes@its.caltech.edu
+!
+!                  The conditions for which this case is called are as follows:
+!                        tats >= 2.0, rh <  mdrh_amnit_amsul
+!                  The reactions representing this case are as follows(bracketed numbers
+!                  indicate that the solution is done in stages, as numbered):
+!                     NH4NO3 (s) <=> NH3 + HNO3, kNH4NO3
+!                     TA = 2 (NH4)2SO4 + NH4NO3 + NH3
+!                     TS = (NH4)2SO4
+!                     TN = HNO3 + NH4NO3
+!                  The system of equations to be solved in this case are as follows:
+!                     kNH4NO3 - (NH3)(HNO3) = 0,
+!                     TA - 2 (NH4)2SO4 - NH4NO3 - NH3 = 0,
+!                     TN - HNO3 = 0,
+!                     TS = (NH4)2SO4
+!                  The solution to the system of equations:
+!                     b = - TA + 2 (NH4)2SO4 + TN,
+!                     c = - kNH4NO3,
+!                     NH3 = 0.5*(-b + sqrt(b**2 -4c)),
+!                     HNO3 = - TA + 2 (NH4)2SO4 + TN + NH3
+!                     NH4NO3 = TA - 2 (NH4)2SO4 - NH3
+!
+! Arguments  IN
+!
+!            OUT
+!
+!=============================================================================
+!
+!!if_on
+subroutine mach_hetv_case9 (npts, nr, ns9, ne9, so4, no3, nh4, hno3, nh3, amsul, ambis, amnit, &
+                  leto, t, k0, p1, p2, rho, lwn, ta, ts, tn, tstd, smrt)
+!!if_off
+   implicit none
+!!if_on
+   integer(kind=4), intent (in) :: nr
+   integer(kind=4), intent (in) :: npts
+   integer(kind=4), intent (in) :: ns9
+   integer(kind=4), intent (in) :: ne9
+   real(kind=8),    intent (in) :: tstd
+   real(kind=8),    intent (in) :: smrt
+   real(kind=8),    intent (in) :: k0(nr)
+   real(kind=8),    intent (in) :: p1(nr)
+   real(kind=8),    intent (in) :: p2(nr)
+   real(kind=8),    intent(out) :: so4  (npts)
+   real(kind=8),    intent(out) :: no3  (npts)
+   real(kind=8),    intent(out) :: nh4  (npts)
+   real(kind=8),    intent(out) :: hno3 (npts)
+   real(kind=8),    intent(out) :: nh3  (npts)
+   real(kind=8),    intent(out) :: amsul(npts)
+   real(kind=8),    intent(out) :: ambis(npts)
+   real(kind=8),    intent(out) :: amnit(npts)
+   real(kind=8),    intent(out) :: leto (npts)
+   real(kind=8),    intent (in) :: t    (npts)
+   real(kind=8),    intent (in) :: rho  (npts)
+   real(kind=8),    intent(out) :: lwn  (npts)
+   real(kind=8),    intent (in) :: ta   (npts)
+   real(kind=8),    intent (in) :: ts   (npts)
+   real(kind=8),    intent (in) :: tn   (npts)
+!!if_off
+!
+!  Local variables:
+!
+   integer(kind=4)               :: i
+!  arrays for reaction rates:
+   real(kind=8), dimension(npts) :: kamnit, b, c, v
+   real(kind=8), parameter       :: rg = 8.3144 / 1.01325d+05 ! gas constant, atm->pa
+   external qqexit
+
+!  Array dimensioning check:
+   if (ns9 < 1 .or. ns9 > npts .or. ne9 > npts .or. ne9 < ns9) then
+      write(0, *) '### Error in mach_hetv_case9 ###'
+      write(0, *) '# Error in array bounds in case9'
+      write(0, *) '###         ABORT         ###'
+      call qqexit(1)
+   end if
+
+!  Dry particle, so no water calculation and no iteration required
+!  Calculate rates for Equilibrium constants
+   do i = ns9, ne9
+!  9:  NH4NO3(s) <=> NH3(g_eq) + HNO3(g_eq)
+      kamnit(i) = k0(9) * exp(p1(9) * (tstd / t(i) - 1.0D+00)          &
+                + p2(9) * (1.0d+00 + log(tstd / t(i)) - tstd / t(i)))
+
+!  Original units are atm^2:  Gas is in molal units already; convert rate constant to (kg^3 air)/mole:
+      kamnit(i) = kamnit(i) / ((rg * t(i) * rho(i)) * (rg * t(i) * rho(i)))
+   end do
+
+!   Solve system of equations.
+   do i = ns9, ne9
+      amsul(i) = ts(i)
+      b(i) = -ta(i) + 2.0d0 * amsul(i) + tn(i)
+      c(i) = -kamnit(i)
+   end do
+   do i = ns9, ne9
+      if (b(i) /= 0.0d0) then
+         v(i) = 4.0d0 * (c(i)) / (b(i) * b(i))
+      else
+         v(i) = 1.0d+03
+      end if
+   end do
+   do i = ns9, ne9
+         if (abs(v(i)) <= smrt .and. b(i) > 0.0d0) then
+            nh3(i) = -((((14.0d0 * c(i) / (b(i) * b(i)) + 5.0d0)    &
+                     * c(i) / (b(i) * b(i)) + 2.0d0)                &
+                     * c(i) / (b(i) * b(i)) + 1.0d0)                &
+                     * c(i) / (b(i) * b(i)) + 1.0d0) * c(i) / b(i)
+         else
+            nh3(i) = 0.5d0 * (-b(i) + sqrt(b(i) * b(i) - 4.0d0 * c(i)))
+         end if
+   end do
+
+!  Note:  system of equations ensures mass conservation, but not
+!  monotonicity.  Extra boundary conditions are therefore required on
+!  the value of NH3.  Gas phase NH3 can be no larger than the value which
+!  would zero ammonium nitrate (otherwise, the ammonium nitrate concentration
+!  would be negative).  Values of less than zero for NH3 are possible if
+!  round-off error affects the calculation; this is also corrected.
+   do i = ns9, ne9
+      nh3(i)   = min(nh3(i), ta(i) - 2.0d0 * amsul(i))
+      nh3(i)   = max(nh3(i), 0.0d0)
+      amnit(i) = max(0.0d0, (ta(i) - 2.0d0 * amsul(i) - nh3(i)))
+!  Correction:  P.A. Makar, Nov 2008
+      if(amnit(i) .gt. 0.0D0) then
+        hno3(i) = max(-ta(i) + 2.0D0 * amsul(i) + tn(i) + nh3(i),0.0D0)
+      else
+        hno3(i) = tn(i)
+      end if
+      no3(i)   = 0.0d0
+      so4(i)   = 0.0d0
+      nh4(i)   = 0.0d0
+      ambis(i) = 0.0d0
+      leto(i)  = 0.0d0
+! Initialise water array. Paul forgot to initialise. See his e-mail Jan3/03
+      lwn(i)=0.0D0
+   end do
+
+return
+end

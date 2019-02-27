@@ -1,0 +1,130 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_aurams_cwc_per_bin.ftn90
+! Creation       : S. Menard, W. Gong, S. Gravel, GEM-MACH, July 2008
+! Description    : Compute atmospheric pressure
+!
+! Extra info     :
+!
+! Arguments  IN
+!                zmlwc      -->  CWC content (bulk) (kg/kg)
+!                xrow(igs_CCN) -->  Tracer array (kg/kg) but at index xrow(igs_CCN)=no cloud droplet/m3
+!                rcrit      -->  Critical radius expressed in term of real bin index which is determined
+!                                from aerosol activation ( + un-activated part)
+!                aeronum    -->  Number concentration of aerosols (/kg)
+!                totnum     -->  Accumulated number of aerosol (1/m3) for each grid and from bin i to isize
+!                roarow     -->  Air density (kg/m3)
+!                il1        -->  Minimum index for chm_ni
+!                il2        -->  Maximum index for chm_ni
+!                ntr        -->  Number of tracers
+!                isize      -->  Total number of size bin
+!
+!            OUT
+!                Q_bin      -->  CWC per activated size bin (kg/m3)
+!
+!=============================================================================
+!
+!!if_on
+subroutine mach_aurams_cwc_per_bin (q_bin, zmlwc, xrow, rcrit, aeronum, totnum, roarow, &
+                                    il1, il2, ntr, kount, jlat)
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use mach_cam_utils_mod, only: isize
+!!if_off
+   use chm_utils_mod,      only: chm_lun_out, global_debug
+   use mach_cam_pre_mod,   only: igs_CCN
+   implicit none
+!!if_on
+   integer(kind=4), intent (in) :: ntr
+   integer(kind=4), intent (in) :: il1
+   integer(kind=4), intent (in) :: il2
+   integer(kind=4), intent (in) :: kount
+   integer(kind=4), intent (in) :: jlat
+   real(kind=4),    intent(out) :: q_bin  (chm_ni,chm_nk,isize)
+   real(kind=4),    intent (in) :: zmlwc  (chm_ni,chm_nk,2)
+   real(kind=4),    intent (in) :: xrow   (chm_ni,chm_nk+1,ntr)
+   real(kind=4),    intent (in) :: rcrit  (chm_ni,chm_nk)
+   real(kind=4),    intent (in) :: aeronum(chm_ni,chm_nk,isize)
+   real(kind=4),    intent (in) :: totnum (chm_ni,chm_nk,isize)
+   real(kind=4),    intent (in) :: roarow (chm_ni,chm_nk)
+!!if_off
+!
+! local variables
+!
+   integer(kind=4)   :: isz, i, l
+   real(kind=4)      :: h2o    (chm_ni, chm_nk)
+   integer(kind=4)   :: isize_0(chm_ni, chm_nk)
+   logical(kind=4)   :: local_dbg
+
+   local_dbg = (.false. .or. global_debug)
+
+   h2o = 0.0
+
+!  initialisation of q_bin
+   do isz = 1, isize
+      do l = 1, chm_nk
+         do i = il1, il2
+            q_bin(i, l, isz) = 0.0
+          end do
+      end do
+   end do
+
+!  calculation of q_bin
+   do l = 1, chm_nk
+      do i = il1, il2
+         if ((zmlwc(i, l, 1) + zmlwc(i, l, 2)) > 0.0 .and. xrow(i, l + 1, igs_CCN) <= 0.0) then
+            if(local_dbg) then
+               write(chm_lun_out, *)'cwc_pb ', i, l + 1, xrow(i, l + 1, igs_CCN), (zmlwc(i, l, 1) + zmlwc(i, l, 2)), jlat, kount
+            end if
+         end if
+         if ((zmlwc(i, l, 1) + zmlwc(i, l, 2)) > 0.0 .and. xrow(i, l + 1, igs_CCN) > 0.0) then
+            h2o(i, l) = (zmlwc(i, l, 1) + zmlwc(i, l, 2)) / xrow(i, l + 1, igs_CCN) * roarow(i, l)
+!           isize_0(i, l) = int(rcrit(i, l))
+!
+!   updated according to Wanmin's email Jul22, 2008 (see Mantis842)
+!
+            isize_0(i, l) = min(isize, int(rcrit(i, l)))
+            if(isize_0(i,l) < isize) then
+              do isz = isize, isize_0(i, l), -1
+                q_bin(i, l, isz) = h2o(i, l) * aeronum(i, l, isz) * roarow(i, l)
+              end do
+              q_bin(i, l, isize_0(i, l)) = h2o(i, l) * (xrow(i, l + 1, igs_CCN) - totnum(i, l, isize_0(i, l) + 1))
+            else
+              q_bin(i, l, isize) = h2o(i, l) * xrow(i, l+1, igs_CCN)
+            end if
+         end if
+
+ 10   continue
+      end do
+   end do
+
+   return
+end

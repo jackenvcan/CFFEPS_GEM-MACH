@@ -1,0 +1,396 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_incld_dochem.ftn90
+! Creation       : B. Pabla, W. Gong, S. Menard, S. Gravel, GEM-MACH, June 2008.
+!
+! Description    : This routine solves the chemistry equations. For increased efficiency,
+!                  the slowly-varying species are integrated with larger time steps than
+!                  the rapidly-varying species.  This modified version also has the ability
+!                  to integrate the chemistry analytically, if no cloudwater is present.
+!
+! Extra info     : Based on ADOMIIB,  level: 06/09/89,  ENSR(AES)
+!
+! Arguments:
+!           IN
+!             ng         --> number of integrate gas/part species
+!             naq        --> number of integrate aqueous species
+!             qvec       --> liquid water concentrations of cloudwater, ice/snow, & rainwater in air (gm-w/m**3-air)
+!             tin        --> initial time (seconds)
+!             tout       --> final time (seconds)
+!             idrf       --> = 1 on first call from wetchem for each level
+!                            = 2 on subsequent calls
+!             bvec       -->
+!             pgscavvec  --> Gas/part scavenging (or diffusion)
+!             tempkvec   --> Atmospheric Temperature (Kelvin
+!             tempivec   --> Inverse of tempk (1.0/tempk
+!             rtempvec   --> Rgas * tempk / wden (wden = 1e+6 gm/m3)
+!             raqvec     --> Rate constants for aqueous-phase
+!             psacwvec   --> CW to snow collection rates (gm/m3 s)
+!             rad1vec    --> CW droplet radii (m)
+!             npts       --> Number of column to integrate
+!             n1         --> Memory adress of snow grids only
+!             n2         --> Memory adress of CW+ snow grids
+!             n3         --> Memory adress of CW grids only
+!             nptsnz     --> Total number of grids to integrate
+!
+!           OUT
+!             NSTEP       --> Number of timestep
+!             INDEX       -->  a flag =   0 for successful completion
+!                                      = - 1 for integration failure
+!                                      = -10 for integration taking too many steps
+!           INOUT
+!             Gvec        --> gas/part species concentrations (ppm)
+!             AQvec       --> aqueous species concentrations (molar) in cloudwater & ice/snow
+!=============================================================================
+!
+!!if_on
+subroutine mach_incld_dochem (ng, GVEC, naq, AQVEC, qvec, tin, tout, idrf,          &
+                   NSTEP, IINDEX, bvec, pgscavvec, tempkvec, tempivec, rtempvec,     &
+                   raqvec, psacwvec, rad1vec, npts, n1, n2, n3, nptsnz              )
+   use mach_cam_utils_mod,     only: maxnsg, maxcnz, maxnsaq
+!!if_off
+   use mach_incld_headers_mod, only: mach_incld_fn_dtnew, mach_incld_intsca_il, mach_incld_diffun, mach_incld_steady
+   use mach_incld_mod,         only: dtsrt, dtmax, gmin, aqmin
+   implicit none
+!!if_on
+
+   integer(kind=4), intent   (in)  :: ng, naq, idrf, npts, n1, n2, n3
+   integer(kind=4), intent   (in)  :: nptsnz
+   real(kind=4),    intent   (in)  :: tin, tout
+   integer(kind=4), intent  (out)  :: nstep, iindex
+   real(kind=4),    intent   (in)  :: qvec     (nptsnz, 3)
+   real(kind=4),    intent   (in)  :: bvec     (nptsnz, 5, 2)
+   real(kind=4),    intent   (in)  :: pgscavvec(nptsnz, maxnsg, 2)
+   real(kind=4),    intent   (in)  :: tempkvec (nptsnz)
+   real(kind=4),    intent   (in)  :: tempivec (nptsnz)
+   real(kind=4),    intent   (in)  :: rtempvec (nptsnz)
+   real(kind=4),    intent   (in)  :: raqvec   (nptsnz, 25, 2)
+   real(kind=4),    intent   (in)  :: psacwvec (nptsnz)
+   real(kind=4),    intent   (in)  :: rad1vec  (nptsnz)
+   real(kind=4),   intent (inout)  :: gvec     (nptsnz, maxnsg)
+   real(kind=4),   intent (inout)  :: aqvec    (nptsnz, maxnsaq, 2)
+!!if_off
+!
+!  local variables
+!
+   integer(kind=4) iii
+   integer(kind=4), parameter :: nstmax = 500
+   integer(kind=4)            :: igc, imaxnsg, imaxns2, imaxnsaq, iqcntr, ibcntr1, &
+                                 ibcntr2, ipgcntr1, ipgcntr2, iraqc1, iraqc2
+   integer(kind=4)            :: ndt, imin, i, kiter, k, kk
+   integer(kind=4), parameter :: minus1 = -1, plus1 = 1
+   integer(kind=4), parameter :: ng1 = 3, naq1 = 4, ng2 = 10, naq2 = 7, ng1p1 = 4
+
+   real(kind=4), parameter    :: smf = 1.e-30
+   real(kind=4)               :: t, dtmul, dtbig, dtsm, dtloc, dtsmmx, delt, dtn, &
+                                 dtloc2, dtout, dtn1, dtn2
+
+!  following arrays used in original scalr version has one to one
+!  corresondance with above defined arrays,
+!  note that BAQ is B (see below)
+   real(kind=4)  :: dt, b(5, 2)
+   real(kind=4)  :: pgscav(maxnsg, 2, maxcnz)
+   real(kind=4)  :: tempk(maxcnz), tempi(maxcnz), rtemp(maxcnz),  &
+            raq(25, 2)
+
+   real(kind=4)  :: psacw(maxcnz)
+   real(kind=4)  :: rad1 (maxcnz)
+   real(kind=4)  :: gaz_conc(maxnsg), aq(maxnsaq, 2)
+   real(kind=4)  :: dg(maxnsg), pg(maxnsg), cdg(maxnsg)
+   real(kind=4)  :: daq(maxnsaq, 2), paq(maxnsaq, 2), cdaq(maxnsaq, 2)
+   real(kind=4)  :: q(3)
+   real(kind=4)  :: edt(maxnsaq), xc(maxnsaq)
+
+   external qqexit
+
+!  scalar version of dochem operates at each grid cell at a time for all 25 reactions
+!  vector version operates at (ni*nz i.e 71*28) points at a time
+!  Threfore in order to keep consistency with dta structures, arrays in argument
+!  list are kept like, they were in vector version
+!  dimension value "5" in following arrays stand for number of stoichmetric coefficents
+!                  "25"                     .......  number of reactions
+!
+!  THIS IS THE DRIVER FOR THE CHEMISTRY SOLVER.
+!
+!
+!  k = 1 was set for modified scalar version as level has no meaning here
+   k = 1
+   kk = k
+
+!  scalar version was designed to process each grid separately.
+!  Subset the data from vector version to the format needed by scalar version.
+!  Process the array only from n1(start of L/w) in 1D array of (71*28) to the end.
+
+   do igc = n1, nptsnz
+!  vector gvec(nptsnz, maxnsg)  ; scalar gaz_conc(maxnsg)
+      do imaxnsg = 1, maxnsg
+         gaz_conc(imaxnsg) = gvec(igc, imaxnsg)
+      end do
+!  vector aqvec(nptsnz, maxnsaq, 2) ; scalar aq(maxnsaq, 2)
+      do imaxns2 = 1, 2
+         do imaxnsaq = 1, maxnsaq
+            aq(imaxnsaq, imaxns2) = aqvec(igc, imaxnsaq, imaxns2)
+         end do
+      end do
+!  vector qvec(nptsnz, 3) ; scalar q(3)
+      do iqcntr = 1, 3
+         q(iqcntr) = qvec(igc, iqcntr)
+      end do
+!  vector bvec(nptsnz, 5, 2) ; scalar b(5, 2)
+      do ibcntr1 = 1, 2
+         do ibcntr2 = 1, 5
+            b(ibcntr2, ibcntr1) = bvec(igc, ibcntr2, ibcntr1)
+         end do
+      end do
+!  vector pgscavvec(nptsnz, maxnsg, 2) ; scalar  pgscav(maxnsg, 2, 1)
+      do ipgcntr1 = 1, 2
+         do ipgcntr2 = 1, maxnsg
+            pgscav(ipgcntr2, ipgcntr1, 1) = pgscavvec(igc, ipgcntr2, ipgcntr1)
+         end do
+      end do
+!  vector tempkvec(nptsnz) ; scalar tempk(maxcnz = 1)
+      tempk(1) = tempkvec(igc)
+      tempi(1) = tempivec(igc)
+      rtemp(1) = rtempvec(igc)
+!  vector raqvec(nptsnz, 25, 2) ; scalar raq(25, 2, maxcnz = 1 )
+      do iraqc1 = 1, 2
+         do iraqc2 = 1, 25
+            raq(iraqc2, iraqc1) = raqvec(igc, iraqc2, iraqc1)
+         end do
+      end do
+!  vector psacwvec(nptsnz) ; scalar psacw(maxcnz = 1)
+      psacw(1) = psacwvec(igc)
+!  vector rad1vec(nptsnz) ; scalar rad1(maxcnz = 1)
+      rad1(1) = rad1vec(igc)
+
+!  end of data rearranging
+
+      t = tin
+      nstep = 0
+!  initial ratio of time steps (large time step/small time step)
+      ndt = 5
+      dtmul = 1.
+
+      if (q(1) <= 0.) then
+         ndt = 1
+         dtmul = 5.
+      end if
+
+      dtbig = dtsrt(idrf) * dtmul * real(ndt)
+      dtsm = dtbig / real(ndt)
+      dtbig = min(dtbig, dtmax)
+      dtbig = min(dtbig, tout - tin)
+
+!  start integration
+
+ 20    continue
+
+!  if cloudwater = 0,  integrate aqueous species analytically
+
+      if (q(1) <= 0.) go to 1020
+!
+      nstep = nstep + 1
+!  here nstmax=500
+      if (nstep > nstmax) then
+         iindex = -10
+         return
+      end if
+
+!  integrate short term species
+      dtloc = 0.
+      dtsmmx = dtsm
+25    continue
+      dtsm = min(dtsm, dtbig)
+
+      call mach_incld_intsca_il(KK, PLUS1, NG1, NG, PLUS1, NAQ1, NAQ, NSTEP, MINUS1, IMIN,  &
+               KITER, DTSM, GAZ_CONC, AQ, Q, B, pgscav, tempk, tempi, rtemp,      &
+               raq, psacw, rad1)
+
+!   exit:  integration fails
+       if (imin < 0) then
+         write(0, *) '### Error in mach_incld_dochem ###'
+         write(0, *) '# integration for fast species failed...'
+         write(0, *) '###         ABORT         ###'
+
+         write(0, *) 'SYL gaz_conc'
+         do iii = 1, maxnsg
+            write (0, *) 'gaz_conc(iii), iii ',gaz_conc(iii), iii
+         end do
+
+         write(0, *) 'SYL AQ'
+         do iii = 1, maxnsaq
+            write (0, *) 'aq(iii,1), aq(iii,2), iii ', aq(iii,1), aq(iii,2), iii
+         end do
+
+         write(0, *) 'SYL Q'
+         write (0, *) 'q(1), q(2),q(3) ',q(1), q(2),q(3)
+
+         write (0,*) 'RAD1'
+         do iii = 1, maxcnz
+            write (0,*) 'rad1= ', rad1(iii)
+         end do
+
+         call qqexit(1)
+       end if
+
+!  increment time .....exit if dtbig reached or if nstep = 1
+      dtloc = dtloc + dtsm
+      if (nstep == 1) go to 1300
+      if ((dtloc + 1.e-2 * dtbig) >= dtbig) go to 1300
+      delt = dtbig - dtloc
+
+!  select time step for next step
+      dtn = mach_incld_fn_dtnew(dtsm, kiter)
+      dtsm = min(dtn, dtmax * dtmul, delt)
+      dtsmmx = max(dtsmmx, dtsm)
+      go to 25
+
+!  integrate long-lived species
+1300  continue
+      dt = dtloc
+      dtloc2 = 0.
+1325  continue
+
+      call mach_incld_intsca_il(KK, NG1P1, NG2, NG, NAQ1, NAQ2, NAQ, NSTEP, PLUS1, IMIN,   &
+               KITER, DT, gaz_conc, AQ, Q, B, pgscav, tempk, tempi, rtemp,                 &
+               raq, psacw, rad1)
+
+      dtloc2 = dtloc2 + dt
+!  exit: integration fails
+
+      if (imin < 0) then
+         write(0, *) '### Error in mach_incld_dochem ###'
+         write(0, *) '# integration for slow species failed...'
+         write(0, *) '###         ABORT         ###'
+         call qqexit(1)
+      end if
+
+!  increment time .....exit if tout reached
+      if ((dtloc2 + 1.e-3 * dtloc) >= dtloc) go to 1350
+      dt = dtloc - dtloc2
+      go to 1325
+1350  continue
+      t = t + dtloc
+      if ((t + 1.e-2) >= tout) go to 600
+      dtout = tout - t
+
+!  select time step for next step
+      dtn1 = mach_incld_fn_dtnew(dtloc, kiter)
+      dtn2 = max(dtbig, dtn1)
+      dtbig = min(dtn2, dtmax * dtmul, dtout)
+      dtsm = max(dtsmmx, dtn2 / real(ndt))
+      dtsmmx = dtsm
+!  return to top of integration loop for next time step
+      go to 20
+!  integrate once for only snow present
+1020  continue
+
+      if (q(2) <= 0.) go to 883
+
+      nstep = nstep + 1
+
+      call mach_incld_diffun(KK, NG, gaz_conc, PG, DG, CDG, NAQ, AQ, PAQ, DAQ, CDAQ, Q, PLUS1,   &
+                             b, pgscav, tempk, tempi, rtemp,                                     &
+                             raq, psacw, rad1)
+
+      do i = 1, ng2
+         edt(i) = exp(-dg(i) * dtbig)
+         if ( dg(i) < 1.e-15) then
+            xc(i) = gaz_conc(i) + cdg(i) * dtbig
+         else
+            xc(i) = (pg(i) / (dg(i) + smf)) * ( 1.0 - edt(i)) + gaz_conc(i) * edt(i)
+         endif
+         if ( pg(i) > 1.e-20 .or. gaz_conc(i) > 1.e-18 ) then
+            gaz_conc(i) = xc(i)
+         endif
+      end do
+      do i = 1, naq2
+         edt(i) = exp(-daq(i, 2) * dtbig)
+         if (daq(i, 2)<1.e-15 ) then
+            xc(i) = aq(i, 2) + cdaq(i, 2) * dtbig
+         else
+            xc(i) = (paq(i, 2) / (daq(i, 2) + smf)) * ( 1.0 - edt(i)) + aq(i, 2) * edt(i)
+         endif
+         if ( paq(i, 2) > 1.e-20 .or. aq(i, 2) > 1.e-18 ) then
+            aq(i, 2) = xc(i)
+         endif
+      end do
+!  steady state solution for hco3-
+      aq(8, 2) = paq(8, 2) / daq(8, 2)
+      call mach_incld_steady(aq(:, 2), b(:, 2))
+883   continue
+
+!  check for negative concentrations
+      do i = 1,ng
+         gaz_conc(i) = max(gaz_conc(i), gmin)
+      end do
+
+      if (q(2) > 0.) then
+         do i = 1, naq
+            aq(i, 2) = max(aq(i, 2), aqmin)
+         end do
+      end if
+
+      t = t + dtbig
+!  exit out of main 20 LOOp
+      if ((t + 1.e-2) >= tout) go to 600
+      dtout = tout - t
+
+!  select time step for next step
+      dtbig = 10. * dtbig
+      dtn = dtbig
+      dtbig = min(dtn, dtmax * dtmul * real(ndt), dtout)
+
+! --- return to top of integration loop for next step
+      go to 20
+600   continue
+
+!  pass back the output arrays.
+!  now rearrange the output data from scalr format to vector format
+      do imaxnsg = 1, maxnsg
+         gvec(igc, imaxnsg) = gaz_conc(imaxnsg)
+      end do
+      do imaxns2 = 1, 2
+         do imaxnsaq = 1, maxnsaq
+            aqvec(igc, imaxnsaq, imaxns2) = aq(imaxnsaq, imaxns2)
+         end do
+      end do
+
+   end do
+!  end of grid cell loop (main loop)
+
+return
+
+!  integration fails
+   iindex = -1
+return
+end

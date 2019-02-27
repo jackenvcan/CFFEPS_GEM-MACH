@@ -1,0 +1,405 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_hetv_hetvcall.ftn90
+! Creation       : V. Bouchet, P. Makar, S. Menard, S. Gravel, B. Pabla
+! Description    : Interface between AURAMS and hetv
+!                  Hetv solves the heterogeneous system for NH4-NO3-SO4, vectorizing
+!                  over the gridpoint dimension and utilizing the systems of
+!                  equations set out in Nenes and Pandis 1998 ISORROPIA code.
+! Extra info     :
+!
+! Arguments  IN
+!
+!            OUT
+!
+!=============================================================================
+!
+!!if_on
+subroutine mach_hetv_hetvcall (npts, maxhet, maxghet, nsize, ghetf, hetf, tempk, rhrow, jlat, kount1, rhorow)
+!!if_off
+   use mach_hetv_headers_mod, only: mach_hetv_main, mach_hetv_main_single
+   use chm_nml_mod,           only: chm_hetchem_metstlb_l, chm_hetv_single_l
+
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: nsize
+   integer(kind=4), intent   (in) :: maxghet
+   integer(kind=4), intent   (in) :: maxhet
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: jlat
+   integer(kind=4), intent   (in) :: kount1
+   real(kind=4),    intent   (in) :: tempk (npts)
+   real(kind=4),    intent   (in) :: rhrow (npts)
+   real(kind=4),    intent   (in) :: rhorow(npts)
+   real(kind=4),    intent(inout) :: ghetf (npts,maxghet)
+   real(kind=4),    intent(inout) :: hetf  (npts,maxhet,nsize)
+!!if_off
+!
+! Local variables
+!
+   integer(kind=4)              :: i, l, n, k, ierr
+   integer(kind=4)              :: kount
+   integer(kind=4), parameter   :: isosp = 22
+   real(kind=4)                 :: watout(npts)
+   real(kind=4), dimension(19)  :: atomic_weight = (/&
+!           SO4      NO3     NH4     Na      Cl     H2SO4    HNO3
+      96.0636, 62.0049, 18.0385, 22.9898, 35.4527, 98.0795, 63.0128, &
+!          NH3     Na2SO4    NaNO3   (NH4)2SO4   NH4NO3     NH4Cl
+      17.03056, 142.004, 84.9947, 132.1406,  80.04344, 53.4912,      &
+!          NH4HSO4    NaHSO4  (NH4)3H(SO4)2    HSO4      HCl
+      115.1104,  120.0613,  247.2506,    97.0715,  36.4606,          &
+!          NaCl
+      58.4425/)
+   real(kind=8)                         :: notincl = 0.0d0
+!  hetv specific declaration
+!  error control:
+!     max inner iteration (conc.)
+!     max outer iter. (activities)
+   integer, parameter                    :: iter = 100, itero = 4, ndiv = 5
+!  integer, parameter  :: iter=200, itero=20, ndiv=30 ! high accuracy
+!  allowing 1d-12 error in outer bisection iterat.
+!  allowing 1d-02 error in act. coef. iterat.
+   real(kind=8), parameter               :: eps = 1.0d-09, eps2 = 1.0d-04
+!     real(kind=8), parameter :: eps=1.0d-13, eps2=1.0d-06 ! high accuracy
+   real(kind=8), parameter               :: lwmin = 1.0d-20, tstd = 298.15d0, smrt = 1.0d-05, small = 1.0d-30
+   real(kind=4), dimension(npts, maxhet) :: massb, orgmass, gasin, gasout, solin, solout
+   real(kind=4), dimension(npts)         :: ratio
+   real(kind=4), dimension(isosp, npts)  :: outp
+!  Makar:  test:
+   real(kind=4), dimension(isosp, npts)  :: inp
+   real(kind=4), dimension(npts)         :: case_number
+   real(kind=8), dimension(npts)         :: so4_i, no3_i, nh4_i, hso4_i, amsul_i,    &
+                                            ambis_i, amnit_i, leto_i, hno3_i, nh3_i, &
+                                            h_i, t_i, rh_i, rho_i, lwn_i
+   external qqexit
+
+   watout = 0.0
+
+!  convert to hetv input (in moles/kg of air from kg/kg of air)
+!  (pressure expected in atm, convert from mb)
+
+   so4_i(1:npts)   = 0.0d0
+   no3_i(1:npts)   = 0.0d0
+   nh4_i(1:npts)   = 0.0d0
+   hso4_i(1:npts)  = 0.0d0
+   amsul_i(1:npts) = 0.0d0
+   ambis_i(1:npts) = 0.0d0
+   amnit_i(1:npts) = 0.0d0
+   leto_i(1:npts)  = 0.0d0
+   hno3_i(1:npts)  = 0.0d0
+   nh3_i(1:npts)   = 0.0d0
+   h_i(1:npts)     = 0.0d0
+   lwn_i(1:npts)   = 0.0d0
+
+   do l = 1, npts
+      rho_i(l)   = dble(rhorow(l))
+   end do
+
+!  SO4
+   do n = 1, nsize
+      do i = 1, npts
+         so4_i(i) = so4_i(i) + dble(hetf(i, 1, n) / atomic_weight(1))
+      end do
+   end do
+   do i = 1, npts
+      so4_i(i) = so4_i(i) + dble(ghetf(i, 1) / atomic_weight(6))
+      so4_i(i) = so4_i(i) * 1.0d3
+   end do
+
+!  NO3 & HNO3
+   do n = 1, nsize
+      do i = 1, npts
+         no3_i(i) = no3_i(i) + dble(hetf(i, 2, n) / atomic_weight(2))
+      end do
+   end do
+   do i = 1, npts
+      hno3_i(i) = hno3_i(i) + dble(ghetf(i, 2) / atomic_weight(7))
+      hno3_i(i) = hno3_i(i) * 1.0d3
+      no3_i(i)  = no3_i(i)  * 1.0d3
+   end do
+
+!  NH4 & NH3
+   do n = 1, nsize
+      do i = 1, npts
+         nh4_i(i) = nh4_i(i) + dble(hetf(i, 3, n) / atomic_weight(3))
+      end do
+   end do
+   do i = 1, npts
+      nh3_i(i) = nh3_i(i) + dble(ghetf(i, 3) / atomic_weight(8))
+      nh3_i(i) = nh3_i(i) * 1.0d3
+      nh4_i(i) = nh4_i(i) * 1.0d3
+   end do
+
+   do i = 1, npts
+         ratio(i) = real((nh3_i(i) + nh4_i(i)) / so4_i(i))
+   end do
+
+!  Na & Cl (not included in hetv yet - May 2002)
+!  temp(K), rh (relative humidity on a 0 to 1 scale)
+
+   do i = 1, npts
+      t_i(i)  = dble(tempk(i))
+      rh_i(i) = dble(rhrow(i))
+   end do
+
+   kount = kount1
+!  Makar, test:  save input values for later checking:
+   do i = 1, npts
+      inp(1, i)  = real(lwn_i(i))                          !h2o(kg water/kg air)  !!!watchout here lwn_i is undefined
+      inp(2, i)  = real(h_i(i)               * 1.0d-3)     !h+(aq)
+      inp(3, i)  = real(notincl    * atomic_weight(4)  * 1.0d-3)     !na+(aq)
+      inp(4, i)  = real(nh4_i(i)   * atomic_weight(3)  * 1.0d-3)     !nh4+(aq)
+      inp(5, i)  = real(notincl    * atomic_weight(5)  * 1.0d-3)     !cl-(aq)
+      inp(6, i)  = real(so4_i(i)   * atomic_weight(1)  * 1.0d-3)     !so4(aq)
+      inp(7, i)  = real(hso4_i(i)  * atomic_weight(17) * 1.0d-3)     !hso4(aq)
+      inp(8, i)  = real(no3_i(i)   * atomic_weight(2)  * 1.0d-3)     !no3(aq)
+      inp(9, i)  = real(notincl    * atomic_weight(19) * 1.0d-3)     !nacl(s)
+      inp(10, i) = real(notincl    * atomic_weight(9)  * 1.0d-3)     !na2so4(s)
+      inp(11, i) = real(notincl    * atomic_weight(10) * 1.0d-3)     !nano3(s)
+      inp(12, i) = real(amsul_i(i) * atomic_weight(11) * 1.0d-3)     !(nh4)2so4(s)
+      inp(13, i) = real(amnit_i(i) * atomic_weight(12) * 1.0d-3)     !nh4no3(s)
+      inp(14, i) = real(notincl    * atomic_weight(13) * 1.0d-3)     !nh4cl(s)
+      inp(15, i) = real(0.0d0)                             !h2so4(aq)
+      inp(16, i) = real(ambis_i(i) * atomic_weight(14) * 1.0d-3)     !nh4hso4(s)
+      inp(17, i) = real(notincl    * atomic_weight(15) * 1.0d-3)     !nahso4(s)
+      inp(18, i) = real(leto_i(i)  * atomic_weight(16) * 1.0d-3)     !(nh4)3h(so4)2(s)
+      inp(19, i) = real(nh3_i(i)   * atomic_weight(8)  * 1.0d-3)     !nh3(g)
+      inp(20, i) = real(hno3_i(i)  * atomic_weight(7)  * 1.0d-3)     !hno3(g)
+      inp(21, i) = real(0.0d0)                             !h2so4(g)
+      inp(22, i) = real(notincl    * atomic_weight(18) * 1.0d-3)     !hcl(g)
+   end do
+
+!    Because we need to control the number of iteration for each point, we can't process the whole slab at the same time
+!    See mantis #3456 for more details https://ulysse.cmc.ec.gc.ca/mantis/view.php?id=3456
+   if (chm_hetchem_metstlb_l .and. chm_hetv_single_l) then
+     do i=1,npts
+       call mach_hetv_main_single(so4_i(i), no3_i(i), nh4_i(i), hso4_i(i), hno3_i(i), h_i(i),                       &
+                                  nh3_i(i), amsul_i(i), ambis_i(i), amnit_i(i), leto_i(i), t_i(i), rh_i(i), &
+                                  eps, eps2, iter, itero, rho_i(i), lwn_i(i), ndiv, lwmin,                          &
+                                  tstd, small, smrt, case_number(i))
+     end do
+   else
+     do i=1,npts
+        call mach_hetv_main(1, so4_i(i:i), no3_i(i:i), nh4_i(i:i), hso4_i(i:i), hno3_i(i:i), h_i(i:i),                        &
+                            nh3_i(i:i), amsul_i(i:i), ambis_i(i:i), amnit_i(i:i), leto_i(i:i), t_i(i:i), rh_i(i:i), &
+                            eps, eps2, iter, itero, rho_i(i:i), lwn_i(i:i), ndiv, lwmin,                                      &
+                            tstd, small, smrt, case_number(i:i))
+     end do
+   end if
+!  convert outputs
+   do i = 1, npts
+      outp(1, i)  = real(lwn_i(i))                                    !h2o(kg water/kg air)
+      outp(2, i)  = real(h_i(i)     * 1.0d-3)                         !h+(aq)
+      outp(3, i)  = real(notincl    * atomic_weight(4)  * 1.0d-3)     !na+(aq)
+      outp(4, i)  = real(nh4_i(i)   * atomic_weight(3)  * 1.0d-3)     !nh4+(aq)
+      outp(5, i)  = real(notincl    * atomic_weight(5)  * 1.0d-3)     !cl-(aq)
+      outp(6, i)  = real(so4_i(i)   * atomic_weight(1)  * 1.0d-3)     !so4(aq)
+      outp(7, i)  = real(hso4_i(i)  * atomic_weight(17) * 1.0d-3)     !hso4(aq)
+      outp(8, i)  = real(no3_i(i)   * atomic_weight(2)  * 1.0d-3)     !no3(aq)
+      outp(9, i)  = real(notincl    * atomic_weight(19) * 1.0d-3)     !nacl(s)
+      outp(10, i) = real(notincl    * atomic_weight(9)  * 1.0d-3)     !na2so4(s)
+      outp(11, i) = real(notincl    * atomic_weight(10) * 1.0d-3)     !nano3(s)
+      outp(12, i) = real(amsul_i(i) * atomic_weight(11) * 1.0d-3)     !(nh4)2so4(s)
+      outp(13, i) = real(amnit_i(i) * atomic_weight(12) * 1.0d-3)     !nh4no3(s)
+      outp(14, i) = real(notincl    * atomic_weight(13) * 1.0d-3)     !nh4cl(s)
+      outp(15, i) = 0.0                                               !h2so4(aq)
+      outp(16, i) = real(ambis_i(i) * atomic_weight(14) * 1.0d-3)     !nh4hso4(s)
+      outp(17, i) = real(notincl    * atomic_weight(15) * 1.0d-3)     !nahso4(s)
+      outp(18, i) = real(leto_i(i)  * atomic_weight(16) * 1.0d-3)     !(nh4)3h(so4)2(s)
+      outp(19, i) = real(nh3_i(i)   * atomic_weight(8)  * 1.0d-3)     !nh3(g)
+      outp(20, i) = real(hno3_i(i)  * atomic_weight(7)  * 1.0d-3)     !hno3(g)
+      outp(21, i) = 0.0                                               !h2so4(g)
+      outp(22, i) = real(notincl    * atomic_weight(18) * 1.0d-3)     !hcl(g)
+   end do
+
+  
+   do l = 1, 22
+      do i = 1, npts
+         if (outp(l, i) < 0.0) then
+            write(0, *) '### Error in mach_hetv_hetvcall ###'
+            write(0, *) '### Stopping after hetv with negative output detected'
+            write(0, *) '# Relative humidity and temperature: ',rh_i(i),t_i(i)
+            write(0, *) '# kount jlat i species_number value:',kount, jlat, i, l, outp(l, i)
+            write(0, *) '# Density:              '            , rho_i(i)
+            write(0, *) '###    Error in case subroutine number : ',case_number(i)
+            write(0, *) '# input and output lwn: '             , inp(1,i),outp(1,i)
+            write(0, *) '# input and output H+: '              , inp(2,i),outp(2,i)
+            write(0, *) '# input and output Na+: '             , inp(3,i),outp(3,i)
+            write(0, *) '# input and output NH4+: '            , inp(4,i),outp(4,i)
+            write(0, *) '# input and output Cl-: '             , inp(5,i),outp(5,i)
+            write(0, *) '# input and output SO4-: '            , inp(6,i),outp(6,i)
+            write(0, *) '# input and output HSO4-: '           , inp(7,i),outp(7,i)
+            write(0, *) '# input and output NO3-: '            , inp(8,i),outp(8,i)
+            write(0, *) '# input and output NaCl(s): '         , inp(9,i),outp(9,i)
+            write(0, *) '# input and output Na2SO4(s): '       , inp(10,i),outp(10,i)
+            write(0, *) '# input and output NaNO3(s): '        , inp(11,i),outp(11,i)
+            write(0, *) '# input and output (NH4)2SO4(s): '    , inp(12,i),outp(12,i)
+            write(0, *) '# input and output NH4NO3(s): '       , inp(13,i),outp(13,i)
+            write(0, *) '# input and output NH4Cl(s): '        , inp(14,i),outp(14,i)
+            write(0, *) '# input and output H2SO4(aq): '       , inp(15,i),outp(15,i)
+            write(0, *) '# input and output NH4HSO4(s): '      , inp(16,i),outp(16,i)
+            write(0, *) '# input and output NaHSO4(s): '       , inp(17,i),outp(17,i)
+            write(0, *) '# input and output (NH4)3H(SO4)2(s): ', inp(18,i),outp(18,i)
+            write(0, *) '# input and output NH3(g): '          , inp(19,i),outp(19,i)
+            write(0, *) '# input and output HNO3(g): '         , inp(20,i),outp(20,i)
+            write(0, *) '# input and output H2SO4(g): '        , inp(21,i),outp(21,i)
+            write(0, *) '# input and output HCl(g): '          , inp(22,i),outp(22,i)
+            write(0, *) '###         ABORT         ###'
+            call qqexit(1)
+         end if
+      end do
+   end do
+
+!  calculate some diagnostics
+   do l = 1, maxhet
+      do i = 1, npts
+         solin(i, l) = 0.0
+      end do
+   end do
+
+   do l = 1, maxhet
+      do n = 1, nsize
+         do i = 1, npts
+            solin(i, l) = solin(i, l) + hetf(i, l, n)
+         end do
+      end do
+   end do
+
+   do i = 1, npts
+      solin(i, 4) = 0.3061 * solin(i, 4)   !na only
+   end do
+
+   do l = 1, maxghet
+      do i = 1, npts
+         gasin(i, l) = ghetf(i, l)
+      end do
+   end do
+
+   do i = 1, npts
+      gasin(i, 4) = 0.0
+   end do
+
+   do i = 1, npts
+      solout(i, 1) = outp(6, i) + atomic_weight(1) * (outp(7, i) / atomic_weight(17) +       &
+                     outp(10, i) / atomic_weight(9) + outp(12, i) / atomic_weight(11) +      &
+                     outp(16, i) / atomic_weight(14) + outp(17, i) * atomic_weight(15) +     &
+                  2 * outp(18, i) / atomic_weight(16))
+      solout(i, 2) = outp(8, i) + atomic_weight(2) * (outp(11, i) / atomic_weight(10) +      &
+                     outp(13, i) / atomic_weight(12))
+      solout(i, 3) = outp(4, i) + atomic_weight(3) * (2 * outp(12, i) / atomic_weight(11) +  &
+                     outp(13, i) / atomic_weight(12) + outp(14, i) / atomic_weight(13) +     &
+                     outp(16, i) / atomic_weight(14) + 3 * outp(18, i) / atomic_weight(16))
+      solout(i, 4) = outp(3, i) + atomic_weight(4) * (outp(9, i) / atomic_weight(19) +       &
+                     2 * outp(10, i) / atomic_weight(9) + outp(11, i) / atomic_weight(10) +  &
+                     outp(17, i) / atomic_weight(15))
+
+      gasout(i, 1) = outp(21, i)
+      gasout(i, 2) = outp(20, i)
+      gasout(i, 3) = outp(19, i)
+      gasout(i, 4) = outp(22, i)
+   end do
+
+!  quick fix: put everything in the first bin for particle for now
+!  set a min other than zero for mass balance purpose
+
+   do i = 1, npts
+      do l = 1, maxhet - 1
+
+!  Change:  P.A. Makar, Sept 2003:  use the same lower number limit
+!  for the output values as the input values; if its less than
+!  1E-24 for all, treat the counters as if "no change has occurred"
+
+         if ((solout(i, l) <= 1.0e-24 .and. gasout(i, l) <= 1.e-24 ) .and.  &
+            (solin(i, l) <= 1.0e-24 .and. gasin(i, l) <= 1.0e-24)) then
+            solout(i, l) = solin(i, l)
+            gasout(i, l) = gasin(i, l)
+         end if
+            hetf(i, l, 1) = solout(i, l)
+            ghetf(i, l) = gasout(i, l)
+      end do
+   end do
+
+! export water output to ug water/kg air (from kg water/kg air)
+   do i = 1, npts
+      watout(i) = outp(1, i) * 1.0e9
+   end do
+
+   do i = 1, npts
+      do l = 1, 3
+         massb(i, l)   = (gasin(i, l) - gasout(i, l)) / atomic_weight(l + 5) + (solin(i, l) - solout(i, l)) / atomic_weight(l)
+         orgmass(i, l) = gasin(i, l) / atomic_weight(l + 5) + solin(i, l) / atomic_weight(l)
+         orgmass(i, l) = orgmass(i, l) * 1.0e-3
+      end do
+   end do
+
+   do i = 1, npts
+      do l = 1, 3
+         if (massb(i, l) > orgmass(i, l) .or. massb(i, l) < -1.0 * orgmass(i, l)) then
+            write(0, *) '### Error in mach_hetv_hetvcall ###'
+            write(0, *) '# mass balance pb ', i, l, kount, jlat
+            write(0, *) '#', gasin(i, l), gasout(i, l), atomic_weight(l + 5)
+            write(0, *) '#', solin(i, l), solout(i, l), atomic_weight(l), orgmass(i, l)
+            write(0, *) '# verooutp ', (outp(n, i), n = 1, isosp)
+            write(0, *) '###         ABORT         ###'
+            write(0, *) '# Relative humidity and temperature: ',rh_i(i),t_i(i)
+            write(0, *) '# kount jlat i species_number value:',kount, jlat, i, l, outp(l, i)
+            write(0, *) '# Density:               '            , rho_i(i)
+            write(0, *) '###    Error in case subroutine number : ',case_number(i)
+            write(0, *) '# input and output lwn: '             , inp(1,i),outp(1,i)
+            write(0, *) '# input and output H+: '              , inp(2,i),outp(2,i)
+            write(0, *) '# input and output Na+: '             , inp(3,i),outp(3,i)
+            write(0, *) '# input and output NH4+: '            , inp(4,i),outp(4,i)
+            write(0, *) '# input and output Cl-: '             , inp(5,i),outp(5,i)
+            write(0, *) '# input and output SO4-: '            , inp(6,i),outp(6,i)
+            write(0, *) '# input and output HSO4-: '           , inp(7,i),outp(7,i)
+            write(0, *) '# input and output NO3-: '            , inp(8,i),outp(8,i)
+            write(0, *) '# input and output NaCl(s): '         , inp(9,i),outp(9,i)
+            write(0, *) '# input and output Na2SO4(s): '       , inp(10,i),outp(10,i)
+            write(0, *) '# input and output NaNO3(s): '        , inp(11,i),outp(11,i)
+            write(0, *) '# input and output (NH4)2SO4(s): '    , inp(12,i),outp(12,i)
+            write(0, *) '# input and output NH4NO3(s): '       , inp(13,i),outp(13,i)
+            write(0, *) '# input and output NH4Cl(s): '        , inp(14,i),outp(14,i)
+            write(0, *) '# input and output H2SO4(aq): '       , inp(15,i),outp(15,i)
+            write(0, *) '# input and output NH4HSO4(s): '      , inp(16,i),outp(16,i)
+            write(0, *) '# input and output NaHSO4(s): '       , inp(17,i),outp(17,i)
+            write(0, *) '# input and output (NH4)3H(SO4)2(s): ', inp(18,i),outp(18,i)
+            write(0, *) '# input and output NH3(g): '          , inp(19,i),outp(19,i)
+            write(0, *) '# input and output HNO3(g): '         , inp(20,i),outp(20,i)
+            write(0, *) '# input and output H2SO4(g): '        , inp(21,i),outp(21,i)
+            write(0, *) '# input and output HCl(g): '          , inp(22,i),outp(22,i)
+            call qqexit(1)
+         end if
+      end do
+   end do
+
+   return
+end

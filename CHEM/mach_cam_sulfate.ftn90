@@ -1,0 +1,584 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_cam_sulfate.ftn90
+! Creation       : S. Gong, B. Pabla and S. Gravel for GEM-MACH, June 2008
+! Description    : Sulfate aerosol formation routine
+!                  (1) Calculate oh concentration
+!                  (2) Oxidation of SO2 by OH
+!                  (3) Nucleation, i.e. generation of new sulphate aerosols
+! Extra info     : - First version created by S. Gong Aug 14 1996 for CAM
+!                  - Vectorization and add chemistry chemical fields of OH, H2O2, O3 and
+!                    NO3 from ncar images model are used [daily averaged] (S. Gong, May 26, 1997)
+!                  - Combine nucleation and condensation rates into one differential
+!                    equation and solved analytically. ((S. Gong, jun 4, 1998)
+!                  - New nucleation scheme of Kulmala, [1998] K, Von Salzen, was
+!                    introduced into the combined analytical equation. (S. Gong, Dec 15, 1998)
+!                  - Combine h2so4 production, condensation and nucleation into
+!                    an approximate solution with a new statement function. (S. Gong, May 09, 2000)
+!                  - Adde double precision for some variables and implemented veronique changes... (B. Pabla)
+!
+! Arguments:  IN
+!                lev     -> chm_nk + 1
+!                il1     -> minimum index for chm_ni
+!                il2     -> maximum index for chm_ni
+!                aeronum -> Number-Concentration of Aerosol
+!                ntr     -> total number of trace substances (gases and aerosols)
+!                roarow  -> Air density (kg/m3)
+!                pressg  -> Grid row of surface pressure [Pa]
+!                t       -> temperature
+!                rh      -> Relative humidity
+!                shj     -> Local mid-layer sigma value
+!                ohrow   -> oh concentration
+!                no3row  -> no3 concentration
+!                nn      -> loop index for tracers
+!                rhsize  -> Wet radius
+!                aerosize-> aerosol bin boundaries; depends upon number of bin
+!                delt    -> time step
+!                rtso2   -> so2 oxidation rate
+!                cldcv   -> cloud fraction
+!                pvol    -> Bin volume of dry aerosol
+!                tmin    -> minimum threshold value
+!                cam     -> Identifier for CAM using with gas chemistry of online/offline (1.0/10.0)
+!                mae     -> 0
+!                condnu  -> condensation
+!
+!             OUT
+!
+!                RGRID   -> Initial concentration of tracers in each bin
+!                RTNUCL  -> Nucleation
+!                RTCOND  -> Mass transfer rate onto each particle size bi
+!                PCOND   -> fractional condensation to each bin
+!
+!             IN/OUT
+!
+!                XROW    -> tracers concentration
+!
+!============================================================================
+!
+!!if_on
+subroutine mach_cam_sulfate (lev, il1, il2, RGRID,                           &
+                             aeronum, XROW, ntr, nbnd, roarow, pressg, t, rh, shj, &
+                             ohrow, no3row, nn, rhsize, aerosize,            &
+                             delt, RTNUCL, RTCOND, rtso2,             &
+                             cldcv, pvol, tmin, PCOND, mae, condnu)
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   use mach_cam_utils_mod,   only: isize
+!!if_off
+   use chm_utils_mod,        only: global_debug
+   use chm_consphychm_mod,   only: avno, mwt_air, pi, rgasi
+   use mach_cam_headers_mod, only: mach_cam_intrsec_outer
+!   use mach_cam_utils_mod,   only: cam
+   use mach_cam_pre_mod,     only: igs_SO2, igs_SO4, iae1, rhop0
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: nn
+   integer(kind=4), intent   (in) :: ntr
+   integer(kind=4), intent   (in) :: nbnd
+   integer(kind=4), intent   (in) :: lev
+   integer(kind=4), intent   (in) :: il1
+   integer(kind=4), intent   (in) :: il2
+   integer(kind=4), intent   (in) :: mae
+   real(kind=4),    intent   (in) :: delt
+   real(kind=4),    intent   (in) :: tmin
+   real(kind=4),    intent  (out) :: rgrid   (chm_ni,chm_nk,ntr)
+   real(kind=4),    intent   (in) :: aeronum (chm_ni,chm_nk,isize)
+   real(kind=4),    intent(inout) :: xrow    (chm_ni,lev,ntr)
+   real(kind=4),    intent   (in) :: roarow  (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: pressg  (chm_ni)
+   real(kind=4),    intent   (in) :: t       (chm_ni,lev)
+   real(kind=4),    intent   (in) :: rh      (chm_ni,lev)
+   real(kind=4),    intent   (in) :: shj     (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: ohrow   (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: no3row  (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: rhsize  (chm_ni,chm_nk,isize)
+   real(kind=4),    intent   (in) :: aerosize(2,isize)
+   real(kind=4),    intent  (out) :: rtnucl  (chm_ni,chm_nk)
+   real(kind=4),    intent  (out) :: rtcond  (chm_ni,chm_nk,isize)
+   real(kind=4),    intent   (in) :: rtso2   (chm_ni,chm_nk,2)
+   real(kind=4),    intent   (in) :: cldcv   (chm_ni,chm_nk,2)
+   real(kind=4),    intent   (in) :: pvol    (isize)
+   real(kind=4),    intent  (out) :: pcond   (chm_ni,chm_nk,isize)
+   real(kind=4),    intent   (in) :: condnu  (15)
+!!if_off
+!
+! Local variables
+!
+   integer(kind=4) :: i, l, n, inew
+   real(kind=4)    :: dfso4, frp, fn, dt, tclr, blg, cond, condso4
+   real(kind=8)    :: fomega, a, b, c, d, t0, expp, pp
+   real(kind=8)    :: efact, afak, exppp
+   real(kind=8)    :: acoefc(chm_ni, chm_nk, 2)
+   real(kind=4)    :: adt2, rh01
+   real(kind=4)    :: kn
+   real(kind=4)    :: so4, w, adv, zc, anw, adelta, aconcr
+   real(kind=4)    :: avesize, apara, aparb, aparc, apard, apare, aexp, atuner, an, atempe
+   real(kind=4)    :: so4t0, so4t1, so4t2, so4t3, so4t4, so4t5, so4t6, so4t7, so4t8, so4t9
+   real(kind=4)    :: so4t10, so4t11, so4t12, so4t13, so4t14, so4t15
+   real(kind=4)    :: totnu(chm_ni)
+   real(kind=4)    :: oldso4(chm_ni, chm_nk), newso4(chm_ni, chm_nk)
+   real(kind=4)    :: ratio(chm_ni, chm_nk),rtcondsum(chm_ni, chm_nk)
+   real(kind=4)    :: sumso4, avail_so4
+   real(kind=4)    :: totcdn(chm_ni, chm_nk), totcd(chm_ni, chm_nk)
+   real(kind=4), parameter :: ace     = 0.02,    xiao = 1.0e3,    cub = 1.0 / 3.0
+   real(kind=4), parameter :: y4pid3 = 4.18879, so4mw = 98.1e-03, akb = 1.380662e-23, ara = 1.0
+   logical(kind=4)         :: local_dbg
+
+!  statement function ot compute so4 concentration due to combined
+!  nucleation and condensation processes as a function of time.
+
+   fomega(a, b, c, d)       = a + b * c ** (d - 1.0d0)
+   expp(a, b, c, d, t0)    = exp(-fomega(a, b, c, d) * t0)
+   so4(a, b, c, d, pp, t0) = real( ((1.0d0 - expp(a, b, c, d, t0)) * pp + expp(a, b, c, d, t0) *  &
+                              fomega(a, b, c, d) * c) / fomega(a, b, c, d) )
+
+!  statement function for atomic diffusion volume [cm3] Makar et al, 1998
+   adv(w) = 0.369 * w + 6.29
+   newso4 = 0.
+   oldso4 = 0.
+   a        = 0.0d0
+   acoefc   = 0.0d0
+   aconcr   = 0.0
+   adelta   = 0.0
+   aexp     = 0.0
+   afak     = 0.0d0
+   an       = 0.0
+   anw      = 0.0
+   apara    = 0.0
+   aparb    = 0.0
+   aparc    = 0.0
+   apard    = 0.0
+   apare    = 0.0
+   atempe   = 0.0
+   atuner   = 0.0
+   avesize  = 0.0
+   b        = 0.0d0
+   blg      = 0.0
+   c        = 0.0d0
+   cond     = 0.0
+   condso4  = 0.0
+   d        = 0.0d0
+   dfso4    = 0.0
+   dt       = 0.0
+   efact    = 0.0d0
+   fn       = 0.0
+   frp      = 0.0
+   kn       = 0.0
+   pcond    = 0.0
+   pp       = 0.0d0
+   rh01     = 0.0
+   rtcond   = 0.0
+   rtnucl   = 0.0
+   so4t0    = 0.0
+   so4t1    = 0.0
+   so4t10   = 0.0
+   so4t11   = 0.0
+   so4t12   = 0.0
+   so4t13   = 0.0
+   so4t14   = 0.0
+   so4t15   = 0.0
+   so4t2    = 0.0
+   so4t3    = 0.0
+   so4t4    = 0.0
+   so4t5    = 0.0
+   so4t6    = 0.0
+   so4t7    = 0.0
+   so4t8    = 0.0
+   so4t9    = 0.0
+   t0       = 0.0d0
+   tclr     = 0.0
+   totcd    = 0.0
+   totcdn   = 0.0
+   totnu    = 0.0
+   w        = 0.0
+   zc       = 0.0
+
+   adt2 = 2.0 * delt
+   local_dbg = (.false. .or. global_debug)
+
+   do l = 1 + mae, chm_nk
+      do i = il1, il2
+!         if (cam < 10.0) then     !for GCM or RCM
+!===============================================================
+!
+!       * clear air chemistry
+!
+!          rk  - rate for so2+oh
+!          rk1 - dms+oh via h abstraction
+!          rk2 - dms+oh via oh addition
+!          rk3 - dms+no3
+!          rk4 - h2s+oh
+!
+!===============================================================
+!
+!      total clear sky fraction
+!
+!            tclr=1.-min(1.0, max(cldcv(i, l, 1), cldcv(i, l, 2)))        !slg
+!
+!     * a factor to convert daily average filed to diunal changed
+!
+!            dich=cszrow(i)/tcszrow(i)*sec_in_day/delt
+!            adich=(1.0-max(cszrow(i), zc))/((sec_in_day/delt)-tcszrow(i))
+!     1                           *sec_in_day/delt
+!
+!     * for so2. the reaction rate constant demore et al. [1992]
+!
+!       (1) so2 + oh --->
+!           dc[so2]/dt = -k c[oh] c[so2]
+!           c[so2, t] = c[so2, 0]*exp(-k c[oh] t)
+!
+!            rk0 = 3.0e-31*(300.0/t(i, l+1))**3.3
+!            rkinf = 1.5e-12
+!            rocon = avo/airmw*1.0e-3          ! air kg/m3 ->mol/cm3
+!            rk0 = rk0*roarow(i, l)*rocon
+!            rk = (rk0/(1.0+rk0/rkinf))*0.6**(1./(1.0+
+!     1                         (log10(rk0/rkinf))**2))
+!
+!     qoh should be the concentration of oh in the unit of
+!         molecules/cm3
+!
+!         mozart oh is in the unit of volume mixing ratio [cm3/cm3]
+!         to convert to molec cm-3
+!
+!            use: 273.15/t* p/1.0133e5*1.e-3  / 22.4136 * avo
+!                 --------------+------------   ---+---   ---
+!                   to std state vol lit       to g-mole  to molecules
+!
+!            rocon=avo*273.15/t(i, l+1)*pressg(i)*shj(i, l)/1.0133e5
+!     1                  *1.e-3/22.4136
+!
+!            qoh = ohrow(i, l)*dich*rocon
+!
+!       so2 oxidation rate
+!
+!            rtso2(i, l, 1)=xrow(i, l+1, igs_SO2)*(exp(-rk*qoh*adt2)-1.0)      !slg
+!     1                                                   /adt2         !slg
+!            xrow(i, l+1, igs_SO2)=max(tmin,
+!     1                             xrow(i, l+1, igs_SO2)+rtso2(i, l, 1)*adt2)
+!
+!     * for dms. the reaction rate constant
+!
+!       [1] h abstraction      atkinson et al. [1989]
+!
+!       [2] oh addition   e.g. pham et al [1995]
+!
+!       [3] no3 night reaction  pham et al [1995]
+!
+!          k =  1.9e-13 exp(500/t) cm**3/(mol * s)
+!
+!
+!            rk1=9.6e-12*exp(-234./t(i, l+1))
+!            o2 =roarow(i, l)*avo/airmw*1.0e-3*0.21       ! air kg/m3 ->mol/cm3
+!            rk2=1.7e-42*exp(7810./t(i, l+1))*o2/
+!     1                   (1.+5.5e-31*exp(7460./t(i, l+1))*o2)
+!            rk3=1.9e-13*exp(500./t(i, l+1))
+!            qno3=no3row(i, l)*adich*rocon
+!
+!            rto=(exp(-((rk1+rk2)*qoh+rk3*qno3)*adt2)-1.)/adt2
+!            rtdms(i, l)=xrow(i, l+1, idms)*rto                            !slg
+!
+!            xrow(i, l+1, idms)=max(tmin,
+!     1                          xrow(i, l+1, idms)+rtdms(i, l)*adt2*tclr)
+!
+!     * for h2s. the reaction rate constant
+!
+!            rk4=6.3e-12*exp(-80./t(i, l+1))
+!            rth2s(i, l)=xrow(i, l+1, ih2s)*(exp(-rk4*qoh*adt2)-1.0)       !slg
+!     1                                                   /adt2         !slg
+!            xrow(i, l+1, ih2s)=max(tmin,
+!     1                          xrow(i, l+1, ih2s)+rth2s(i, l)*adt2*tclr)
+!
+!            so2pro=-64.6*(rth2s(i, l)/34.06+rtdms(i, l)/62.13)*tclr
+!            xrow(i, l+1, igs_SO2)=max(tmin,
+!     1                             xrow(i, l+1, igs_SO2)+so2pro*adt2)
+!           end if
+!===============================================================
+
+!  nucleation
+!  scheme by kulmala et al [1998]
+!  this portion of code was contributed by knut von salzen
+!  for all models - gcm, rcm or aurams
+         rh01   = max(min(rh(i, l + 1), 1.0), 0.1)
+         atempe = max(min(t(i, l + 1), 298.0), 233.0)
+
+!  water vapour concentration in 1/cm^3
+         anw = rh01 * 1.0e-06 * exp(77.34491296 - 7235.42451 / atempe &
+               - 8.2 * log(atempe) + 5.7113e-03 * atempe) / (akb * atempe)
+         adelta = atempe / 273.15
+         apara = 25.1289 - 4890.8 / atempe - 2.2479 * adelta * rh01
+         aparb = 7643.4 / atempe - 1.9712 * adelta / rh01
+         aparc = -1743.3 / atempe
+         apard = 1.2233 - 0.0154 * ara / (ara + rh01) - 0.0415 * log(anw) + 0.0016 * atempe
+         apare = 0.0102
+
+!  calculation of threshold H2SO4 concentration
+         aconcr = exp(-14.5125 + 0.1335 * atempe - 10.5462 * rh01 + 1958.4 * rh01 / atempe)
+         aexp = apara + aparb * apare
+         atuner = 1.0
+
+!  H2SO4 in kg/kg in combined equation and J in per cm^3/s
+
+         exppp = dble(aexp * log(avno * roarow(i, l) / so4mw * 1.0d-06) - apara * log(aconcr))
+         efact = exp(exppp)
+         afak = exp(aparb * apard + aparc) * efact * atuner
+         avesize = aerosize(1, 1)
+!  to kg/kg/s
+         afak = afak * y4pid3 * rhop0(nn) * avesize * avesize * avesize * 1.0d+06 / roarow(i, l)
+
+!  nucleation coefficients
+         acoefc(i, l, 1) = afak
+         acoefc(i, l, 2) = aexp
+      end do
+   end do
+
+!  condensation of h2so4 [g] to exsiting particles.
+!  loop for size spectrum
+   do n = 1, isize
+      do l = 1 + mae, chm_nk
+         do i = il1, il2
+            if (aeronum(i, l, n) * roarow(i, l) > xiao) then
+!  diffusion coefficient of h2so4 [gas] [Perry and Green, 1984]
+!  [m2 s-1]
+!  where 0.21145 = [(ma+mg)/mamg]^1/2, ma=28.97, mg=98.1 [h2so4]
+               dfso4 = 1.0e-7 * t(i, l + 1) ** 1.75 * 0.21145 / (pressg(i) * shj(i, l) /  &
+                       1.01325e5 * (adv(mwt_air) ** cub + adv(so4mw * 1.0e3) ** cub) ** 2)
+
+!  the mean free path of vapour sulphuric acid
+               frp = 3.0 * sqrt(pi * 98.1 / (8.0e3 * rgasi * t(i, l + 1))) * dfso4
+
+!  ace --> accommodation coefficient ~0.02
+               kn = frp / rhsize(i, l, n)
+               fn = (1.0 + kn) / (1.0 + 1.71 * kn + 1.33 * kn * kn)
+               an = 1.0 / (1.0 + 1.33 * kn * fn * (1.0 / ace - 1.0))
+
+!  the condensation coefficients for combined computation next.
+!  the aeronum*roarow accounts for all the particles in bin n.
+               rtcond(i, l, n) = 4.0 * pi * rhsize(i, l, n) * dfso4 * fn * an *  &
+                                 aeronum(i, l, n) * roarow(i, l)
+               totcdn(i, l)    = totcdn(i, l) + rtcond(i, l, n)
+            end if
+         end do
+      end do
+   end do
+
+!  fractional condensation to each bin for use in soa
+   do n = 1, isize
+      do l = 1 + mae, chm_nk
+         do i = il1, il2
+            cond = totcdn(i, l)
+            if (cond > 0.0 .and. aeronum(i, l, n) * roarow(i, l) >  xiao) then
+               pcond(i, l, n) = max(min(rtcond(i, l, n) / cond, 1.0), 0.0)
+            end if
+         end do
+      end do
+   end do
+
+!  use 10 time intervals to compute the tendencies
+   dt = adt2 / 10.0
+   do l = 1 + mae, chm_nk
+      do i = il1, il2
+         so4t0 = max(tmin, xrow(i, l + 1, igs_SO4))
+         oldso4(i,l) = so4t0
+         if (so4t0 > 1.0e-25 .and. totcdn(i, l) > 0.0 .and. xrow(i, l + 1, igs_SO2) > 1.0e-15) then
+!  total clear sky fraction
+            tclr = 1.0 - min(1.0, max(cldcv(i, l, 1), cldcv(i, l, 2)))
+            a = max(min(totcdn(i, l), 0.025), 0.0)
+            b = acoefc(i, l, 1)
+            d = acoefc(i, l, 2)
+            pp = max(0.0, -98.1 / 64.6 * rtso2(i, l, 1))
+
+            so4t1 =  real(max(akb, so4(a, b, dble(so4t0),  d, pp, dble(condnu(1)))))
+            so4t2 =  real(max(akb, so4(a, b, dble(so4t1),  d, pp, dble(condnu(2)))))
+            so4t3 =  real(max(akb, so4(a, b, dble(so4t2),  d, pp, dble(condnu(3)))))
+            so4t4 =  real(max(akb, so4(a, b, dble(so4t3),  d, pp, dble(condnu(4)))))
+            so4t5 =  real(max(akb, so4(a, b, dble(so4t4),  d, pp, dble(condnu(5)))))
+            so4t6 =  real(max(akb, so4(a, b, dble(so4t5),  d, pp, dble(condnu(6)))))
+            so4t7 =  real(max(akb, so4(a, b, dble(so4t6),  d, pp, dble(condnu(7)))))
+            so4t8 =  real(max(akb, so4(a, b, dble(so4t7),  d, pp, dble(condnu(8)))))
+            so4t9 =  real(max(akb, so4(a, b, dble(so4t8),  d, pp, dble(condnu(9)))))
+            so4t10 = real(max(akb, so4(a, b, dble(so4t9),  d, pp, dble(condnu(10)))))
+            so4t11 = real(max(akb, so4(a, b, dble(so4t10), d, pp, dble(condnu(11)))))
+            so4t12 = real(max(akb, so4(a, b, dble(so4t11), d, pp, dble(condnu(12)))))
+            so4t13 = real(max(akb, so4(a, b, dble(so4t12), d, pp, dble(condnu(13)))))
+            so4t14 = real(max(akb, so4(a, b, dble(so4t13), d, pp, dble(condnu(14)))))
+            so4t15 = real(max(akb, so4(a, b, dble(so4t14), d, pp, dble(condnu(15)))))
+
+!  Update which occurred here takes place later, after a total mass check (P.A. Makar, March 2009)
+!  xrow(i, l + 1, igs_SO4) = so4t15
+            newso4(i,l) = so4t15
+!
+            totnu(i) = 0.0
+!  for nucleation
+            if (b > 0.0) then
+               blg = real(log(b))
+               totnu(i) = real( 1.0 / adt2 * ( &
+                          condnu(1)  * exp(blg + d * log(so4t1))  +  &
+                          condnu(2)  * exp(blg + d * log(so4t2))  +  &
+                          condnu(3)  * exp(blg + d * log(so4t3))  +  &
+                          condnu(4)  * exp(blg + d * log(so4t4))  +  &
+                          condnu(5)  * exp(blg + d * log(so4t5))  +  &
+                          condnu(6)  * exp(blg + d * log(so4t6))  +  &
+                          condnu(7)  * exp(blg + d * log(so4t7))  +  &
+                          condnu(8)  * exp(blg + d * log(so4t8))  +  &
+                          condnu(9)  * exp(blg + d * log(so4t9))  +  &
+                          condnu(10) * exp(blg + d * log(so4t10)) +  &
+                          condnu(11) * exp(blg + d * log(so4t11)) +  &
+                          condnu(12) * exp(blg + d * log(so4t12)) +  &
+                          condnu(13) * exp(blg + d * log(so4t13)) +  &
+                          condnu(14) * exp(blg + d * log(so4t14)) +  &
+                          condnu(15) * exp(blg + d * log(so4t15)))    )
+            end if
+
+!  for condensation
+            totcd(i, l) = real(a) / adt2 * ( &
+                        condnu(1)  * so4t1  + condnu(2)  * so4t2  +  &
+                        condnu(3)  * so4t3  + condnu(4)  * so4t4  +  &
+                        condnu(5)  * so4t5  + condnu(6)  * so4t6  +  &
+                        condnu(7)  * so4t7  + condnu(8)  * so4t8  +  &
+                        condnu(9)  * so4t9  + condnu(10) * so4t10 +  &
+                        condnu(11) * so4t11 + condnu(12) * so4t12 +  &
+                        condnu(13) * so4t13 + condnu(14) * so4t14 +  &
+                        condnu(15) * so4t15)
+                        rtnucl(i, l) = totnu(i)
+
+!  production of new particles by nucleation
+!            inew = isize * (nn - 1) + 1 + (iae1 - 1)
+!            xrow(i, l + 1, inew) = xrow(i, l + 1, inew) + rtnucl(i, l) * adt2
+!  don't loose h2so4, if concentration is too low.
+!         else
+!            xrow(i, l+1, igs_SO4)=xrow(i, l+1, igs_SO4)-rtso2(i, l, 1)*98.1/64.6*adt2
+!         end if
+        end if
+      end do
+   end do
+
+   do n = 1, isize
+      do l = 1 + mae, chm_nk
+         do i = il1, il2
+            cond = totcdn(i, l)
+            if (cond > 0.0 .and. aeronum(i, l, n) * roarow(i, l) >  xiao) then
+!  percentage of so4 condensed to each bin
+               condso4 = max(min(rtcond(i, l, n) / cond, 1.0), 0.0)
+               rtcond(i, l, n) = condso4 * totcd(i, l)
+            else
+               rtcond(i, l, n) = 0.0
+            end if
+         end do
+      end do
+   end do
+!
+!  At this stage, the calculated values of the change in H2SO4(g) { = newso4 - oldso4},
+!  the change of sulphate particle mass due to nucleation { = rtnucl * adt2 },
+!  and the change in sulphate particle mass due to condensation { = rtcond * adt2 },
+!  are all scaled to ensure that the total increase in sulphate mass is =
+!  the sulphate mass available via gas-phase chemistry { = -98.1 / 64.6 * rtso2(i, l, 1) * adt2).
+
+   rtcondsum = 0.
+   do n = 1, isize
+      do l = 1 + mae, chm_nk
+         do i = il1, il2
+            rtcondsum(i, l) = rtcondsum(i, l) + rtcond(i, l, n)
+         end do
+      end do
+   end do
+!
+   do l = 1 + mae, chm_nk
+      do i = il1, il2
+         sumso4 = max(newso4(i, l) - oldso4(i, l), 0.) + rtnucl(i,l) * adt2 + rtcondsum(i, l) * adt2
+         avail_so4 = max(-98.1 / 64.6 * rtso2(i, l, 1) * adt2, 0.0)
+         if(sumso4 > 1.E-27) then
+            ratio(i, l) = avail_so4 / sumso4
+         else
+            ratio(i, l) = 1.0
+         end if
+      end do
+   end do
+
+! Scale nucleation rate:
+
+   do l = 1 + mae, chm_nk
+      do i = il1, il2
+         rtnucl(i, l) = rtnucl(i, l) * ratio(i, l)
+      end do
+   end do
+
+! Scale condensation rates:
+
+   do n = 1, isize
+      do l = 1 + mae, chm_nk
+         do i = il1, il2
+            rtcond(i, l, n) = rtcond(i, l, n) * ratio(i, l)
+         end do
+      end do
+   end do
+
+!  Scale mass change of H2SO4 gas:
+
+   do l = 1 + mae, chm_nk
+      do i = il1, il2
+         newso4(i, l) = oldso4(i,l) + max(newso4(i, l) - oldso4(i, l), 0.) * ratio(i, l)
+      end do
+   end do
+
+!  Carry out operations postponed until mass conservation was ensured:
+
+   do l = 1 + mae, chm_nk
+      do i = il1, il2
+          if (oldso4(i, l) > 1.0e-25 .and. totcdn(i, l) > 0.0 .and. xrow(i, l + 1, igs_SO2) > 1.0e-15) then
+             xrow(i, l + 1, igs_SO4) = newso4(i,l)
+!  production of new particles by nucleation
+             inew = isize * (nn - 1) + 1 + (iae1 - 1)
+             xrow(i, l + 1, inew) = xrow(i, l + 1, inew) + rtnucl(i, l) * adt2
+!  don't loose h2so4, if concentration is too low.
+          else
+             xrow(i, l + 1, igs_SO4) = xrow(i, l + 1, igs_SO4) + max(-rtso2(i, l, 1) * 98.1 / 64.6, 0.) * adt2
+          end if
+      end do
+   end do
+
+!  The following is necessary to conserve sulphate mass in the above step:
+
+   do n = 1,isize
+      do l = 1 + mae, chm_nk
+         do i = il1, il2
+            if (.not.(oldso4(i, l) > 1.0e-25 .and. totcdn(i, l) > 0.0 .and. xrow(i, l + 1, igs_SO2) > 1.0e-15)) then
+               rtcond(i,l,n) = 0.
+            end if
+         end do
+      end do
+   end do
+
+!  call to compute the intersectional transport due to condensation process.
+   call mach_cam_intrsec_outer(LEV, IL1, IL2, XROW, RGRID, NTR, nbnd, &
+                               NN, ADT2, RTCOND, AERONUM, PVOL, MAE,  &
+                               pressg, t, shj, roarow, aerosize       )
+   return
+end

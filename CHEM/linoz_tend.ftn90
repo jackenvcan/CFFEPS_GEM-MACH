@@ -1,0 +1,133 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+!
+!copyright (C) 2001  MSC-RPN COMM  %%%RPNPHY%%%
+!**s/p linoz_tend
+!
+!!if_on
+      subroutine linoz_tend (o3, ch4, f11, f12, n2o, noy, temp, colo3           , &
+                             c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12  , & 
+                             c13, c14                                           , &
+                             o3_new, ch4_new, f11_new, f12_new                  , &
+                             n2o_new, noy_new                                     )
+!!if_off
+!      c1 : o3c
+!      c2 : temp
+!      c3 : colo3
+!      c4 : P-L
+!      c5 : d(P-L)/dO3
+!      c6 : d(P-L)/dT
+!      c7 : d(P-L)/dcolo3
+!      c8  : n2o loss frequency (s-1)
+!      c9  : ch4 loss frequency (s-1)
+!      c10 : F11 loss frequency (s-1)
+!      c11 : F12 loss frequency (s-1)
+!      c12 : noy loss frequency (s-1)
+!      c13 : noy prod ratio
+!      c14 : noy loss ratio
+!
+   use chm_utils_mod,      only: chm_timestep, global_debug, chm_lun_out
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_consphychm_mod, only: mwt_air
+   use chm_species_info_mod
+   use chm_species_idx_mod
+!
+   implicit none
+!
+! Subroutine argument Declarations
+!
+!!if_on
+   real(kind=4), intent (in)   :: o3,n2o,ch4,f11,f12,noy
+   real(kind=4), intent (in)   :: temp,colo3 
+   real(kind=4), intent (in)   :: c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12,c13,c14
+   real(kind=4), intent(out)   :: o3_new,n2o_new,ch4_new,f11_new,f12_new,noy_new
+!!if_off
+!
+!  Declaration of local variables.
+!
+   logical(kind=4)    :: local_dbg
+   real   (kind=4)    :: tau,fss,noyss,pnoy,lnoy,dn2o,dnoy, c50
+!
+! CODE STARTS HERE
+!
+!
+!  Fix for preventing division by 0 originating from horizontal
+!  interpolation (JDG,march 2010)
+!
+      if (c5 .le. 0.) then 
+         c50 = min(c5,-1.E-19)
+      else  
+         c50 = max(c5, 1.E-19)
+      end if
+!
+!  Tendency
+!
+   tau= -1./c50
+   fss = c1 + (c4 + c6*(temp-c2) + c7*(colo3-c3))*tau                !mole/mole vmr
+!
+!  Formulation explicite (not used)
+!
+!      o3l= (fss - o3l)/tau*chm_timestep + o3l
+!      n2oL = n2oL * ( 1 - chm_timestep*c8)
+!      ch4L = ch4L * ( 1 - chm_timestep*c9)
+!      f11L = f11L * ( 1 - chm_timestep*c10)
+!      f12L = f12L * ( 1 - chm_timestep*c11)
+!
+!  Utilisation de la formulation analytique  (used here)
+!
+!     (aout 2012; jdg)
+!     df/dt = - c(f - fss)
+!     df/(f-fss) = -cdt
+!     ln{(fnew - fss)/(fold-fss)} = -cdt
+!     fnew = fss + (fold-fss)exp(-cdt)
+!     df = fnew - fold = (fss-fold)(1-exp(-cdt))
+!     fnew = fold + df = fold + (fss-fold)(1-exp(-cdt))
+!
+   o3_new = o3 + (fss-o3)*(1.-exp(-chm_timestep/tau))            !mole /mole vmr
+!
+!     Autres constituents : fss=0
+!
+   ch4_new = ch4 * exp( -c9*chm_timestep)                        !mole /mole vmr
+   f11_new = f11 * exp(-c10*chm_timestep)                        !mole /mole vmr
+   f12_new = f12 * exp(-c11*chm_timestep)                        !mole /mole vmr
+   n2o_new = n2o * exp( -c8*chm_timestep)                        !mole /mole vmr
+!
+!     N2O-NOY
+!     dn2o: puit de n2o (valeurs positives)
+!     commente temporairement: division par 0
+!     quand le champ est initialise constant a 1ppbv
+!
+!     dn2o=n2o*(1.-exp(-c8*chm_timestep))                           !mole /mole vmr
+!     n2o_new = n2o-dn2o                                            !mole /mole vmr
+!     n2o_new = n2o                                                !mole /mole vmr
+! 
+!      pnoy=dn2o*c13
+!      lnoy=2.*c12*c14*noy/(1.+c14*noy)
+!      noyss=pnoy/lnoy
+!
+!      dnoy=(noyss-noy)*(1.-exp(-lnoy*chm_timestep))
+!
+!      noy_new = noy + dnoy                                      !mole /mole vmr
+!
+   noy_new = noy                                                 !mole /mole vmr
+!
+return
+end subroutine linoz_tend
+

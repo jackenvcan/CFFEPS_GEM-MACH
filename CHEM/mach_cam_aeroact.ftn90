@@ -1,0 +1,251 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_cam_aeroact.ftn90
+! Creation       : S. Gong, W. Gong, V. Bouchet, S. Gravel, and
+!                  B. Pabla for GEM-MACH, June 2008
+!
+! Description    : Calculation of activated aerosol
+!
+! Extra info     : - First version created by S. Gong Jan 12 1998 for CAM
+!                    A simplified version of ghan 1993 activation
+!                    parameterization scheme with constant d parameter.
+!                  - The cloud number density is now computed from jones et al
+!                    1994 parameterization which relates the total aerosol
+!                    number to cloud droplet number. (S. Gong, Dec 02, 1998)
+!
+! Arguments:  IN
+!               chm_nk    -> no. z-direct. vertical levels
+!               lev     -> chm_nk+1
+!               chm_ni-> number of longitude grid points
+!               il1     -> minimum index for chm_ni
+!               il2     -> maximum index for chm_ni
+!               rhsize  -> Unactivated ambient aerosol wet
+!               ntr     -> Number of tracers
+!               rhop    -> Final wet density
+!               wrow    -> Model vertical wind speed
+!               aeronum -> Number conconcenration
+!               zmlwc   -> CWC content (bulk) (kg/kg)
+!               roarow  -> air density (kg/m3)
+!               jlat    -> J Slice number
+!
+!             OUT
+!               RADCLD  -> Mean radius of cloud droplets (um)
+!               XROW    -> cloud droplet number density [1/m3]
+!               TOTNUM  -> Accumulated number of aerosol (1/m3) for each grid and from bin i to nsiz
+!               RCRITS  -> Bin Number (+ Fraction Un-Activated)
+!               CLSIZE  -> Activated ambient aerosol wet
+!
+!============================================================================
+!
+!!if_on
+subroutine mach_cam_aeroact (il1, il2, RADCLD, TOTNUM, rhsize, ntr, rhop, wrow, XROW, &
+                             RCRIT, aeronum, zmlwc, roarow, CLSIZE, kount, jlat       )
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use mach_cam_utils_mod, only: isize
+!!if_off
+   use chm_utils_mod,      only: chm_lun_out, global_debug
+   use mach_cam_utils_mod, only: cam
+   use mach_cam_pre_mod,   only: igs_CCN
+
+   implicit none
+!!if_on
+   integer(kind=4), intent (in) :: ntr
+   integer(kind=4), intent (in) :: il1
+   integer(kind=4), intent (in) :: il2
+   integer(kind=4), intent (in) :: kount
+   integer(kind=4), intent (in) :: jlat
+   real(kind=4),    intent(out) :: radcld (chm_ni,chm_nk)
+   real(kind=4),    intent(out) :: totnum (chm_ni,chm_nk,isize)
+   real(kind=4),    intent (in) :: rhsize (chm_ni,chm_nk,isize)
+   real(kind=4),    intent (in) :: rhop   (chm_ni,chm_nk,isize)
+   real(kind=4),    intent (in) :: wrow   (chm_ni,chm_nk)
+   real(kind=4),    intent(out) :: xrow   (chm_ni,chm_nk+1,ntr)
+   real(kind=4),    intent(out) :: rcrit  (chm_ni,chm_nk)
+   real(kind=4),    intent (in) :: aeronum(chm_ni,chm_nk,isize)
+   real(kind=4),    intent (in) :: zmlwc  (chm_ni,chm_nk,2)
+   real(kind=4),    intent (in) :: roarow (chm_ni,chm_nk)
+   real(kind=4),    intent(out) :: clsize (chm_ni,chm_nk,isize)
+!!if_off
+!
+!  local variables
+!
+   integer(kind=4) :: n, n1, l, i, j
+   real(kind=4)    :: d, cub, tona, rleft, rhopw, h2o, rwi
+   real(kind=4)    :: rcoex(chm_ni, chm_nk)
+   logical(kind=4) :: local_dbg
+
+   d     = 0.0
+   cub   = 0.0
+   tona  = 0.0
+   rleft = 0.0
+   rhopw = 0.0
+   h2o   = 0.0
+   rwi   = 0.0
+   rcoex = 0.0
+
+   local_dbg = (.false. .or. global_debug)
+
+   ! call tmg_start0 ( 92, 'mach_cam_aeroact')
+
+!  accumulate number of aerosols[/m^3] for each grid
+
+   totnum = 0.0
+   rcoex = 0.0
+   do n = isize, 1, -1
+      do n1 = n, isize
+         do l = 1, chm_nk
+            do i = il1, il2
+               totnum(i, l, n) = totnum(i, l, n) + aeronum(i, l, n1)  * roarow(i, l)
+               rcrit(i, l) = real(isize + 1)
+               if ((cam > 1.0 .and. cam < 10.0) .or. (cam > 10.0 .and. cam < 90.0)) then
+                  xrow(i, l + 1, igs_CCN) = 0.0
+               end if
+            end do
+         end do
+      end do
+   end do
+
+   if(local_dbg) then
+      do n = 1, isize
+         do l = 1, chm_nk
+            do i = il1, il2
+               if (totnum(i, l, n) <= 0.0) then
+                  write(chm_lun_out, *)'cwc_pb in cam ', i, l, n, kount, jlat, totnum(i, l, n)
+               end if
+            end do
+         end do
+      end do
+   end if
+
+!  Compute the cloud droplet number [1/m^3 air]
+!  for the current version, d [m^4 s^-1] is assumed constant
+
+   d = 3.4e-11
+   cub = 1.0 / 3.0
+   if (cam == 1.0 .or. cam == 10.0) go to 100
+   do l = 1, chm_nk
+      do i = il1, il2
+         if (wrow(i, l) < 0.0) then
+            xrow(i, l + 1, igs_CCN) = xrow(i, l + 1, igs_CCN) + totnum(i, l, 1) *  &
+                                      abs(wrow(i, l)) / (abs(wrow(i, l)) + d * totnum(i, l, 1))
+         end if
+      end do
+   end do
+
+!  Find the activated bin number
+!  define: rcrit = bin number + % un-actived
+!  e.g.    rcrit = 4.3 means bin 4 and over are activated with 30% un-activated in bin 4.
+
+  100 continue
+
+!  cloud droplet number density [1/m3] from jones et al 1994
+
+   do l = 1, chm_nk
+      do i = il1, il2
+         tona = totnum(i, l, 1) * 1.0e-6
+         xrow(i, l + 1, igs_CCN) = 375.0e6 * (1.0 - exp(-2.5e-3 * tona))
+      end do
+   end do
+
+   do n = isize, 2, -1
+      do l = 1, chm_nk
+         do i = il1, il2
+            if (xrow(i, l + 1, igs_CCN) > totnum(i, l, n) .and. xrow(i, l + 1, igs_CCN) <= totnum(i, l, n - 1)) then
+               rleft = (totnum(i, l, n - 1) - xrow(i, l + 1, igs_CCN)) / (aeronum(i, l, n - 1) * roarow(i, l))
+               if ((zmlwc(i, l, 1) + zmlwc(i, l, 2)) > 0) then
+                  rcrit(i, l) = real(n - 1) + min(1.0, rleft)
+               end if
+            end if
+            if (xrow(i, l + 1, igs_CCN) > totnum(i, l, 1)) then
+               rcrit(i, l) = 1.0
+            end if
+         end do
+      end do
+   end do
+
+!  Distribute cloud liquid water [kg/kg] into activated bins according to the cloud number
+!  density in each activated bin and estimate cloud droplet radius.
+!  Cloud droplet radius at the interrupted bin where aerosol and cloud doplet co-exist is
+!  saved in rcoex(i, l). For fully actviated bins, the rhsize is updated.
+
+   rhopw = 1000.00
+   do n = 1, isize
+      do l = 1, chm_nk
+         do i = il1, il2
+            if (n >= int(rcrit(i, l)) .and. xrow(i, l + 1, igs_CCN) > 0.0 .and.  &
+                zmlwc(i, l, 1) + zmlwc(i, l, 2) > 0.0) then
+                  h2o = (zmlwc(i, l, 1) + zmlwc(i, l, 2)) /                   &
+                        (xrow(i, l + 1, igs_CCN) / roarow(i, l))
+                  rwi = rhsize(i, l, n)
+                  if (n == int(rcrit(i, l))) then
+                     rcoex(i, l) = rhsize(i, l, n)
+
+!  CLSIZE(I, L, N)=RHSIZE(I, L, N) we replace that line !!!!!!
+!
+!  explanation:
+
+!  In mach_cam_AEROACT
+!  CLSIZE in this bin is not calculated, instead it is given the aerosol dry
+!  size. The wet size and dry size can be 100 times different. With CLSIZE
+!  much smaller the droplet size for the cloud drops in this bin, the mass
+!  transfer rate will be greatly enhanced (proportional to 1/r^3 - 1/r^2 at
+!  the moment in UPAQR.f). What I did in my box model is to calculate the
+!  CLSIZE in this bin the same way as for the other activated bins. Could you
+!  implement this change and see how much it affects the threshold you set
+!  for q_bin? Wanmin G .12 June 2000.
+
+                      clsize(i, l, n) = ((rwi * rwi * rwi * rhop(i, l, n) +  &
+                                         h2o / 4.189) / rhopw) ** cub
+                   else
+                      clsize(i, l, n) = ((rwi * rwi * rwi * rhop(i, l, n) +  &
+                                         h2o / 4.189) / rhopw) ** cub
+                   end if
+                end if
+            end do
+         end do
+      end do
+
+   do l = 1, chm_nk
+      do i = il1, il2
+         if (xrow(i, l + 1, igs_CCN) > 0.0 .and. zmlwc(i, l, 1) + zmlwc(i, l, 2) > 0.0) then
+            h2o = (zmlwc(i, l, 1) + zmlwc(i, l, 2)) / (xrow(i, l + 1, igs_CCN) / roarow(i, l))
+            radcld(i, l) = ((h2o / 4.189) / rhopw) ** cub * 1.0e6
+         else
+            radcld(i, l) = 0.0
+         end if
+      end do
+   end do
+
+   ! call tmg_stop0 ( 92 )
+
+   return
+end

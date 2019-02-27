@@ -1,0 +1,104 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_input_check.ftn90
+! Creation       : S. Menard, Feb 2008.
+! Description    : This subroutine is intend to do quality check of meteorological
+!                  INPUT field. Here we modified the values of vertical diffusion
+!                  obtain from the GEM model.
+!
+! Extra info     :
+!
+! Arguments      :
+!                 IN
+!                     metvar3d(i, k, MV3D_ZPLUS)       => Thermodynamic vertical levels height (m)  
+!                     metvar3d(i, k, MV3D_KT)           => Vertical diffusion from GEM
+!                     metvar2d(:, MV2D_H)               => Boundary layer height
+!                 OUT
+!                     busvol(sm(sp_KTN)), or KT_NEW     => vertical diffusion for GEM-MACH
+!
+!============================================================================
+!
+!!if_on
+subroutine mach_input_check(busvol, busvol_size, metvar2d, metvar3d)
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   use chm_metvar_mod,       only: SIZE_MV2D, SIZE_MV3D
+!!if_off
+   use chm_metvar_mod,       only: MV3D_KT, MV2D_MT, MV2D_H, MV3D_ZPLUS
+   use chm_utils_mod,        only: ik
+   use chm_nml_mod,          only: chm_vert_diff_s
+   use chm_species_info_mod, only: sm
+   use chm_species_idx_mod,  only: sp_KTN
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: busvol_size
+   real(kind=4),    intent(inout) :: busvol  (busvol_size)
+   real(kind=4),    intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+!!if_off
+!
+!  Local variables.
+!
+   real(kind=4), dimension(chm_ni, chm_nk) :: kt_new
+   real(kind=4), parameter                 :: min_kt = 0.1, max_kt = 1500.0
+   integer(kind=4)                         :: i, k
+!
+   if ((chm_vert_diff_s == 'RPNPHY') .or. (chm_vert_diff_s == 'RPNPHY_I'))  then
+      do k = 1, chm_nk
+         do i = 1, chm_ni
+            kt_new(i, k) = metvar3d(i, k, MV3D_KT)
+            if (metvar3d(i, k, MV3D_ZPLUS) <= metvar2d(i, MV2D_H)) kt_new(i, k) = max(min_kt, metvar3d(i, k, MV3D_KT))
+         end do
+      end do
+   else
+!
+!  Set minimum and maximum values for vertical diffusion (KT)
+!
+      do k = 1, chm_nk
+         do i = 1, chm_ni
+            if (metvar3d(i, k, MV3D_ZPLUS) <= metvar2d(i, MV2D_H)) then
+               kt_new(i, k) = max(min_kt, metvar3d(i, k, MV3D_KT))
+            else
+               kt_new(i, k) = min(metvar3d(i, k, MV3D_KT), max_kt)
+            end if
+         end do
+      end do
+   endif
+
+   do k = 1, chm_nk
+      do i = 1, chm_ni
+         busvol(sm(sp_KTN) % vol_offset + ik(i, k, chm_ni)) = kt_new(i, k)
+      end do
+   end do
+
+  return
+
+end subroutine mach_input_check

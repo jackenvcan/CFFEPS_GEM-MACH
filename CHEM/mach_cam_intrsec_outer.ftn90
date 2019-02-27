@@ -1,0 +1,499 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+!  Modification:  the mach_cam_intrsec.ftn90 algorithm has been modified to
+!  allow a subdivision of the input bin structure to improve accuracy for the
+!  mass transfer.  6 options are possible, making use of the user input
+!  variable "chm_intrsec_ver" on the call list.  The code
+!  splits the input particle mass, according to the version number,
+!  calculates the corresponding aerosol number in each bin,
+!  and then splits the condensation rate by version number.
+!
+!  The options (chm_intrsec_ver = ) are:
+!   1 = mass evenly distributed over sub-bins by radius '
+!       condensation rate redistributed using area ratio.'
+!   2 = mass evenly distributed over sub-bins by ln radius'
+!       condensation rate redistributed using area ratio.'
+!   3 = mass distributed according to locally scaled trimodal lognormal distribution'
+!       condensation rate redistributed using area ratio.'
+!   4 = mass evenly distributed over sub-bins by radius '
+!       fuchs-sutugin equation used to redistribute condensation rate'
+!   5 = mass evenly distributed over sub-bins by ln radius '
+!       fuchs-sutugin equation used to redistribute condensation rate'
+!   6 = mass distributed according to locally scaled trimodal lognormal distribution'
+!       fuchs-sutugin equation used to redistribute condensation rate.'
+!
+!  P.A. Makar, W. Gong, S. Gong, February 2009
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_cam_intrsec.ftn90
+! Creation       : S. Gong, S. Gravel and B. Pabla for GEM-MACH, June 2008
+!
+! Description    : This module computes intersectional transport of aerosols
+!                  due to comdensation or cloud processes
+!
+! Extra info     : First version created by S. Gong Aug 11 1997 for CAM
+!
+! Arguments:  IN
+!               lev      -> chm_nk+1
+!               il1      -> minimum index for chm_ni
+!               il2      -> maximum index for chm_ni
+!               rtcond   -> Mass transfer rate onto each particle size bin
+!               totmas   -> Total mass of aerosol in each bin
+!               ntr      -> Total number of trace substances (gases and aerosols)
+!               iae1     -> Index of first aerosol in trace substance list (ntr)
+!               nn       -> Loop index on aerosol types
+!               adt2     -> Advection time step (s)
+!               rhop0    -> dry aerosol density [ug/m^3]
+!               isize    -> Number of size bins
+!              rtcond    -> Mass transfer rate onto each particle size bin
+!              rtcond_n  -> Mass transfer rate onto each particle sub bin
+!               aeronum  -> Number concentration of aerosols
+!               aeronum_n-> Number concentration of aerosols in sub bins
+!                  v     ->
+!                  mae   -> 0
+!               xrow_n   -> Tracer concentration with sub-bins for the particles
+!
+!             OUT
+!              RGRID     -> Initial concentration of tracers in each bin
+!
+!             IN/OUT
+!              XROW      -> Tracer concentration in each bin before/after intersection tranport
+!
+!============================================================================
+!
+!!if_on
+   subroutine mach_cam_intrsec_outer (lev, il1, il2, XROW, RGRID, ntr, nbnd, &
+                                nn, adt2, rtcond, aeronum, v, mae, pressg,  &
+                                t, shj, roarow, aerosize                    )
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   use mach_cam_utils_mod,   only: isize
+!!if_off
+   use chm_consphychm_mod,   only: mwt_air, pi, rgasi
+   use chm_nml_mod,          only: chm_intrsec_ver, chm_intrsec_ndiv, chm_pkg_pm_s
+   use mach_cam_headers_mod, only: mach_cam_intrsec_inner
+   use mach_cam_pre_mod,     only: iae1, icom, rhop0
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: ntr
+   integer(kind=4), intent   (in) :: nbnd
+   integer(kind=4), intent   (in) :: lev
+   integer(kind=4), intent   (in) :: il1
+   integer(kind=4), intent   (in) :: il2
+   integer(kind=4), intent   (in) :: mae
+   integer(kind=4), intent   (in) :: nn
+   real(kind=4),    intent   (in) :: adt2
+   real(kind=4),    intent(inout) :: xrow    (chm_ni,lev,ntr)
+   real(kind=4),    intent  (out) :: rgrid   (chm_ni,chm_nk,ntr)
+   real(kind=4),    intent   (in) :: rtcond  (chm_ni,chm_nk,isize)
+   real(kind=4),    intent   (in) :: aeronum (chm_ni,chm_nk,isize)
+   real(kind=4),    intent   (in) :: v       (isize)
+   real(kind=4),    intent   (in) :: pressg  (chm_ni)
+   real(kind=4),    intent   (in) :: t       (chm_ni,lev)
+   real(kind=4),    intent   (in) :: shj     (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: roarow  (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: aerosize(2,isize)
+!!if_off
+!
+!  local variables
+!
+   integer(kind=4)                                 :: kp, k, np, pos, l, il, n, i, nt, no, nk, k0
+   integer(kind=4)                                 :: j, jsub, jk, ntr_n
+!  New variables:
+   real(kind=4), parameter                         :: ace = 0.02, xiao = 1.0e3, cub = 1.0 / 3.0
+   real(kind=4), parameter                         :: so4mw = 98.1e-03
+   real(kind=8), parameter                         :: smf1 = 1.D-25   ! small number limit for total particle area / kg air
+   real(kind=4), dimension(isize)                  :: ri, a
+   real(kind=4), dimension(nbnd)                   :: v_n, r_n, dvn, a_n
+   real(kind=4), dimension(2, nbnd)                :: rn
+   real(kind=4), dimension(chm_ni, chm_nk, nbnd)   :: aeronum_n, rtcond_n
+   real(kind=4), dimension(chm_ni, lev, icom*nbnd) :: xrow_n
+   real(kind=4)                                    :: kn, an
+   real(kind=4)                                    :: dfso4, frp, fn
+   real(kind=4)                                    :: rndiv, dNdr, dMdrdt, dr_orig, dr_new,  dMdr, sqrt2pi
+   real(kind=4)                                    :: dp1, dm1, dnp1_dlogd, dnm1_dlogd, dvp1_dlogd, dvm1_dlogd, vsum
+   real(kind=8)                                    :: suma
+   real(kind=4)                                    :: w, adv, net_vol
+!
+!
+! Parameters for trimodal distribution:
+   real(kind=4), dimension(3) :: nnn, dpm, lsig
+!
+!  Parameters for assumed particle size distribution (Seinfeld and Pandis, 2006,
+!  after Jaenicke, 1993, urban aerosol distribution):
+!
+     data nnn / 9.93E4, 1.11E3, 3.64E4 /
+     data dpm / 0.013, 0.014, 0.050 /
+     data lsig / 0.245, 0.666, 0.337 /
+!
+! -------------------------------------------------------------
+!  statement function for atomic diffusion volume [cm3] Makar et al, 1998
+   adv(w) = 0.369 * w + 6.29
+!--------------------------------------------------------------
+
+!   if(chm_pkg_pm_s == 'CAM12BINS') then
+!    nbnd = isize
+!    ntr_n = icom * nbnd
+!   else
+!    nbnd = isize * chm_intrsec_ndiv
+!    ntr_n = icom * nbnd
+!   end if
+
+   ntr_n = icom * nbnd
+   sqrt2pi = sqrt(2.*acos(-1.0))
+
+   do k = 1, isize
+      do np = 1, icom
+      pos = (np - 1) * isize + k + (iae1 - 1)
+         do l = 1 + mae, chm_nk
+            do il = il1, il2
+               rgrid(il, l, pos) = xrow(il, l + 1, pos)
+            end do
+         end do
+      end do
+   end do
+!
+!  skip subdivision when the 12-bin structure is uesd
+!
+   if(chm_pkg_pm_s == 'CAM12BINS') then
+    xrow_n = 0.0
+    rtcond_n = 0.0
+     do k = 1, isize
+      do np = 1, icom
+      kp = (np - 1) * isize + k + (iae1 - 1)
+      jk = (np - 1) * isize + k
+       do il = 1, chm_nk
+         do i = il1, il2
+         xrow_n(i, il + 1, jk) = xrow(i, il + 1, kp)
+         end do
+       end do
+      end do
+     end do
+     do k = 1, isize
+      v_n(k) = v(k)
+      do il = 1, chm_nk
+        do i = il1, il2
+         aeronum_n(i, il, k) = aeronum(i, il, k)
+         rtcond_n(i, il, k) = rtcond(i, il, k)
+        end do
+      end do
+     end do
+   else
+
+!  Commence subdivision of original bins:
+    rndiv = real(chm_intrsec_ndiv)
+
+!  Use aerosize to determine bin centers and center radii:
+    do i=1, isize
+     ri(i) = (aerosize(1, i) + aerosize(2, i)) * 0.5
+     a(i) = 4.0 * acos(-1.0) * ri(i)**2
+    end do
+
+!  Determine bin boundaries of the subdivided distribution:
+    rn = 0.0
+
+    if (chm_intrsec_ver == 1 .or. chm_intrsec_ver == 4) then
+      do i = 1, isize
+         do j = 1, chm_intrsec_ndiv
+            rn(1, (i - 1) * chm_intrsec_ndiv + j) = aerosize(1, i) + float(j - 1) * (aerosize(2, i) - aerosize(1, i)) / rndiv
+         end do
+      end do
+    else if(chm_intrsec_ver == 2 .or. chm_intrsec_ver == 3 .or. chm_intrsec_ver == 5 .or. chm_intrsec_ver == 6) then
+      do i = 1, isize
+         do j = 1, chm_intrsec_ndiv
+            rn(1, (i-1) * chm_intrsec_ndiv + j) = exp(log(aerosize(1, i)) + float(j-1) * (log(aerosize(2, i)) - log(aerosize(1, i))) / rndiv)
+         end do
+      end do
+    end if
+
+    do i = 2, nbnd
+       rn(2, i - 1) = rn(1, i)
+    end do
+    rn(2, nbnd) = aerosize(2, isize)
+    do i=1, nbnd
+      r_n(i) = (rn(1, i) + rn(2, i)) * 0.5
+      a_n(i) = 4. * acos(-1.0) * r_n(i)**2
+      v_n(i) = a_n(i) * r_n(i) / 3.0
+    end do
+
+    xrow_n = 0.
+
+    if(chm_intrsec_ver == 1 .or. chm_intrsec_ver == 4) then
+!  version 1 of possible distribution of aeronum, rtcond, xrow:
+!  Use delta(quantity) / delta(radius) and the leftmost boundary value of
+!  the quantity being zero to divide up quantities:
+
+!  Assign particle mass:
+      do k = 1, isize
+         dr_orig = (aerosize(2, k) - aerosize(1, k))
+         do np = 1, icom
+            pos = (np - 1) * isize + k + iae1 - 1
+            do il = 1, chm_nk
+               do i = il1, il2
+                  dMdr   = xrow(i, il + 1, pos) / dr_orig
+                  do j = 1, chm_intrsec_ndiv
+                     jsub = (k - 1) * chm_intrsec_ndiv + j
+                     jk = (np - 1) * nbnd + jsub
+                     dr_new = rn(2, jsub) - rn(1, jsub)
+                     xrow_n(i, il + 1, jk) = dMdr * dr_new
+                  end do
+               end do
+            end do
+         end do
+      end do
+    else if(chm_intrsec_ver == 2 .or. chm_intrsec_ver == 5) then
+!  version 2 of possible distribution of aeronum, rtcond, xrow:
+!  Use delta(quantity) / delta(ln radius) and the leftmost boundary value of
+!  the quantity being zero to divide up quantities:
+
+!  Assign particle mass:
+      do k = 1, isize
+         dr_orig = log(aerosize(2, k) / aerosize(1, k))
+         do np = 1, icom
+            pos = (np - 1) * isize + k + iae1 - 1
+            do il = 1, chm_nk
+               do i = il1, il2
+                  dMdr   = xrow(i, il + 1, pos) / dr_orig
+                  do j = 1, chm_intrsec_ndiv
+                     jsub = (k - 1) * chm_intrsec_ndiv + j
+                     jk = (np - 1) * isize * chm_intrsec_ndiv + jsub
+                     dr_new = log(rn(2, jsub) / rn(1, jsub))
+                     xrow_n(i, il + 1, jk) = dMdr * dr_new
+                  end do
+               end do
+            end do
+         end do
+      end do
+    else if(chm_intrsec_ver == 3 .or. chm_intrsec_ver == 6) then
+
+!  xrow is redistributed according to urban volume distribution
+!  of Jaenicke, 1993, quoted in Seinfeld and Pandis 2006 pages 370-371.
+!  Use delta(quantity) / delta(ln radius) and the leftmost boundary value of
+!  the quantity being zero to divide up quantities:
+
+!  Assign particle mass:
+
+!  First, define particle number and volume distribution according
+!  to Jaenicke, 1993:
+      do i = 1, nbnd
+         dp1 = rn(2, i) * 2.0 * 1.E6  ! diameter in um
+         dm1 = rn(1, i) * 2.0 * 1.E6  ! diameter in um
+         dnp1_dlogd = 0.0
+         dnm1_dlogd = 0.0
+! construct trimodal dN/dlogD value at boundary radii of sub-bin:
+         do j = 1, 3
+            dnp1_dlogd = dnp1_dlogd + nnn(j) / (sqrt2pi * lsig(j))   &
+                        * exp(-1.0 * (log10(dp1) - log10(dpm(j)))**2 &
+                        / (2. * lsig(j)**2) )
+            dnm1_dlogd = dnm1_dlogd + nnn(j) / (sqrt2pi * lsig(j))   &
+                        * exp(-1.0 * (log10(dm1) - log10(dpm(j)))**2 &
+                        / (2.0 * lsig(j)**2) )
+         end do
+! construct corresponding dV/dlogD value at boundary radii of sub-bin:
+         dvp1_dlogd = dnp1_dlogd * 4.0 / 3.0 * acos(-1.0) * (dp1 * 0.5)**3
+         dvm1_dlogd = dnm1_dlogd * 4.0 / 3.0 * acos(-1.0) * (dm1 * 0.5)**3
+! integrate between these values :  volume = area under curve. Rectangle rule used:
+         dvn(i) = (dvp1_dlogd + dvm1_dlogd) * (log10(dp1) - log10(dm1))
+      end do
+
+!  The dvn array contains a "typical urban" trimodal volume (i.e. mass) distribution.
+!  The sub-bin boundaries rn(2, i) to rn(1, i) have been constructed to fall within the
+!  original bin boundaries.  The next step determines scaling factors to use
+!  within the bin, based on the relative amount of sub-bin volume within the bin:
+      do k=1, isize
+         vsum = 0.
+         do j=1, chm_intrsec_ndiv
+            jsub = (k - 1) * chm_intrsec_ndiv + j
+            vsum = vsum + dvn(jsub)
+         end do
+         do j=1, chm_intrsec_ndiv
+            jsub = (k - 1) * chm_intrsec_ndiv + j
+            dvn(jsub) = dvn(jsub) / vsum
+         end do
+      end do
+
+!  At this point, the array dvn contains scaling factors
+!  that can be used to redistribute the bin mass to
+!  sub-bins.  Within the bin, the trimodal distribution
+!  will be used, but discontinuities may occur at the
+!  sub-bin borders.
+      do k = 1, isize
+         do np = 1, icom
+            pos = (np - 1) * isize + k + iae1 - 1
+            do il = 1, chm_nk
+               do i = il1, il2
+                  do j = 1, chm_intrsec_ndiv
+                     jsub = (k - 1)*chm_intrsec_ndiv + j
+                     jk = (np - 1) * isize * chm_intrsec_ndiv + jsub
+                     xrow_n(i, il + 1, jk) = xrow(i, il + 1, pos) * dvn(jsub)
+                  end do
+               end do
+            end do
+         end do
+      end do
+    end if
+
+!  Assign new particle number based on individual particle volume, density,
+!  and mass values.
+    aeronum_n = 0.
+    do k = 1, nbnd
+      do il = 1, chm_nk
+         do i = il1, il2
+            net_vol = 0.0
+            do np = 1, icom
+               jk = (np - 1) * nbnd + k
+               net_vol = net_vol + xrow_n(i, il + 1, jk) / rhop0(np)
+            end do
+            aeronum_n(i, il, k)  = net_vol / v_n(k)
+         end do
+      end do
+    end do
+!
+    rtcond_n = 0.0
+!  Determine revised condensation rate:
+    if(chm_intrsec_ver == 1 .or. chm_intrsec_ver == 2 .or. chm_intrsec_ver == 3 ) then
+      do k = 1, isize
+         do il = 1, chm_nk
+            do i = il1, il2
+               suma = 0.D0
+               do j=1, chm_intrsec_ndiv
+                  jk = (k - 1) * chm_intrsec_ndiv + j
+                  suma = suma + dble(a_n(jk)) * dble(aeronum_n(i, il, jk))
+               end do
+               if(suma > 0.0D0) then
+                 do j=1, chm_intrsec_ndiv
+                    jk = (k - 1) * chm_intrsec_ndiv + j
+                    rtcond_n(i, il, jk) = rtcond(i, il, k) * real(  &
+                        dble(a_n(jk)) * dble(aeronum_n(i, il, jk)) / max(suma,smf1) )
+                 end do
+               else
+!  Summed aerosol number * area = zero.  Condensation rate therefore set to zero:
+                 do j=1, chm_intrsec_ndiv
+                    jk = (k - 1) * chm_intrsec_ndiv + j
+                    rtcond_n(i, il, jk) = 0.0
+                 end do
+               end if
+            end do
+         end do
+      end do
+    end if
+
+!  Alternative condensation rate (based on fuchs-sutugin equation)
+!  lifted from Sunling Gong's sulfate condensation code.
+!  Note that dry radius is used here instead of wet.
+    if(chm_intrsec_ver == 4 .or. chm_intrsec_ver == 5 .or. chm_intrsec_ver == 6) then
+      do n = 1, nbnd
+         do l = 1 + mae, chm_nk
+            do i = il1, il2
+               if (aeronum_n(i, l, n) * roarow(i, l) > xiao) then
+!  diffusion coefficient of h2so4 [gas] [Perry and Green, 1984]
+!  [m2 s-1]
+!  where 0.21145 = [(ma+mg)/mamg]^1/2, ma=28.97, mg=98.1 [h2so4]
+                  dfso4 = 1.0e-7 * t(i, l + 1) ** 1.75 * 0.21145 / (pressg(i) * shj(i, l) /  &
+                        1.01325e5 * (adv(mwt_air) ** cub + adv(so4mw * 1.0e3) ** cub) ** 2)
+
+!  the mean free path of vapour sulphuric acid
+                  frp = 3.0 * sqrt(pi * 98.1 / (8.0e3 * rgasi * t(i, l + 1))) * dfso4
+
+!  ace --> accommodation coefficient ~0.02
+                  kn = frp / r_n(n)
+                  fn = (1.0 + kn) / (1.0 + 1.71 * kn + 1.33 * kn * kn)
+                  an = 1.0 / (1.0 + 1.33 * kn * fn * (1.0 / ace - 1.0))
+
+!  the condensation coefficients for combined computation next.
+!  the aeronum*roarow accounts for all the particles in bin n.
+                  rtcond_n(i, l, n) = 4.0 * pi * r_n(n) * dfso4 * fn * an *  &
+                                    aeronum_n(i, l, n) * roarow(i, l)
+               end if
+            end do
+         end do
+      end do
+      do k = 1, isize
+         do il = 1, chm_nk
+            do i = il1, il2
+               suma = 0.D0
+               do j = 1, chm_intrsec_ndiv
+                  jk = (k - 1) * chm_intrsec_ndiv + j
+                  suma = suma + dble(rtcond_n(i, il, jk))
+               end do
+!  If the sum of condensation rates is > zero, use it to ratio
+!  the original condensation rate.  If the sum is zero, there is no condensation,
+!  and the rtcond_n values are already zero; no need to reset them to zero.
+               if(suma> 0.0D0) then
+                 do j = 1, chm_intrsec_ndiv
+                    jk = (k - 1) * chm_intrsec_ndiv + j
+                    rtcond_n(i, il, jk) = rtcond(i, il, k) * real(dble(rtcond_n(i, il, jk)) / max(suma,smf1))
+                 end do
+               end if
+            end do
+         end do
+      end do
+    end if
+   end if
+
+!  Finished subdivision of inputs for condensation.
+!  Call the original intrsec code to determine the mass transfer:
+!
+   call mach_cam_intrsec_inner(lev, il1, il2, XROW_N, ntr_n, &
+                                nn, adt2, nbnd, rtcond_n, aeronum_n, v_n, mae)
+
+!  Reassign the mass back into the original xrow locations:
+   if(chm_pkg_pm_s == 'CAM12BINS') then
+    do k = 1, isize
+      do np = 1, icom
+         kp = (np - 1) * isize + k + iae1 - 1
+         jk = (np - 1) * isize + k
+         do il = 1, chm_nk
+            do i = il1, il2
+            xrow(i, il + 1, kp) = xrow_n(i, il + 1, jk)
+            end do
+         end do
+      end do
+    end do
+   else
+    do k = 1, isize
+      do np = 1, icom
+         pos = (np - 1) * isize + k + iae1 - 1
+         do il = 1, chm_nk
+            do i = il1, il2
+               xrow(i, il + 1, pos) = 0.0
+               do j = 1, chm_intrsec_ndiv
+                  jsub = (k - 1) * chm_intrsec_ndiv + j
+                  jk = (np - 1) * nbnd + jsub
+                  xrow(i, il + 1, pos) = xrow(i, il + 1, pos) + xrow_n(i, il + 1, jk)
+               end do
+            end do
+         end do
+      end do
+    end do
+   endif
+
+   return
+end

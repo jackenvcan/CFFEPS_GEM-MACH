@@ -1,0 +1,343 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_diffusion.ftn90
+! Creation       : Paul Makar, Sylvie Gravel, Nov 2007
+! Description    : Master subroutine for GEM-MACH vertical diffusion
+!                  Finite differences are used to solve the diffusion equation, one-step backward
+!                  difference in time (i.e. fully implicit), and 1st to second order in space,
+!                  depending on the method chosen.  The interior rows (k = 2..NK-1) of the
+!                  matrix system use second order finite differences, resulting in a tridiagonal
+!                  system of equations.  There are 4 approached implemented, triggered by bc_type
+!                  (see bc_type's description below)
+!
+! Extra info     : The method is described in detail in
+!                  http://ulysse.cmc.ec.gc.ca/svn/gem-mach/doc/Vertical_diffusion_in_CHRONOS_AURAMS_and_GEM-MACH.doc
+!
+! Arguments:
+!           IN
+!              metvar2d(:, MV2D_DXDY)    -> Area of grid square
+!              metvar3D(:,:,MV3D_ZPLUS) -> Concentration layer height above sea-level
+!              diffused_species  -> List of species to be diffused
+!              nsp_diff          -> Number of diffused species
+!
+!           IN/OUT
+!              busdyn       -> Dynamic bus 
+!              busper       -> Permanent bus 
+!              busvol       -> Volatile bus 
+!
+! Extra info:
+!       zf   - Concentration-level height above sea level
+!       zh   - Diffusion constant height above sea level
+!       at2m - Interpolation coeficient
+
+!=============================================================================
+!
+!!if_on
+subroutine mach_diffusion(busdyn     , busper     , busvol     , &
+                          busdyn_size, busvol_size, busper_size, &
+                          diffused_species, nsp_diff, nb_bins  , &
+                          metvar2d, metvar3d                     )
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   use chm_metvar_mod,       only: SIZE_MV2D, SIZE_MV3D
+!!if_off
+   use chm_metvar_mod,       only: MV3D_SIGM, MV2D_PPLUS, MV2D_DXDY, MV3D_ZPLUS, MV3D_AT2M
+   use chm_utils_mod,        only: chm_timestep, chm_lun_out, global_debug, ik
+   use chm_nml_mod,          only: chm_vert_diff_s
+   use chm_species_info_mod, only: sm, species_info, unassigned
+   use chm_species_idx_mod,  only: sp_density, sp_KTN, sp_FMET, dbg_2D
+   use mach_headers_mod,     only: mach_diff_flux, mach_diff_boundary, mach_diff_rpnphy
+
+   implicit none
+!  Declare external funtion to be used here
+   external tothermo
+!
+!  Declaration of Subroutine arguments
+!
+!!if_on
+   integer(kind=4), intent   (in) :: busdyn_size
+   integer(kind=4), intent   (in) :: busper_size
+   integer(kind=4), intent   (in) :: busvol_size
+   real(kind=4),    intent(inout) :: busdyn          (busdyn_size)
+   real(kind=4),    intent(inout) :: busper          (busper_size)
+   real(kind=4),    intent(inout) :: busvol          (busvol_size)
+   integer(kind=4), intent   (in) :: nb_bins
+   integer(kind=4), intent   (in) :: nsp_diff
+   integer(kind=4), intent   (in) :: diffused_species(nsp_diff)
+   real(kind=4),    intent   (in) :: metvar2d        (chm_ni,SIZE_MV2D)
+   real(kind=4),    intent   (in) :: metvar3d        (chm_ni,chm_nk,SIZE_MV3D)
+!!if_off
+!
+!  Declaration of local variables
+!
+   integer(kind=4)                                          :: i, k, ni_net, j, ii, sp, spx
+   integer(kind=4)                                          :: n_diff, cur_bin, cur_sp
+   real(kind=4), parameter                                  :: g2ug = 1.0e6
+   real(kind=4), parameter                                  :: min_value = 1.0e-12
+   real(kind=4)                                             :: mass_before, mass_after
+   real(kind=4)                                             :: mass_emiss, mass_fix, p_scale
+   real(kind=4), dimension(chm_ni,chm_nk)                   :: rho, kt
+   real(kind=4), dimension(chm_ni,chm_nk+1)                 :: sig_m
+   real(kind=4), dimension(chm_ni)                          :: flux, fmet
+   real(kind=4), dimension(chm_ni,chm_nk)                   :: zf, zh, at2m
+   real(kind=4), dimension(chm_ni*nsp_diff*nb_bins, chm_nk) :: conc
+   real(kind=4), dimension(chm_ni*nsp_diff*nb_bins)         :: emissions, vd, ubf
+   character (len=4)                                        :: ename
+   type(species_info), pointer                              :: cur_sp_ptr
+   logical(kind=4)                                          :: local_dbg
+!
+! -----------------------------------------------------------------------------------------------------------------
+   local_dbg = (.false. .or. global_debug)
+!
+   ni_net  = chm_ni * nsp_diff * nb_bins
+   n_diff  = nsp_diff * nb_bins
+   do k = 1, chm_nk
+      do i = 1, chm_ni
+         rho(i,k) = busvol(sm(sp_density) % vol_offset + ik(i, k, chm_ni))
+         kt(i,k)  = busvol(sm(sp_KTN) % vol_offset + ik(i, k, chm_ni))
+      enddo
+   enddo
+
+   if(local_dbg) then
+      write (chm_lun_out, *) 'in mach_diffusion'
+      write (chm_lun_out, *) 'nsp_diff, nb_bins, ni_net', nsp_diff, nb_bins, ni_net
+   end if
+
+!  Construct the array of species concentrations
+
+   do sp = 1, n_diff
+! nb_bins = 1 means gaseous chemical species.
+      if (nb_bins == 1) then
+         cur_sp_ptr => sm(diffused_species(sp))
+! Special treatment for binned species (PM types, nb_bins > 1)
+! Determine which species and which bin we are dealing with
+      else
+         cur_sp  = ceiling(real(sp) / nb_bins)
+         cur_bin = mod(sp-1, nb_bins)+1
+         cur_sp_ptr => sm(diffused_species(cur_sp)) % bins_array(cur_bin)
+      end if
+      do k = 1, chm_nk
+         do i = 1, chm_ni
+            ii = calc_ii(sp, i, n_diff)
+            conc(ii, k) = busdyn(cur_sp_ptr % dyn_offset + ik(i, k, chm_ni))
+         end do
+      end do
+   end do
+!
+   if(local_dbg .and.  (nb_bins == 2) ) then
+! diagnostic:
+! currently set for sea salts (spx = 11)
+! ATTENTION: set chm_debug_2d_i >= 4 in gem_settings file before activating commented lines below
+! build mass before in dbg_2d(1)
+   mass_before = 0.
+      spx = 11
+      do k = 1, chm_nk
+      do i = 1, chm_ni
+        sig_m(i,k) = metvar3d(i, k, MV3D_SIGM)
+      enddo
+      enddo
+        sig_m(:,chm_nk+1) = 1.
+!     busvol(sm(dbg_2d(1)) % vol_offset : sm(dbg_2d(1)) % vol_offset + chm_ni- 1) = 0.0
+      do k = 1, chm_nk
+      do i = 1, chm_ni
+         ii = calc_ii(spx, i, n_diff)
+         p_scale = (sig_m(i,k+1) - sig_m(i,k))*metvar2d(i, MV2D_PPLUS)*metvar2d(i, MV2D_DXDY)/.980616e+1
+!        busvol(sm(dbg_2d(1)) % vol_offset + i-1) = busvol(sm(dbg_2d(1)) % vol_offset + i-1) + &
+!                                         p_scale*conc(ii, k)
+         mass_before = mass_before + p_scale*conc(ii, k)
+      enddo
+      enddo
+   end if
+!
+!  Construct corresponding arrays of species fluxes, deposition velocities, etc.
+!
+   emissions = 0.0
+   flux      = 0.0
+   vd        = 0.0
+   ubf       = 0.0
+!
+   do sp = 1, n_diff
+      ename = '@#$%'
+! nb_bins = 1 means gaseous chemical species
+      if (nb_bins == 1) then
+         cur_sp_ptr => sm(diffused_species(sp))
+! Special treatment for binned species (PM types, nb_bins > 1)
+! Determine which species and which bin we are dealing with
+      else
+         cur_sp  = ceiling(real(sp) / nb_bins)
+         cur_bin = mod(sp-1, nb_bins)+1
+         cur_sp_ptr => sm(diffused_species(cur_sp)) % bins_array(cur_bin)
+         if(cur_sp_ptr % ae_name /=  UNASSIGNED) ename = cur_sp_ptr % ae_name
+      end if
+
+! Meteorological modulation of crustal material emissions
+
+      fmet = 1.0
+      if (ename(1:3) == 'ECM' ) &
+            fmet(1:chm_ni)  =  busvol(sm(sp_FMET) % vol_offset : sm(sp_FMET) % vol_offset + chm_ni - 1)
+
+      do i = 1, chm_ni
+         ii = calc_ii(sp, i, n_diff)
+
+!  Area emissions added to emissions array:
+!  original units are g/s:  convert to ug/s
+         if(cur_sp_ptr % ae_name /=  UNASSIGNED) then
+            emissions(ii) = emissions(ii) + ((busper(cur_sp_ptr % ae_offset + (i - 1) ) * g2ug)) * fmet(i)
+         end if
+
+!  Biogenic emissions added to emissions array:
+!  original units are g/s:  convert to ug/s
+         if(cur_sp_ptr % be_name /=  UNASSIGNED) then
+            emissions(ii) = emissions(ii) + busper(cur_sp_ptr % be_offset + (i - 1) ) * g2ug
+         end if
+
+!  Deposition velocities placed in deposition velocity array. Deposition
+!  velocities for PMs are handled by the CAM package.
+         if(cur_sp_ptr % vd_name /=  UNASSIGNED .and. nb_bins < 2) then
+            vd(ii) = busvol(cur_sp_ptr % vd_offset + (i - 1) )
+! Depostion flux diagnostic for gas
+            if(cur_sp_ptr % dd_name /=  UNASSIGNED) then
+               flux(i) = chm_timestep * rho(i, chm_nk) * vd(ii) * conc(ii, chm_nk) * 1.e-6 / cur_sp_ptr % mol_wt
+               busper(cur_sp_ptr % dd_offset + (i - 1)) = - flux(i) + &
+                                       busper(cur_sp_ptr % dd_offset + (i - 1))
+            end if
+         end if
+      end do
+   end do
+
+!
+!  Calculate new concentrations resulting from diffusion, all species in conc:
+!
+!  Each of the four bc_type options results in a different subroutine being called; the subroutines are similar
+!  in nature in that the interior rows of the matrix that is constructed within each are identical; differences
+!  arise because of the boundary condition finite differences options.  Each subroutine in turn calls a
+!  tridiagonal solver, which solves the system of equations and returns the new set of concentrations to the
+!  next level up in the program.
+!    chm_vert_diff_s  -> BOUNDARY 
+!                        FLUX
+!                        RPNPHY : using the same approach as physics library
+   select case (chm_vert_diff_s)
+      case ('FLUX')
+         do k = 1, chm_nk
+           do i = 1, chm_ni
+             zf(i, k) = metvar3d(i, k, MV3D_ZPLUS)
+             at2m(i, k) = metvar3d(i, k, MV3D_AT2M)
+           end do
+         end do
+         call tothermo(zh,zf,at2m,at2m,chm_ni,chm_nk,chm_nk,.false.)
+         call mach_diff_flux(conc, emissions, vd, ubf, kt, rho, ni_net, n_diff, &
+                             zf, zh, metvar2d)
+      case ('BOUNDARY')
+         do k = 1, chm_nk
+           do i = 1, chm_ni
+             zf(i, k) = metvar3d(i, k, MV3D_ZPLUS)
+             at2m(i, k) = metvar3d(i, k, MV3D_AT2M)
+           end do
+         end do
+         call tothermo(zh,zf,at2m,at2m,chm_ni,chm_nk,chm_nk,.false.)
+         call mach_diff_boundary(conc, emissions, vd, ubf, kt, rho, ni_net, n_diff, &
+                                 zf, zh, metvar2d)
+      case ('RPNPHY','RPNPHY_I')
+         call mach_diff_rpnphy(conc, emissions, vd, ubf, kt, ni_net, n_diff, metvar2d, metvar3d)
+      case default
+         write(0, *) "It is not normal to see this message"
+   end select
+!
+!  return new chemical concentrations to dynamics bus
+!
+   do sp = 1, n_diff
+
+! nb_bins = 1 means gaseous chemical species
+      if (nb_bins == 1) then
+         cur_sp_ptr => sm(diffused_species(sp))
+! Special treatment for binned species (PM types, nb_bins > 1)
+! Determine which species and which bin we are dealing with
+      else
+         cur_sp  = ceiling(real(sp) / nb_bins)
+         cur_bin = mod(sp-1, nb_bins)+1
+         cur_sp_ptr => sm(diffused_species(cur_sp)) % bins_array(cur_bin)
+      end if
+      do k = 1, chm_nk
+         do i = 1, chm_ni
+            ii = calc_ii(sp, i, n_diff)
+            busdyn(cur_sp_ptr % dyn_offset + ik(i, k, chm_ni)) = max(conc(ii, k), min_value)
+         end do
+      end do
+   end do
+!
+   if(local_dbg .and.  (nb_bins == 2) ) then
+! diagnostic:
+! currently set for sea salts (spx = 11)
+! ATTENTION: set chm_debug_2d_i >= 4 in gem_settings file before removing activating lines below
+! build mass after in dbg_2d(2)
+! build mass after with min check in dbg_2d(3)
+! build mass of emissions in dbg_2d(4)
+      cur_sp  = ceiling(real(spx) / nb_bins)
+      cur_bin = mod(spx-1, nb_bins)+1
+      cur_sp_ptr => sm(diffused_species(cur_sp)) % bins_array(cur_bin)
+!     busvol(sm(dbg_2d(2)) % vol_offset : sm(dbg_2d(2)) % vol_offset + chm_ni- 1) = 0.0
+!     busvol(sm(dbg_2d(3)) % vol_offset : sm(dbg_2d(3)) % vol_offset + chm_ni- 1) = 0.0
+      mass_after = 0.
+      mass_fix = 0.
+      mass_emiss = 0.
+      do i = 1, chm_ni
+      ii = calc_ii(spx, i, n_diff)
+      do k = 1, chm_nk
+         p_scale = (sig_m(i,k+1) - sig_m(i,k))*metvar2d(i, MV2D_PPLUS)*metvar2d(i, MV2D_DXDY)/.980616e+1
+!        busvol(sm(dbg_2d(2)) % vol_offset + i-1) = busvol(sm(dbg_2d(2)) % vol_offset + i-1) + &
+!                                         p_scale*conc(ii, k)
+!        busvol(sm(dbg_2d(3)) % vol_offset + i-1) = busvol(sm(dbg_2d(3)) % vol_offset + i-1) + &
+!                                         p_scale*max(conc(ii, k), min_value)
+         mass_after = mass_after + p_scale*conc(ii, k)
+         mass_fix = mass_fix + p_scale*max(conc(ii, k), min_value)
+      enddo
+!        busvol(sm(dbg_2d(4)) % vol_offset + i-1) = chm_timestep * emissions(ii)
+         mass_emiss = mass_emiss + chm_timestep * emissions(ii)
+      enddo
+         write(chm_lun_out,1000) cur_sp_ptr % dyn_name, mass_before, mass_emiss, mass_before+mass_emiss, mass_after, &
+        mass_after-mass_before-mass_emiss, mass_fix
+   end if
+ 1000    format('In mach_diffusion, mass changes for species ',a,' : ',/, &
+         'mass before | mass of emissions | mass before + emissions | mass after | difference  | mass fixed ', /,&
+             1x,e10.3,          10x,e10.3,          10x,e10.3,          9x,e10.3,    3x,e10.3,     4x,e10.3)
+!
+!  Finished
+!
+   return
+!
+   contains
+ 
+   integer function calc_ii(sp, i, n_diff)
+      integer, intent(in) :: sp, i, n_diff
+      calc_ii = sp + (i - 1) * n_diff
+   end function calc_ii
+!
+end subroutine mach_diffusion

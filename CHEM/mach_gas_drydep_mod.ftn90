@@ -1,0 +1,329 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet / Project : GEM-MACH
+! Fichier / File   : mach_gas_drydep_mod.ftn90
+! Creation         : A. Robichaud - Dec 2002
+! Description      : Declare, as parameters, the tabled values used for the
+!                    dry deposition scheme "mach_gas_drydep_solver"
+!
+! Extra Info       : Modified by A. Kallaur, M. Moran, P.A. Beaulieu for GEM-MACH, Jan 2008
+!                    Modified by M. Moran, Aug. 2014
+!
+!                    Possible future modifications:
+!                       - Short term:  Some meteorological input (fb, LAI) taken directly from GEM
+!                       - Medium term: LAI from objective analysis (S. Belair)
+!                                      Ground water content influence on stomatal resistance (CALDAS) (S. Belair)
+! 
+!
+!------------------ vegetation for dry deposition scheme  -------------
+! land use categories  (luc)
+! 1  evergreen needleleaf forest (west coast/candian shield)
+! 2  evergreen broadleaf forest (only in wrn mexico)
+! 3  deciduous needleleaf forest (none in na)
+! 4  deciduous broadleaf forest (nw bc and ern na)
+! 5  mixed forest
+! 6  grassland (prairies)
+! 7  crops, mixed farming (prairies)
+! 8  desert (wrn us and canada)
+! 9  tundra
+! 10 dwarf trees, shrubs with ground cover 
+! 11 wet land with plants (mainly in nrn canada)
+! 12 ice caps and glaciers (very little in na)
+! 13 inland water (over canadian shield)
+! 14 ocean
+! 15 urban
+!
+!------------------ seasonal categories  (sc)  ------------------------
+! 1  midsummer with lush vegetation
+! 2  autumn with cropland before harvest
+! 3  later autumn after frost, no snow
+! 4  winter, snow on ground and subfreezing
+! 5  transitional spring with partially green short annuals
+!
+!------------------------ species list --------------------------------
+! num    full name             abridg.     rpn nomvar     molecular wgt
+!----------------------------------------------------------------------
+! 01    sulfur dioxide          so2           SO2              64.00
+! 02    sulfate                 so4           SO4              96.00
+! 03    nitric oxide            no            NO_D             30.00
+! 04    nitrogen dioxide        no2           NO2              46.00
+! 05    ozone                   o3            O3               48.00
+! 06    hydrogen peroxide       h2o2          H2O2             34.00
+! 07    nitric acid             hno3          HNO3             63.00
+! 08    pan                     pan           PAN             121.00
+! 09    propane                 c3h8          C3H8             44.09
+! 10    >c3 alkanes             alka          ALKA             93.43
+! 11    ethene                  ethe          ETHE             28.05
+! 12    >c2 alkenes             alke          ALKE             57.30
+! 13    toluene                 tolu          TOLU             92.13
+! 14    higher aromatics        arom          AROM            117.97
+! 15    formaldehyde            hcho          HCHO             30.03
+! 16    acetaldehyde            ald2          ALD2             44.05
+! 17    methyl ethyl ketone     mek           MEK              72.10
+! 18    methyl glyoxal          mgly          MGLY             72.00
+! 19    general dicarbonyl      dial          DIAL             84.00
+! 20    organic peroxide        rooh          ROOH             62.00
+! 21    o-cresol                cres          CRES            108.13
+! 22    nitrous acid            hono          HONO             47.00
+! 23    alkyl nitrate           rno3          RNO3            121.00
+! 24    isoprene                isop          ISOP             68.11
+! 25    hydroperoxy radical     ho2           HO2              33.00
+! 26    total ro2 radicals      ro2           RO2              61.00
+! 27    ch3co3 radical          mco3          MCO3             75.00
+! 28a   ammonia                 nh3           NH3              17.03
+! 29a   soil dust               dust          DS               -----
+!============================================================================
+
+module mach_gas_drydep_mod
+   use mach_gas_chemicbi_mod, only: lucprm,nsn,maxnsa
+   implicit none
+   save
+
+!  Declaration of various constantes and switch settings
+!
+!  Name       Description
+!==============================================================================
+!  prandtl    Prandtl number for air
+!  b4         Constant for Jarvis scheme
+!  ao         Constant for Jarvis scheme
+!  bo         Constant for Jarvis scheme
+!  co         Constant for Jarvis scheme
+!  dzero      Constant for Jarvis scheme
+!  en         Constant for Jarvis scheme
+!  isimple    Use (1) or not (0) simple scheme for solar radiation effect on
+!             stomata aperture. Default is 0 for more complex scheme
+!  inew       (=1)  We are extending last paper of ZHANG et al.
+!                   to all gas species for non-stomatal resistance
+!             (=0)  We are take non-stomatal resistance from ZHANG for Ozone only.
+!  insz       (=0)  Bypass non-stomatal resistance (ZHANG et al. 2002) for all
+!                   species
+!                 
+
+   real(kind=4), parameter :: prandtl   = 0.72
+   real(kind=4), parameter :: b4        = 0.6154
+   real(kind=4), parameter :: ao        = 7.352e-4
+   real(kind=4), parameter :: bo        = 8.748e-4
+   real(kind=4), parameter :: co        = 0.205935
+   real(kind=4), parameter :: dzero     = 0.6052
+   real(kind=4), parameter :: en        = 2.302585
+   real(kind=4), parameter :: cco2      = 380.0
+   integer(kind=4)         :: isimple   = 0
+   integer(kind=4)         :: inew      = 1
+   integer(kind=4)         :: inew2     = 0
+   integer(kind=4)         :: insz      = 0
+
+!  alpha and Beta are weights to be applied to resistance for SO2 and
+!  Ozone for a given gas (from Table 1 of Zhang et al., 2002); corrected NO beta value on 15 Aug. 2014
+
+   real(kind=4) , dimension(maxnsa) :: alpha = (/ 1.0, 1.0 , 0.0, 0.0, 0.0, 1.0, 10.0, 0.0, &
+                                          0.0, 0.0 , 0.0, 0.0, 0.0, 0.0,  0.8, 0.0, &
+                                          0.0, 0.01, 0.0, 0.1, 0.0, 2.0,  0.0, 0.0, &
+                                          0.0, 0.0 , 0.0, 1.0, 0.0                  /)
+
+
+   real(kind=4) , dimension(maxnsa) ::  beta  = (/ 0.0 , 1.0 , 0.01, 0.8 , 1.0 , 1.0 ,10.0, 0.6 , &
+                                           0.05, 0.05, 0.05, 0.05, 0.05, 0.05, 0.2, 0.05, &
+                                           0.05, 0.0 , 0.05, 0.8 , 0.05, 2.0 , 0.5, 0.5 , &
+                                           0.5 , 0.5 , 0.5 , 0.0 , 1.0                    /)
+
+!  RCUT : leaf cuticle resistance 
+!  RCONV: buoyant convection in canopy (called r_dc by Wesely, 1989)
+!  REXP : exposed surfaces resistance (leaves, twigs, barks, etc.; called r_lu and r_cl by Wesely, 1989)
+!  RCAN : in canopy aerodynamic resistance (same as r_ac in Wesely, 1989)
+
+!  Cuticle resistance for SO2 and ozone under dry conditions (from Zhang et al., 2002)
+
+   real(kind=4), dimension(lucprm,nsn) :: rcutd = reshape ((/                                                       &
+   1000., 1000., 2000., 1200., 1000., 1500., 1500.,9999., 9999., 4000., 6000., 9999., 9999., 9999., 6000.,  &
+   1500., 1500., 3000., 2000., 1500., 2000., 2000.,9999., 9999., 1500., 6000., 9999., 9999., 9999., 6000.,  &
+   2000., 2000., 8000., 9000., 2000., 3000., 3000.,9999., 9999., 2000., 9000., 9999., 9999., 9999., 9000.,  &
+   2000., 2000., 9999., 9999., 2000., 6000., 9999.,9999., 9999., 3000., 9999., 9999., 9999., 9999., 9999.,  &
+   1000., 1000., 4000., 2000., 1000., 1500., 1500.,9999., 9999., 4000., 6000., 9999., 9999., 9999., 6000.   &
+                                                      /),(/lucprm,nsn/))
+
+!  Rgds  --- dry ground resistance for SO2 (WESELY, 1989; note different interpretation vs. Zhang et al., 2002)
+
+   real(kind=4), dimension(lucprm,nsn) :: rgdso2 = reshape ((/                                       &
+   500., 500., 500., 500., 100., 350., 150., 1000., 400., 400., 10., 100., 10., 10., 400.,   &
+   500., 500., 500., 500., 100., 350., 200., 1000., 400., 400., 10., 100., 10., 10., 400.,   &
+   500., 500., 500., 500., 200., 350., 150., 1000., 400., 400., 10., 100., 10., 10., 400.,   &
+   100., 100., 100., 100., 100., 100., 100., 1000.,  50.,  50.,100., 200., 10., 10., 100.,   &
+   500., 500., 500., 500., 200., 350., 150., 1000., 400., 400., 10., 100., 10., 10., 500.    &
+                                                      /),(/lucprm,nsn/))
+
+!  Rgdo  --- dry ground resistance for O3  (WESELY, 1989; note different interpretation vs. Zhang et al., 2002)
+
+   real(kind=4), dimension(lucprm,nsn) ::  rgdo3 =  reshape ((/                                                       &
+   200. ,  200.,  200.,  200.,  300.,  200.,  150.,  400.,  200.,  200., 1000., 2000., 2000., 2000.,  300.,   &
+   200. ,  200.,  200.,  200.,  300.,  200.,  150.,  400.,  200.,  200.,  800., 2000., 2000., 2000.,  300.,   &
+   200. ,  200.,  200.,  200.,  300.,  200.,  150.,  400.,  200.,  200., 1000., 2000., 2000., 2000.,  300.,   &
+   3500., 3500., 3500., 3500., 3500., 3500., 3500.,  400., 3500., 3500., 3500., 2000., 2000., 2000.,  600.,   &
+   200. ,  200.,  200.,  200.,  300.,  200.,  150.,  400.,  200.,  200., 1000., 2000., 2000., 2000.,  300.    &
+                                                      /),(/lucprm,nsn/))
+
+!  resistance for other exposed surfaces (ozone) (referred to as r_lu (for upper canopy) and r_clO (for lower
+!      canopy) in WESELY, 1989); N.B. values for tundra (LUC9) and dwarf trees and shrubs (LUC10) were obtained
+!      using Wesely's class 11 (rocky open spaces with low-growing shrubs) and class 4 (deciduous forest) as
+!      proxies
+
+   real(kind=4), dimension(lucprm,nsn) :: rexpo3 = reshape ((/                                                        &
+   1000., 1000., 1000., 1000., 1000., 1000., 1000., 9999., 1000., 1000., 1000., 9999., 9999., 9999., 9999.,   &
+   1000., 1000.,  400.,  400.,  600.,  400.,  400., 9999.,  400.,  400.,  600., 9999., 9999., 9999., 9999.,   &
+   1000., 1000.,  400.,  400., 1000.,  400., 1000., 9999.,  600.,  400.,  600., 9999., 9999., 9999., 9999.,   &
+   1500., 1500.,  400.,  400.,  600., 1000., 1000., 9999.,  800.,  400.,  600., 9999., 9999., 9999., 9999.,   &
+   1500., 1500.,  500.,  500.,  700.,  500., 1000., 9999.,  800.,  500.,  600., 9999., 9999., 9999., 9999.    &
+                                                      /),(/lucprm,nsn/))
+
+!  resistance for other exposed surfaces (sulfur dioxide) (referred to as r_lu (for upper canopy) and r_clS 
+!      (for lower canopy) in WESELY, 1989); N.B. values for tundra (LUC9) and dwarf trees and shrubs (LUC10)  
+!      were obtained using Wesely's class 11 (rocky open spaces with low-growing shrubs) and class 4 
+!      (deciduous forest) as proxies
+
+   real(kind=4), dimension(lucprm,nsn) :: rexpso2 = reshape ((/                                                       &
+   2000., 2000., 2000., 2000., 2000., 2000., 2000., 9999., 4000., 2000., 2500., 9999., 9999., 9999., 9999.,   &
+   2000., 2000., 9000., 9000., 4000., 9000., 9000., 9999., 9000., 9000., 9000., 9999., 9999., 9999., 9999.,   &
+   3000., 3000., 9000., 9000., 6000., 9000., 9000., 9999., 9000., 9000.,  400., 9999., 9999., 9999., 9999.,   &
+    200.,  200., 9000., 9000.,  400., 9999., 9999., 9999., 9000., 9000.,  400., 9999., 9999., 9999., 9999.,   &
+   2000., 2000., 4000., 4000., 3000., 4000., 4000., 9999., 8000., 4000., 3000., 9999., 9999., 9999., 9999.    &
+                                                       /),(/lucprm,nsn/))
+
+!  canopy resistance (referred to as r_ac, in-canopy aerodynamic resistance, by WESELY, 1989); N.B. values
+!     for dwarf trees and shrubs (LUC10) were obtained from Wesely's class 11 (rocky open spaces with 
+!     low-growing shrubs)
+!
+!   real(kind=4), dimension(lucprm,nsn) :: rcanp = reshape ((/                                     &
+!   2000., 2000., 2000., 2000., 2000., 100., 200., 0., 0., 200., 300., 0., 0., 0., 100.,   &
+!   2000., 2000., 1500., 1500., 1700., 100., 150., 0., 0., 140., 200., 0., 0., 0., 100.,   &
+!   2000., 2000., 1000., 1000., 1500., 100.,  10., 0., 0., 120., 100., 0., 0., 0., 100.,   &
+!   2000., 2000., 1000., 1000., 1500.,  10.,  10., 0., 0.,  50.,  50., 0., 0., 0., 100.,   &
+!   2000., 2000., 1200., 1200., 1500.,  80.,  50., 0., 0., 120., 200., 0., 0., 0., 100.    &
+!                                                     /),(/lucprm,nsn/))
+
+!  new values for canopy resistance (referred to as r_ac, in-canopy aerodynamic resistance, by Zhang et al., 
+!     2003) as a test.  values have been extracted from Table 1 of Zhang et al. (2003) and seasonal variation
+!     is based on the range of values in this table plus the seasonal variation of leaf area index given 
+!     below in the LAINDEX table
+
+   real(kind=4), dimension(lucprm,nsn) :: rcanp = reshape ((/                                     &
+   100., 250., 100., 250., 190., 40., 40., 0., 0., 60., 20., 0., 0., 0., 40.,   &
+   100., 250.,  85., 190., 150., 40., 40., 0., 0., 60., 20., 0., 0., 0., 40.,   &
+   100., 250.,  70., 115., 110., 40., 10., 0., 0., 30., 20., 0., 0., 0., 40.,   &
+   100., 250.,  60., 100., 100., 10., 10., 0., 0., 20., 20., 0., 0., 0., 40.,   &
+   100., 250.,  60., 100., 100., 30., 20., 0., 0., 30., 20., 0., 0., 0., 40.    &
+                                                     /),(/lucprm,nsn/))
+
+!  Stomatal-resistance-related parameters (rsmin from WESELY, 1989: based on r_i); note that 
+!     values for tundra (LUC9) and dwarf trees and shrubs (LUC10) were obtained using Wesely's
+!     class 11 (rocky open spaces with low-growing shrubs) and class 4 (deciduous forest) as proxies
+
+   real(kind=4), dimension(lucprm,nsn) :: rsmin = reshape ((/                                                     &
+   130., 130.,   70.,   70., 100.,  120.,   60., 9999.,  150.,   70.,   80., 9999., 9999., 9999., 9999.,  &
+   250., 250., 9999., 9999., 800., 9999., 9999., 9999., 9999., 9999., 9999., 9999., 9999., 9999., 9999.,  &
+   250., 250., 9999., 9999., 800., 9999., 9999., 9999., 9999., 9999., 9999., 9999., 9999., 9999., 9999.,  &
+   400., 400., 9999., 9999., 800., 9999., 9999., 9999., 9999., 9999., 9999., 9999., 9999., 9999., 9999.,  &
+   250., 250.,  140.,  140., 190.,  240.,  120., 9999.,  300.,  140.,  160., 9999., 9999., 9999., 9999.   &
+                                                      /),(/lucprm,nsn/))
+
+!  from Zhang, Brook, and Vet (2002) for 15 land-use categories: 
+
+   real(kind=4), dimension(lucprm) :: tmin = (/ -5.0,    0.0,   -5.0,    0.0, -3.0, &
+                                         5.0,    5.0, 9999.0, 9999.0,  0.0, &
+                                         5.0, 9999.0, 9999.0, 9999.0,  0.0  /)
+
+   real(kind=4), dimension(lucprm) :: tmax = (/ 40.0,   45.0,   40.0,   45.0, 42.0, &
+                                        45.0,   45.0, 9999.0, 9999.0, 43.0, &
+                                        45.0, 9999.0, 9999.0, 9999.0, 45.0  /)
+
+   real(kind=4), dimension(lucprm) :: topt = (/ 15.0,   30.0,   15.0,   27.0, 21.0, &
+                                        27.0,   25.0, 9999.0, 9999.0, 21.5, &
+                                        25.0, 9999.0, 9999.0, 9999.0, 22.0  /)
+
+!  Leaf Area Index from Zhang et al. (2002)
+
+   real(kind=4), dimension(lucprm,nsn) :: laindex = reshape ((/                                                      &
+   5.30,  4.50,  1.10,  3.40,  4.50,  2.00,  2.00,  0.00, 0.00,  2.50,  0.20,  0.00,  0.00,  0.00,  0.30,    &
+   5.30,  4.50,  0.80,  1.90,  3.50,  1.50,  1.50,  0.00, 0.00,  2.50,  0.20,  0.00,  0.00,  0.00,  0.20,    &
+   4.70,  4.50,  0.30,  0.10,  2.30,  1.00,  1.00,  0.00, 0.00,  1.50,  0.10,  0.00,  0.00,  0.00,  0.10,    &
+   5.50,  4.50,  0.00,  0.00,  2.30,  0.50,  0.00,  0.00, 0.00,  1.20,  0.00,  0.00,  0.00,  0.00,  0.00,    &
+   5.50,  4.50,  0.00,  0.00,  2.30,  0.50,  0.00,  0.00, 0.00,  0.50,  0.10,  0.00,  0.00,  0.00,  0.20     &
+                                                        /),(/lucprm,nsn/))
+
+!  Surface Roughness Length [m] from Zhang et al. (2002)
+!  Note that urban area roughness length was increased from 1.0 to 2.0
+
+   real(kind=4), dimension(lucprm,nsn) :: zz0 = reshape ((/                                                              &
+   0.80,  2.65,  0.85,  1.05,  1.15,  0.10,  0.10,  0.04, 0.03,  0.10,  0.03,  0.01,  0.0001,  0.0001 ,  2.00,   &
+   0.90,  2.65,  0.90,  1.05,  1.15,  0.10,  0.10,  0.04, 0.03,  0.10,  0.03,  0.01,  0.0001,  0.0001,   2.00,   &
+   0.90,  2.65,  0.80,  0.95,  1.15,  0.05,  0.02,  0.04, 0.03,  0.10,  0.02,  0.01,  0.0001,  0.0001,   2.00,   &
+   0.90,  2.65,  0.55,  0.55,  1.15,  0.02,  0.02,  0.04, 0.03,  0.10,  0.02,  0.01,  0.0001,  0.0001,   2.00,   &
+   0.90,  2.65,  0.60,  0.75,  1.15,  0.05,  0.05,  0.04, 0.03,  0.10,  0.03,  0.01,  0.0001,  0.0001,   2.00    &
+                                                    /),(/lucprm,nsn/))
+
+!  data for hstar (from Table 2 of Wesely, 1989): 
+!  henry's constant: Solubility in water
+!  fzero: Chemical reactivity
+!  Those are used to evaluate how much gas is dissolved in mesophyll, cuticle, and other vegetation surfaces
+
+   real(kind=4), dimension(maxnsa) :: hstar =     (/                               &
+    1.0E05, -9999.0,  3.0E-3, 1.0E-02, 1.0E-02, 1.0E05,  1.0E14,      3.6, &
+   -9999.0, -9999.0, -9999.0, -9999.0, -9999.0, -9999.0,  6000.0,    15.0, &
+   -9999.0, -9999.0, -9999.0, -9999.0, -9999.0,  1.0E05, -9999.0, -9999.0, &
+   -9999.0, -9999.0, -9999.0,  2.0E04, -9999.0                            /)
+
+   real(kind=4), dimension(maxnsa) :: fzero = (/                                   &
+       0.0,     0.0,     0.0,     0.1,     1.0,     1.0,     0.0,     0.1, &
+   -9999.0, -9999.0, -9999.0, -9999.0, -9999.0, -9999.0,     0.0,     0.0, &
+   -9999.0, -9999.0, -9999.0, -9999.0, -9999.0,     0.1, -9999.0, -9999.0, &
+   -9999.0, -9999.0, -9999.0,     0.0, -9999.0                            /)
+!
+! as above but for use with alternative formulation Robichaud2
+
+   real(kind=4), dimension(maxnsa) :: hstar2 =     (/                               &
+   1.2,    -9999.0,  1.9E-3, 1.2E-02, 1.3E-02,  1.0E05,   2.6E6,    3.6, &
+   1.5E-3, -9999.0,  4.7E-3, -9999.0,    0.15, -9999.0,  6000.0,   15.0, &
+   20.0,       1.0,     1.0,    30.0, -9999.0,    49.0, -9999.0, 1.3E-2, &
+   -9999.0,-9999.0, -9999.0,    61.0, -9999.0                            /)
+
+   real(kind=4), dimension(maxnsa) :: fzero2 = (/                                   &
+       0.0,     0.0,     0.0,     0.1,     1.0,     1.0,     1.0,     0.1, &
+       0.0,     0.0,     0.0,     0.0,     0.0,     0.0,     1.0,     1.0, &
+       1.0,     1.0,     1.0,     1.0,     1.0,     0.1,     0.0,     0.0, &
+       1.0,     0.0,     0.1,     0.0,     0.0                            /)
+
+! data for temperature dependency for solubility (Sander, 1999 (Handbook) and Seinfeld and Pandis, 2006
+
+   real(kind=4), dimension(maxnsa) :: ats = (/                                      &
+    3020.,     0.0,    1500.0,  2500.0,  2300.0,  6800.0,  8700.0,  5900.0, &
+    2700.,  -9999.0,   1800.0, -9999.0,  4000.0, -9999.0,  6800.0,  5800.,  &
+    5000.,  -9999.0,  -9999.0,  -9999.0, -9999.0, 4800.0, -9999.0, -9999.0, &
+   -9999.0, -9999.0,  -9999.0,   3400.0, -9999.0                            /)
+
+end module mach_gas_drydep_mod

@@ -1,0 +1,133 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : chm_dupl_tracr_lev.ftn90
+! Creation       : A.Kallaur  ,  GEM-MACH, July 2012
+! Description    : Transfer all level values of every tracer from level 
+!                  nsorc to ndest
+!
+! Arguments: 
+!
+!  nsorc       --> Vertical index level FROM which data will be copied
+!  ndest       --> Vertical index level TO which data will be copied
+!  busdyn_size --> Size of the dynamics bus (slabs, rows of all fields to be advected)
+!  busdyn      --> Adress of DYN bus
+!  slab_index  --> Slab number (chm_nj) on which we are presently working on.
+!  ni,nk       --> True dimensions of 2D vertical slab being passed.
+!
+!==============================================================================
+!
+!!if_on
+subroutine chm_dupl_tracr_lev(busdyn, busdyn_size, ni, nk, nsorc, ndest, slab_index)
+!!if_off
+
+ use chm_utils_mod,        only: chm_lun_out, global_debug
+ use chm_species_info_mod, only: species_master, species_info, nb_species, UNASSIGNED
+ implicit none
+!!if_on
+ integer(kind=4),  intent   (in) :: busdyn_size
+ integer(kind=4),  intent   (in) :: ni, nk, nsorc, ndest, slab_index
+ real(kind=4),     intent(inout) :: busdyn(busdyn_size)
+!!if_off
+!
+! Local Variables
+!
+ type(species_info), pointer   :: the_array(:)
+ integer(kind=4)               :: loop_start, loop_end, i, j
+ logical(kind=4)               :: local_dbg
+ 
+ local_dbg = (.false. .or. global_debug)
+
+ if (local_dbg .and. (slab_index == 1)) then
+    write (chm_lun_out, *) "Enter chm_dupl_tracr_lev for slab #: ", slab_index
+    write (chm_lun_out, *) "Source, destination levels         : ", nsorc, ndest
+ endif
+
+ do i = 1, nb_species
+    if (local_dbg .and. (slab_index == 1)) then
+       write (chm_lun_out, *) "---------------------------------------------"
+       write (chm_lun_out, *) "Specie          : ", i
+       write (chm_lun_out, *) "Number of bins  : ", species_master(i) % nb_bins
+       write (chm_lun_out, *) "Molecular weight: ", species_master(i) % mol_wt
+    endif     
+
+    if (species_master(i) % nb_bins > 1) then
+       the_array  => species_master(i) % bins_array
+       loop_start =  1
+       loop_end   =  species_master(i) % nb_bins
+    else
+       the_array  => species_master
+       loop_start =  i
+       loop_end   =  i
+    endif
+
+    do j = loop_start, loop_end
+       if (species_master(i) % nb_bins > 1) then
+          if (local_dbg .and. (slab_index == 1)) then
+             write(chm_lun_out, *) "----***---"
+             write(chm_lun_out, *)  "Bin number   : ", j
+          endif
+       endif
+       if (the_array(j) % dyn_name /= UNASSIGNED) then
+          if (local_dbg .and. (slab_index == 1)) then
+             write (chm_lun_out, *) "dyn Output name  : ", the_array(j) % dyn_name
+             write (chm_lun_out, *) "dyn Long name    : ", the_array(j) % dyn_lname
+             write (chm_lun_out, *) "dyn String       : ", the_array(j) % dyn_string
+             write (chm_lun_out, *) "dyn Offset       : ", the_array(j) % dyn_offset
+             write (chm_lun_out, *) "dyn Size         : ", the_array(j) % dyn_size
+             write (chm_lun_out, *) "ni,nk            : ", ni,nk
+             write (chm_lun_out, *) "copying frm level: ", nsorc," to level: ", ndest
+          endif
+          call duplicate_row(busdyn(the_array(j) % dyn_offset),ni,nk, nsorc, ndest)
+       endif
+     enddo   ! j = loop_start, loop_end
+ enddo       ! i = 1, nb_species
+
+ if (local_dbg .and. (slab_index == 1)) then
+    write (chm_lun_out, *) "Leaving chm_dupl_tracr_lev:"
+ endif
+         
+ contains
+!
+!  A simple subroutine declaration for a repetitive calculation
+!
+  subroutine duplicate_row(slab, ni, nk, ns, nd)
+     implicit none
+     integer :: ni,nk, ns, nd
+     real    :: slab(ni,nk)
+     integer :: i
+     do i=1,ni
+        slab(i,nd) = slab(i,ns)
+     enddo
+  end subroutine duplicate_row
+
+end subroutine chm_dupl_tracr_lev
+

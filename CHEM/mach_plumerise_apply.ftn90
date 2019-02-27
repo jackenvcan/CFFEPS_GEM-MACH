@@ -1,0 +1,122 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_plumerise_apply.ftn90
+! Creation       : Alexander Kallaur, Stephane Gaudreault april 2008 adaptation for GEM-MACH
+!                  Wanmin Gong, for AURAMS 2004
+!                  Original version from Janusz Pudykiewicz for CHRONOS 1995
+!
+! Description    : Application of "weight" values stored in vertical column to concentration
+!                  field of an advected chemical species, and of a single stack.
+!                  Called by mach_plumerise.
+!
+! Extra info     : Values in vertical array "weight" must already be pre-calculated. See
+!                  mach_plumerise_weight.ftn90 for method which they are calculated.
+!
+! Arguments:
+!            IN
+!                stack_i    : Location along horizontal axis of stack
+!                emiss_rate : Emission rate (g/s) of chemical specie
+!                rho        : Air density (kg/m3)
+!                weight     : Weight factors (over vertical column) to be applied
+!                metvar2d   : Local storage (chemistry lib only, see chm_exe) for met. fields 
+!                             copied from Physics buses (see chm_load_metvar).
+!
+!             IN/OUT
+!                fconc      : Concentration field of advected chemical specie (ug/kg)
+!
+!============================================================================
+!
+!!if_on
+subroutine mach_plumerise_apply(FCONC, emiss_rate, weight, rho, metvar2d, stack_i)
+   use chm_metvar_mod,     only: SIZE_MV2D 
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+!!if_off
+   use chm_metvar_mod,     only: MV2D_DXDY 
+   use chm_utils_mod,      only: global_debug, chm_lun_out, chm_timestep
+   implicit none
+!
+! Declare subroutine arguments
+!
+!!if_on
+              integer(kind=4), intent(in) :: stack_i
+              real(kind=4), intent   (in) :: emiss_rate
+              real(kind=4), intent(inout) :: fconc   (chm_ni,chm_nk)
+              real(kind=4), intent   (in) :: weight  (chm_nk)
+              real(kind=4), intent   (in) :: rho     (chm_ni,chm_nk)
+              real(kind=4), intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+!!if_off
+!
+!  Local variables
+!
+   integer(kind=4)         :: k
+   real(kind=4), parameter :: GRAMMES_TO_MICROGRAMMES    = 1.0e+06  ! conversion factor (g --> ug)
+   logical(kind=4)         :: local_dbg
+
+   external qqexit
+
+   local_dbg = (.false. .or. global_debug)
+
+   if (local_dbg) then
+      write(chm_lun_out, *) ' '
+      write(chm_lun_out, *) '*****************************************************************'
+      write(chm_lun_out, *) 'ENTER mach_plumerise_apply subroutine'
+      write(chm_lun_out, *) 'Emission rate          : ' ,emiss_rate
+      write(chm_lun_out, *) 'Weight sum on the column: ', sum(weight)
+      write(chm_lun_out, *) 'weight function values : '
+      write(chm_lun_out, *) weight
+      write(chm_lun_out, *) 'X-coord of stack       : ',stack_i
+      write(chm_lun_out, *) 'chm_ni,chm_nk                  : ',chm_ni,chm_nk
+      write(chm_lun_out, *) 'chm_timestep           : ',chm_timestep
+
+      do k = chm_nk, 1, -1
+         if (weight(k) < 0) then
+            write(0, *) '### Error in mach_plumerise_apply ###'
+            write(0, *) '# Negative weight for level ', k
+            write(0, *) '###         ABORT         ###'
+            call qqexit(1)
+         endif
+      end do
+   end if
+
+   do k = chm_nk, 1, -1
+      fconc(stack_i,k) = fconc(stack_i,k) + ((emiss_rate * (GRAMMES_TO_MICROGRAMMES / metvar2d(stack_i, MV2D_DXDY)) * weight(k)) / rho(stack_i,k)) * chm_timestep
+   enddo
+
+   if (local_dbg) then
+      write(chm_lun_out, *) 'Exit function mach_plumerise_apply '
+      write(chm_lun_out, *) '*****************************************************************'
+      write(chm_lun_out, *) ' '
+   end if
+
+   return
+
+end subroutine mach_plumerise_apply

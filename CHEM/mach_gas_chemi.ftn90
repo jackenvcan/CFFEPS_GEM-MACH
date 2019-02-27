@@ -1,0 +1,201 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_gas_chemi.ftn90
+! Creation       : J. Pudykiewicz / A. Kallaur,  CHRONOS , 1995/98
+!                : B. Pabla       / P. Makar  ,  GEM-MACH, Feb 2007
+!
+! Description    : Initialize Chemistry Variables. !
+!
+! Extra info     : Set of values used was obtained
+!                  from adom model, version: adomiib(napap)   level: 10/21/89
+!
+! Arguments:  IN
+!                npt      -> Number of gridpoints in one slice
+!                nprcf    -> Number of variable stoichiometric coefficients
+!
+!             OUT
+!                bg    ->
+!
+!============================================================================
+!
+!!if_on
+subroutine mach_gas_chemi (BG, npt, nprcf)
+!!if_off
+   use chm_ptopo_grid_mod,    only: chm_ni
+   use chm_nml_mod,           only: nk_start
+   use mach_gas_chemicbi_mod
+   implicit none
+!!if_on
+   integer(kind=4), intent (in) :: nprcf
+   integer(kind=4), intent (in) :: npt
+   real(kind=8),    intent(out) :: bg(npt,nprcf)
+!!if_off
+!
+!  Local variables
+!
+   integer(kind=4) :: i, j, k
+   real (kind=4)   :: cpar1, cpar2, cole1, cole2, caro1, caro2
+
+   real(kind=4), dimension(ncoeff, ntemp, npres) :: balk4 = reshape((/                    &
+               .2253, .603, .487, .060, .940, .434, 1.374, .2179, .574, .518,             &
+               .053, .947, .444, 1.391, .2099, .554, .551, .046, .954, .489, 1.443,       &
+               .2028, .597, .528, .040, .960, .570, 1.530, .1958, .791, .406, .034, .966, &
+               .710, 1.676, .1922, .988, .269, .028, .972, .845, 1.817,                   &
+               .2222, .590, .450, .104, .896, .422, 1.318, .2154, .563, .475, .091, .909, &
+               .422, 1.331, .2078, .541, .519, .078, .922, .449, 1.372,                   &
+               .2006, .552, .524, .065, .935, .514, 1.449, .1939, .683, .453, .052, .948, &
+               .630, 1.578, .1887, .898, .314, .042, .958, .781, 1.739,                   &
+               .2196, .580, .421, .138, .862, .414, 1.275, .2132, .555, .448, .120, .880, &
+               .410, 1.291, .2060, .531, .491, .101, .899, .427, 1.326,                   &
+               .1985, .534, .515, .082, .918, .482, 1.400, .1925, .629, .472, .065, .935, &
+               .586, 1.521, .1869, .836, .345, .051, .949, .736, 1.685,                   &
+               .2172, .571, .398, .166, .834, .406, 1.240, .2112, .549, .427, .143, .857, &
+               .403, 1.259, .2045, .526, .471, .119, .881, .415, 1.296,                   &
+               .1974, .523, .507, .096, .904, .460, 1.365, .1915, .597, .480, .075, .925, &
+               .555, 1.481, .1859, .790, .367, .058, .942, .702, 1.644,                   &
+               .2151, .565, .379, .190, .810, .401, 1.212, .2095, .544, .410, .163, .837, &
+               .397, 1.234, .2032, .522, .454, .134, .866, .406, 1.272,                   &
+               .1965, .516, .498, .107, .893, .446, 1.339, .1906, .575, .484, .082, .918, &
+               .533, 1.450, .1852, .753, .384, .064, .936, .674, 1.610/) , (/ncoeff, ntemp, npres/))
+
+   real(kind=4), dimension(ncoeff, ntemp, npres) :: balk7 = reshape(                      &
+            (/.0002, .318, .769, .272, .728, .600, 1.329, .0016, .320, .849,              &
+               .231, .769, .660, 1.428, .0066, .331, .917, .189, .811, .750, 1.561,       &
+               .0166, .365, .958, .151, .849, .851, 1.700, .0319, .439, .953, .120, .880, &
+               .959, 1.839, .0523, .522, .934, .095, .905, 1.056, 1.961,                  &
+               .0001, .302, .665, .347, .653, .544, 1.197, .0007, .307, .755, .296, .704, &
+               .595, 1.299, .0040, .317, .841, .245, .755, .675, 1.430,                   &
+               .0109, .344, .901, .198, .802, .774, 1.576, .0245, .402, .920, .158, .842, &
+               .883, 1.725, .0396, .484, .911, .125, .875, .988, 1.863,                   &
+               .0000, .291, .609, .388, .612, .514, 1.126, .0004, .299, .701, .334, .666, &
+               .562, 1.228, .0028, .310, .794, .279, .721, .633, 1.354,                   &
+               .0083, .333, .864, .228, .772, .728, 1.501, .0192, .383, .897, .183, .817, &
+               .836, 1.653, .0351, .462, .898, .144, .856, .949, 1.804,                   &
+               .0000, .284, .571, .416, .584, .494, 1.078, .0003, .292, .664, .361, .639, &
+               .541, 1.180, .0021, .304, .760, .304, .696, .606, 1.302,                   &
+               .0067, .326, .836, .250, .750, .697, 1.447, .0166, .371, .879, .201, .799, &
+               .805, 1.603, .0320, .446, .889, .158, .842, .920, 1.762,                   &
+               .0000, .278, .543, .438, .562, .480, 1.043, .0002, .287, .636, .381, .619, &
+               .525, 1.143, .0017, .300, .733, .323, .677, .586, 1.262,                   &
+               .0056, .320, .814, .267, .733, .673, 1.406, .0147, .362, .865, .215, .784, &
+               .780, 1.565, .0297, .434, .882, .169, .831, .898, 1.729/), (/ncoeff, ntemp, npres/))
+!
+!
+!NOTE: By A. Kallaur Feb. 29 2012 -> Several modules from the declaration block
+!      were eliminated due to their aluding to the alignment process outlined
+!      below. It looks like this section of code was moved elsewhere at the time
+!      (Feb. 29, 2012) of these code modifs.
+!
+! All the variables on chemical dynamic bus are advected/transported.
+! Match their name with given advected species name defined in gadv_spname
+! These names are used to define the molecular weights in "DATA RMWT".
+! Therefore the order of these variables is very important.
+!
+! --- minimum concentrations
+   yming = 1.0d-5
+   ymin2g = 1.0d-20
+   ymin3g = 1.0d-20  !minimum for no (previous 1d-09)
+! --- initial and maximum time step sizes (min) for day & night.
+! --- initial  dt  for  index = 1 (day, night)
+   hstart = 1.0e-6
+! --- initial  dt  for  index = 0 (day)
+   hsub(1) = .2
+! --- initial  dt  for  index = 1 (night)
+   hsub(2) = 2.0
+! --- maximum dt (day)
+   hmax(1) = 5.0
+! --- maximum dt (night)
+   hmax(2) = 15.0
+
+! --- stoichiometric coefficients
+
+!     cpar = c4-c5 fraction of >c3 alkanes on a ppmc basis
+!     cole = terminal alkene fraction of  >c2 alkenes on a ppmc basis
+!     caro = di-alkylbenzene  fraction of di- & tri-alkylbenzenes (ppmc)
+
+! --- alkanes (paraffins)
+   cpar = 0.375
+   cpar1 = cpar / 4.3881163
+   cpar2 = (1.0 - cpar) / 7.82713536
+   xx = cpar1 / (cpar1 + cpar2)
+   xc = 1.0 - xx
+
+! --- alkenes (olefins)
+   cole = 0.500
+   cole1 = cole / 3.5
+   cole2 = (1.0 - cole) / 4.93
+   y = cole1 / (cole1 + cole2)
+   yc = 1.0 - y
+
+! --- aromatics
+   caro = 0.685
+   caro1 = caro / 8.7166478
+   caro2 = (1.0 - caro) / 9.1243209
+   z = caro1 / (caro1 + caro2)
+   zc = 1.0 - z
+
+! --- alkanes
+   do k = 1, npres
+      do j = 1, ntemp
+         do i = 1, ncoeff
+            balka(i, j, k) = xx * balk4(i, j, k) + xc * balk7(i, j, k)
+         end do
+      end do
+   end do
+
+! --- alkenes
+   bg = 0.0
+   do i = (((nk_start - 1) * chm_ni) + 1), npt
+      bg(i, 08) = dble(y)
+      bg(i, 09) = dble(y + 2.00 * yc)
+      bg(i, 10) = dble(0.64 * y)
+      bg(i, 11) = dble(0.50 * y + yc)
+      bg(i, 12) = dble(0.13 * y + 0.27 * yc)
+      bg(i, 13) = dble(0.17 * y + 0.21 * yc)
+      bg(i, 14) = dble(0.06 * y + 0.12 * yc)
+      bg(i, 15) = dble(0.28 * y)
+      bg(i, 16) = dble(0.40 * y)
+      bg(i, 17) = dble(yc)
+      bg(i, 18) = dble(0.40 * y)
+      bg(i, 19) = dble(0.20 * y)
+      bg(i, 20) = dble(0.20 * y + 0.40 * yc)
+      bg(i, 21) = dble(0.60 * y)
+      bg(i, 25) = dble(0.20 * y)
+      bg(i, 26) = dble(0.10 * y + 0.20 * yc)
+! --- aromatics
+      bg(i, 22) = dble(0.65 * z + 0.49 * zc)
+      bg(i, 23) = dble(0.316 * z + 0.86 * zc)
+      bg(i, 24) = dble(0.095 * z)
+   end do
+
+   return
+end

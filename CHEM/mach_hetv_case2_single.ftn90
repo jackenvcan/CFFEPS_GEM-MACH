@@ -1,0 +1,333 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_hetv_case2.ftn90
+! Creation       : P. Makar, V. Bouchet, A. Nenes, S. Gravel, B. Pabla, S. Menard
+! Description    : Heterogeneous chemistry solver for case2.  Based on algorithm's
+!                  in Nenes et al's ISORROPIA solver, recoded to vectorize over the
+!                  gridpoint dimension.  All input arrays are of length npts (total
+!                  number of gridpoints submitted from the calling code.  The
+!                  subsection of each 1-D array between index ns2 and ne2 (inclusive)
+!                  has been pre-sorted, and contains the gridpoint data that must
+!                  be solved using case 2's algorithm.  Operations within this
+!                  subroutine therefore take place over array bounds from ns2 to ne2.
+!
+!                  Units on input are moles/kg air.
+!
+! Extra info     : Athanasios Nenes, Mail Code 210-41, Dept. of Chemical Engineering,
+!                  California Institute of Technology, Pasadena, Ca., 91125, USA
+!                  nenes@its.caltech.edu
+!
+!                  The conditions for which this case is called are as follows:
+!                  tats <  1.0, rh >= drh_ambis
+!                  The reactions representing this case are as follows(bracketed numbers
+!                  indicate that the solution is done in stages, as numbered):
+!
+!                     HSO4 <=> H + SO4 , kHSO4
+!                     NH4 = TA
+!                     H + NH4 = 2 SO4 + HSO4,
+!                     TS = HSO4 + SO4
+!                  The system of equations to be solved in this case are as follows:
+!
+!                     kHSO4 (HSO4) - (H)(SO4) = 0,
+!                     NH4 = TA
+!                     H + NH4 - 2 SO4 - HSO4,
+!                     TS - HSO4 - SO4 = 0
+!                  The solution to the system of equations:
+!
+!                     Let
+!                     b = (kHSO4 - TA + TS),
+!                     c  = - kHSO4 TS.
+!                     SO4 = 0.5*(-b + sqrt(b**2 -4c)),
+!                     H = - TA + SO4 + TS
+!                     HSO4 = TS - SO4
+!                     NH4 = TA
+!
+! Arguments  IN
+!
+!            OUT
+!
+!=============================================================================
+!
+!!if_on
+subroutine mach_hetv_case2_single(nr, so4, no3, nh4, hso4, hno3, h, nh3, amsul, &
+                           ambis, amnit, leto, t, tc, aw, itero, k0, p1, p2, eps2,       &
+                           lwn, ta, ts, tn, tstd, smrt)
+!!if_off
+   use mach_hetv_headers_mod, only: mach_hetv_water_single, mach_hetv_activity_single
+   implicit none   
+!!if_on
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: itero
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: k0   (nr)
+   real(kind=8),    intent   (in) :: p1   (nr)
+   real(kind=8),    intent   (in) :: p2   (nr)
+   real(kind=8),    intent  (out) :: so4  
+   real(kind=8),    intent(inout) :: no3  
+   real(kind=8),    intent  (out) :: nh4  
+   real(kind=8),    intent  (out) :: hso4 
+   real(kind=8),    intent(inout) :: hno3 
+   real(kind=8),    intent(inout) :: h    
+   real(kind=8),    intent(inout) :: nh3  
+   real(kind=8),    intent(inout) :: amsul
+   real(kind=8),    intent(inout) :: ambis
+   real(kind=8),    intent(inout) :: amnit
+   real(kind=8),    intent(inout) :: leto 
+   real(kind=8),    intent   (in) :: t    
+   real(kind=8),    intent   (in) :: tc   
+   real(kind=8),    intent   (in) :: aw   
+   real(kind=8),    intent  (out) :: lwn  
+   real(kind=8),    intent(inout) :: ta   
+   real(kind=8),    intent(inout) :: ts   
+   real(kind=8),    intent(inout) :: tn   
+!!if_off
+!
+!  Local variables:
+!
+   integer(kind=4)               :: jo
+   real(kind=8)                  :: del
+!  Workspace arrays:
+   real(kind=8) :: b, c, v, oh
+   real(kind=8) :: g_h_no3, g_h_no3_o
+   real(kind=8) :: g_h_hso4, g_h_hso4_o
+   real(kind=8) :: g_nh4_hso4, g_nh4_hso4_o
+   real(kind=8) :: g_nh42_so4, g_nh42_so4_o
+   real(kind=8) :: g_h_oh, g_h_oh_o
+   real(kind=8) :: g_nh4_oh, g_nh4_oh_o
+   real(kind=8) :: g_nh4_no3, g_nh4_no3_o
+   real(kind=8) :: g_h2_so4, g_h2_so4_o
+   real(kind=8) :: g_nh43_hso42, g_nh43_hso42_o
+   real(kind=8) :: lwo, lwo_lwn
+   real(kind=8) :: g0_h_no3, g0_h2_so4, g0_h_hso4, g0_nh4_no3, g0_nh42_so4, g0_nh4_hso4
+!  arrays for reaction rates:
+   real(kind=8) :: khso4, kh2o
+
+   external qqexit
+
+!  Initial guess for ions:  TS split evenly between SO4 and HSO4,
+!  NH4 = TA, and H = max(0, 2 SO4 + HSO4 - NH4):
+
+   so4 = 0.5 * ts
+   hso4 = 0.5 * ts
+   nh4 = ta
+   h = max(0.D0, 2.D0 * so4 + hso4 - nh4)
+   
+
+!   Initial guess for liquid water content (will be replaced in calculations to follow:
+   lwo = 1.D0
+
+!  Zero the 'old value' activity coefficient arrays
+   g_h_no3_o      = 0.D0
+   g_h_hso4_o     = 0.D0
+   g_nh4_hso4_o   = 0.D0
+   g_nh4_no3_o    = 0.D0
+   g_nh4_oh_o     = 0.D0
+   g_nh42_so4_o   = 0.D0
+   g_h_oh_o       = 0.D0
+   g_h2_so4_o     = 0.D0
+   g_nh43_hso42_o = 0.D0
+
+!  Looping point for outer iteration:
+   jo = 0
+   del = 999.0D0 ! dummy value to go thgouth the first loop
+! 1000  continue
+   do while (del > eps2 .and. jo < itero)
+      jo = jo + 1
+
+!  Calculate liquid water, based on current ion concentration.
+      call mach_hetv_water_single(so4, h, no3, nh4, hso4, aw, lwo, lwn)
+!
+!
+!  (2)  Calculate new concentrations of ions and other phases; multiply old concentration by
+!  ratio of old to new liquid water contents
+      lwo_lwn = lwo / lwn
+      ta    = ta    * lwo_lwn
+      ts    = ts    * lwo_lwn
+      tn    = tn    * lwo_lwn
+      nh3   = nh3   * lwo_lwn
+      hno3  = hno3  * lwo_lwn
+      so4   = so4   * lwo_lwn
+      h     = h     * lwo_lwn
+      no3   = no3   * lwo_lwn
+      nh4   = nh4   * lwo_lwn
+      hso4  = hso4  * lwo_lwn
+      amnit = amnit * lwo_lwn
+      amsul = amsul * lwo_lwn
+      ambis = ambis * lwo_lwn
+      leto  = leto  * lwo_lwn
+!  Update liquid water content
+      lwo = lwn
+
+!  Calculate rates for Equilibrium constants
+!  5:  HSO4- <=> SO4= + H+
+      khso4 = k0(5) * exp( p1(5) * (tstd / t - 1.D+00)             &
+               + p2(5) * (1.d+00 + log( tstd / t ) - tstd / t )  )
+
+!  Calculate OH concentration for activity coefficient calculations
+      kh2o = k0(10) * exp( p1(10) * (tstd / t - 1.D+00) + p2(10) * &
+                  (1.d+00 + log( tstd / t ) - tstd / t )  )
+
+!  OH assumed to be small; can't get [OH] from given
+!  system of equations, closest one can isolate is
+!  [OH]*gamma(OH)*gamma(H)
+!         oh=aw*kh2o/h*0.5*
+!     1  ( 1.+(sign(1., real(h)-2.*1.E-30)) )
+!     1  + 1.D-30*0.5*( 1.+(sign(1., 2.*1.E-30-real(h))) )
+      oh = 1.D-30
+
+
+!  Calculate activity coefficients
+      call mach_hetv_activity_single (h, hso4, nh4, no3, so4, oh, g_h_no3,  &
+                              g_h_hso4, g_nh4_hso4, g_nh42_so4, g_h_oh, g_nh4_oh, g_nh4_no3, &
+                              g_h2_so4, g_nh43_hso42, g0_h_no3, g0_h2_so4, g0_h_hso4,        &
+                              g0_nh4_no3, g0_nh42_so4, g0_nh4_hso4, tc)
+
+!  Calculate maximum change in activity coefficients since the previous call in this subroutine:
+      del = 0.D0
+
+      del = max(del, abs( (g_h_no3 - g_h_no3_o) / g_h_no3 ) )
+      g_h_no3_o = g_h_no3
+      del = max(del, abs( (g_h_hso4 - g_h_hso4_o) / g_h_hso4 ) )
+      g_h_hso4_o = g_h_hso4
+      del = max(del, abs( (g_nh4_hso4 - g_nh4_hso4_o) / g_nh4_hso4 ) )
+      g_nh4_hso4_o = g_nh4_hso4
+      del = max(del, abs( (g_nh4_no3 - g_nh4_no3_o) / g_nh4_no3 ) )
+      g_nh4_no3_o = g_nh4_no3
+      del = max(del, abs( (g_nh4_oh - g_nh4_oh_o) / g_nh4_oh ) )
+      g_nh4_oh_o = g_nh4_oh
+      del = max(del, abs( (g_nh42_so4 - g_nh42_so4_o) / g_nh42_so4 ) )
+      g_nh42_so4_o = g_nh42_so4
+      del = max(del, abs( (g_h_oh - g_h_oh_o) / g_h_oh ) )
+      g_h_oh_o = g_h_oh
+      del = max(del, abs( (g_h2_so4 - g_h2_so4_o) / g_h2_so4 ) )
+      g_h2_so4_o = g_h2_so4
+      del = max(del, abs( (g_nh43_hso42 - g_nh43_hso42_o) / g_nh43_hso42 ) )
+      g_nh43_hso42_o = g_nh43_hso42
+
+!  Factor activity coefficients into equilibrium constants
+!  to simplify calculations.
+!  *  Conversion factors:
+!  *
+!  *        atmospheres -> moles/kg H2O:
+!  *
+!  *   atmospheres *1.01325E5(kg m^-1 s^-2 /atm) /
+!  *    { 8.3144 (kg m^2 s^-2 mol^-1 K^-1) * T (K) * Lw (kg H2O/kg air)
+!  *          * rho (kg air/m3 air)  }    =  moles/(kg H2O)
+!  *
+!  *        atmospheres^-1 -> (moles/kg H2O)^-1 :
+!  *
+!  *         1          8.3144 * T * Lw * rho     kg H2O
+!  *   ------------- * ----------------------  = --------
+!  *   atmospheres      1.01325E5                 moles
+
+
+! 5:  HSO4- <=> SO4= + H+
+!  Multiply by the square of the H-HSO4 activity coefficient,
+!  and divide by the cube of the H2SO4 activity coefficient:
+      khso4 = khso4 * (g_h_hso4 * g_h_hso4) / (g_h2_so4 * g_h2_so4 * g_h2_so4)
+   
+!   Solve system of equations.
+
+      b = khso4 - ta + ts
+      c = - khso4 * ts
+      if(b  /= 0.D0) then
+         v = 4.d0 * (c) / (b * b)
+      else
+         v = 1.D+03
+      end if
+      if(abs(v) <= smrt .and. b > 0.D0) then
+         so4 =  - ((((  14.D0 * c / (b * b) + 5.D0) &
+                     * c / (b * b) + 2.D0)               &
+                     * c / (b * b) + 1.D0)               &
+                     * c / (b * b) + 1.D0) * c / b
+      else
+            so4 = 0.5d0 * (-b + sqrt(b * b - 4.d0 * c) )
+      end if
+      so4 = max(so4,0.D0)
+      h = max((- ta + so4 + ts), 0.D0)
+      hso4 = max((ts - so4), 0.D0)
+      nh4 = ta
+
+!  Convergence check:  Have the activity coefficients
+!  changed by more than eps2 in the last iteration?  If
+!  so, repeat the calculation with the new activity
+!  coefficients.  Keep track of the number of iterations.
+!    if(del > eps2 .and. jo < itero) goto 1000
+   end do
+!   Activity coefficients changed by less than eps2 during
+!   the previous iteration; the problem has converged.  Zero
+!   the particle nitrate, the gas-phase ammonia, and the salts,
+!   and return to the calling code.
+
+   no3   = 0.D0
+   nh3   = 0.D0
+   ambis = 0.D0
+   amsul = 0.D0
+   amnit = 0.D0
+   leto  = 0.D0
+   hno3  = tn
+
+!  Convert values back to moles/kg air from moles/kg water by
+!  multiplying by the liquid water content:
+   ta    = ta    * lwn
+   ts    = ts    * lwn
+   tn    = tn    * lwn
+   nh3   = nh3   * lwn
+   hno3  = hno3  * lwn
+   so4   = so4   * lwn
+   h     = h     * lwn
+   no3   = no3   * lwn
+   nh4   = nh4   * lwn
+   hso4  = hso4  * lwn
+   amnit = amnit * lwn
+   amsul = amsul * lwn
+   ambis = ambis * lwn
+   leto  = leto  * lwn
+!  CHECK
+   if(h < 0.0D0) then
+      write(0, *) '### Error in mach_hetv_case2 ###'
+      write(0, *) 'Negative H+ value detected in case2'
+      write(0, *) 'H+ : '   ,h
+      write(0, *) 'HSO4-: ' ,hso4
+      write(0, *) 'SO4=: '  ,so4
+      write(0, *) 'NO3-: '  ,no3
+      write(0, *) 'NH4+: '  ,nh4
+      write(0, *) 'HNO3: '  ,hno3
+      write(0, *) 'NH3: '   ,nh3
+      write(0, *) '###         ABORT         ###'
+      call qqexit
+   end if
+
+   return
+end

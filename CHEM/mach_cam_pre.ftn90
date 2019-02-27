@@ -1,0 +1,264 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_cam_pre.ftn90
+! Creation       : P. Huang, Mar. 2008 for adapting AURAMS version CAM
+!                  P. Huang, Dec. 2007 for GEM-MACH
+!
+! Description    : 1. Set indices of tracer for gas and PM applied in CAM model
+!                  2. Pre-calculations for CAM model
+!
+! Extra info     : Varify size bin configuration
+!
+! Arguments:  OUT
+!               IAER_SP        -> Indices of aerosol components based on species ID and number of size bin
+!               AEROSIZE1      -> Bin size of dry aerosol (m)
+!               COAGFR         -> Coagulation transformation ratio
+!               PVOL           -> Bin volume of dry aerosol
+!               IGFIJ          -> Indices of coagulation transformation
+!               IGF            -> Total indices of coagulation
+!
+!============================================================================
+!
+!!if_on
+subroutine mach_cam_pre(AEROSIZE1, PVOL, IGF, IGFIJ, COAGFR, IAER_SP)
+   use mach_cam_utils_mod, only: isize
+   use mach_cam_pre_mod,   only: icom
+!!if_off
+   use chm_ptopo_grid_mod, only: chm_nk
+   use chm_utils_mod,      only: chm_lun_out, global_debug, post_increment
+   use chm_nml_mod,        only: aerosize, dlev
+   use mach_cam_pre_mod,   only: aeroname, maxngs, icom, gasextr, igas1, igas2, ngas, iae1, iae2, ncam
+   use mach_cam_pre_mod,   only: igs_SO2, igs_SO4, igs_NO, igs_NO2, igs_O3, igs_H2O2, igs_HNO3, &
+                                 igs_PAN, igs_C3H8, igs_ALKA, igs_ETHE, igs_ALKE, igs_TOLU,     &
+                                 igs_AROM, igs_HCHO, igs_ALD2, igs_MEK, igs_MGLY, igs_DIAL,     &
+                                 igs_ROOH, igs_CRES, igs_HONO, igs_RNO3, igs_ISOP, igs_HO2,     &
+                                 igs_RO2, igs_MCO3, igs_CO, igs_NH3, igs_DUST, igs_OSD, igs_O,  &
+                                 igs_NO3, igs_N2O5, igs_HNO4, igs_OH, igs_RO2R, igs_R2O2,       &
+                                 igs_RO2N, igs_BZO, igs_CRG1, igs_CRG2, igs_CH4, igs_C2H6,      &
+                                 igs_H2O, igs_O2, igs_M, igs_SOA, igs_CCN, igs_H2S, igs_DMS 
+   use mach_cam_pre_mod,   only: iae_SU, iae_SS, iae_OC, iae_NI, iae_AM, iae_SD, iae_EC, iae_PC 
+   use mach_cam_utils_mod, only: icob
+   implicit none
+!!if_on
+   real(kind=4),    intent(out) :: aerosize1(2,isize)
+   real(kind=4),    intent(out) :: pvol     (isize)
+   integer(kind=4), intent(out) :: igf      (isize)
+   integer(kind=4), intent(out) :: igfij    (isize,isize*isize,2)
+   real(kind=4),    intent(out) :: coagfr   (isize,isize,isize)
+   integer(kind=4), intent(out) :: iaer_sp  (icom,isize)
+!!if_off
+!
+!  Declaration of local variables
+!
+   integer(kind=4)  :: i, j, k, n, itot, idx
+   real(kind=4)     :: voij, ri, vokp1, vok, vokm1
+   logical(kind=4)  :: local_dbg
+   external qqexit
+
+   ri    = 0.0
+   voij  = 0.0
+   vok   = 0.0
+   vokm1 = 0.0
+   vokp1 = 0.0
+
+   local_dbg = (.false. .or. global_debug)
+
+   if (icob /= isize) then
+      write(*, *)'### error in mach_cam_pre ###'
+      write(*, *)'icob != isize, please check name list fiel, isize=', isize, '    icob=', icob
+      call qqexit(1)
+   end if
+   if (dlev > chm_nk) then
+      write(0, *)'### error in mach_cam_pre ###'
+      write(0, *)'# dlev is over limit # dlev=', dlev, '    chm_nk=', chm_nk
+      write(0, *)'###         abort         ###'
+      call qqexit(1)
+   end if
+
+!  Index of gas species in CAM master array
+   idx=1
+   igs_SO2  = post_increment(idx)
+   igs_SO4  = post_increment(idx)
+   igs_NO   = post_increment(idx)
+   igs_NO2  = post_increment(idx)
+   igs_O3   = post_increment(idx)
+   igs_H2O2 = post_increment(idx)
+   igs_HNO3 = post_increment(idx)
+   igs_PAN  = post_increment(idx)
+   igs_C3H8 = post_increment(idx)
+   igs_ALKA = post_increment(idx)
+   igs_ETHE = post_increment(idx)
+   igs_ALKE = post_increment(idx)
+   igs_TOLU = post_increment(idx)
+   igs_AROM = post_increment(idx)
+   igs_HCHO = post_increment(idx)
+   igs_ALD2 = post_increment(idx)
+   igs_MEK  = post_increment(idx)
+   igs_MGLY = post_increment(idx)
+   igs_DIAL = post_increment(idx)
+   igs_ROOH = post_increment(idx)
+   igs_CRES = post_increment(idx)
+   igs_HONO = post_increment(idx)
+   igs_RNO3 = post_increment(idx)
+   igs_ISOP = post_increment(idx)
+   igs_HO2  = post_increment(idx)
+   igs_RO2  = post_increment(idx)
+   igs_MCO3 = post_increment(idx)
+   igs_CO   = post_increment(idx)
+   igs_NH3  = post_increment(idx)
+   igs_DUST = post_increment(idx)
+   igs_OSD  = post_increment(idx)
+   igs_O    = post_increment(idx)
+   igs_NO3  = post_increment(idx)
+   igs_N2O5 = post_increment(idx)
+   igs_HNO4 = post_increment(idx)
+   igs_OH   = post_increment(idx)
+   igs_RO2R = post_increment(idx)
+   igs_R2O2 = post_increment(idx)
+   igs_RO2N = post_increment(idx)
+   igs_BZO  = post_increment(idx)
+   igs_CRG1 = post_increment(idx)
+   igs_CRG2 = post_increment(idx)
+   igs_CH4  = post_increment(idx)
+   igs_C2H6 = post_increment(idx)
+   igs_H2O  = post_increment(idx)
+   igs_O2   = post_increment(idx)
+   igs_M    = post_increment(idx)
+
+   igs_SOA  = post_increment(idx)
+   igs_CCN  = post_increment(idx)
+   IGAS1 = igs_SO2
+   IGAS2 = igs_M
+   NGAS  = idx - IGAS1
+
+
+!  SEQUENCE OF AEROSOL SPECIES
+!     aerosol species ID: 1- SULPHATE,    2- SEA-SALT
+!                         3- OMCARBON,    4- NITRATES
+!                         5- AMMONIUM,    6- CRUSTAL MATERIAL/SOILDUST
+!                         7- BLCARBON,    8- PMCARBON
+
+   do idx = 1, icom
+      if (aeroname(idx) == 'SULPHATE') iae_SU = idx
+      if (aeroname(idx) == 'SEA-SALT') iae_SS = idx
+      if (aeroname(idx) == 'OMCARBON') iae_OC = idx
+      if (aeroname(idx) == 'NITRATES') iae_NI = idx
+      if (aeroname(idx) == 'AMMONIUM') iae_AM = idx
+      if (aeroname(idx) == 'SOILDUST') iae_SD = idx
+      if (aeroname(idx) == 'BLCARBON') iae_EC = idx
+      if (aeroname(idx) == 'PMCARBON') iae_PC = idx
+   end do
+
+   iae1 = maxngs + gasextr + 1
+   if (iae1 /= igas2 + gasextr + 1) then
+      write(0, *)'error in starting number of aerosol tracer, ',  &
+                 'iae1=', iae1, 'igas2+gasextr+1=', igas2+gasextr+1
+      call qqexit(1)
+   end if
+   do n = 1, icom
+      do i = 1, isize
+         iaer_sp(n, i) = (n - 1) * isize+i + (iae1 - 1)
+      end do
+   end do
+   iae2 = iaer_sp(icom, isize)
+   ncam = iae2
+
+   idx=iae2+1
+   igs_H2S = post_increment(idx)
+   igs_DMS = post_increment(idx)
+
+!  bin size of dry aerosol
+   do n = 1, isize
+      aerosize1(1, n) = aerosize(n)   * 1.e-6
+      aerosize1(2, n) = aerosize(n+1) * 1.e-6
+   end do
+
+!  bin volume of dry aerosol
+   do i = 1, isize
+      ri = (aerosize1(1, i) + aerosize1(2, i)) / 2.0
+      pvol(i) = 4.189 * ri * ri * ri
+   end do
+
+!  coagulation transformation ratio
+   coagfr = 0.0
+   igf    = 0
+   igfij  = 0
+   do i = 1, icob
+      do j = i, icob
+!  new volume of coagulated particle [i, j]
+         voij = pvol(i) + pvol(j)
+         do k = j, icob
+            vok = pvol(k)
+            if (k == icob .and. voij >= vok) then
+               coagfr(i, j, k) = 1.0
+            end if
+            if (k < icob) then
+               vokp1 = pvol(k + 1)
+               if( voij >= vok .and. voij < vokp1) then
+                  coagfr(i, j, k) = vok / voij * (vokp1 - voij) / (vokp1 - vok)
+               end if
+            end if
+            if (k > 1) then
+               vokm1 = pvol(k - 1)
+               if( voij > vokm1 .and. voij < vok) then
+                  coagfr(i, j, k) = 1.0 - coagfr(i, j, k - 1)
+               end if
+            end if
+            coagfr(j, i, k) = coagfr(i, j, k)
+         end do
+      end do
+   end do
+
+   do k = 1, isize
+      itot = 0
+      do j = 1, isize
+         do i = 1, isize
+            if (coagfr(i, j, k) > 0.0) then
+               itot = itot + 1
+               igfij(k, itot, 1) = i
+               igfij(k, itot, 2) = j
+            end if
+         end do
+      end do
+
+      igf(k) = itot
+      i = igfij(k, itot, 1)
+      j = igfij(k, itot, 2)
+
+      if (local_dbg) then
+         write (chm_lun_out, *)'^^^^^^ ', k, igf(k), i, j
+      end if
+   end do
+
+   return
+end

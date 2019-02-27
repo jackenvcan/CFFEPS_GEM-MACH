@@ -1,0 +1,220 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_incld_shift3d_aero.ftn90
+! Creation       : P.Makar, S. Menard, W. Gong, A. Dastoor, Y. Larocque, S. Gravel, GEM-MACH, June 2008
+! Description    : Rearrange arrays according to shifted indices.
+!
+! Extra info     :
+!
+! Arguments  IN
+!
+!              maxnsaq  --> No. of Aqueous species  (13)
+!              maxnsg   --> No. of gas/part species (12)
+!              nptsnz   --> Total number of grids to integrate
+!              icheck1  --> = 0 for grids with clear sky
+!                           = 1 for grids with snow only
+!                           = 2 for grids with snow + CW
+!                           = 3 for grids with CW only
+!            OUT
+!
+!              jgrid    --> New grid position after shifting
+!              n1       --> Memory adress of snow grids only
+!              n2       --> Memory adress of CW+ snow grid
+!              n3       --> Memory adress of CW grids only
+
+!            INOUT
+!
+!               gaz_conc--> gas/part species conc (ppm)
+!               aq      --> Aqueous sp. conc(molar) in cloud water & Ice/Snow
+!               q       --> Liquid water conc of cloudwater, Ice/Snow, & rainwater in air (gm-w/m**3-air)
+!               pgscav  --> Gas/part scavenging (or diffusion)
+!               tempk   --> Atmospheric Temperature (Kelvin)
+!               tempi   --> Inverse of tempk (1.0/tempk)
+!               rtemp   --> Rgas*tempk/wden (wden=1e+6 gm/m3)
+!               psacw   --> CW to snow collection rates(gm/m3 s)
+!               rad1    --> CW droplet radii (6.6 e-6 m)
+!               fctr    --> cloud-to-rain conversion rate
+!=============================================================================
+!
+!!if_on
+subroutine mach_incld_shift3d_aero (icheck1, N1, N2, N3, JGRID,                                 &
+                         gaz_conc, aq, q, pgscav, tempk, tempi, rtemp, psacw, rad1, nptsnz, fctr)
+   use mach_cam_utils_mod, only: maxnsg, maxnsaq
+!!if_off
+   implicit none
+!!if_on
+              integer(kind=4), intent   (in) :: nptsnz
+              integer(kind=4), intent   (in) :: icheck1(nptsnz)
+              integer(kind=4), intent  (out) :: n1
+              integer(kind=4), intent  (out) :: n2
+              integer(kind=4), intent  (out) :: n3
+              integer(kind=4), intent  (out) :: jgrid   (nptsnz)
+              real(kind=4),    intent(inout) :: gaz_conc(nptsnz,maxnsg)
+              real(kind=4),    intent(inout) :: aq      (nptsnz,maxnsaq,2)
+              real(kind=4),    intent(inout) :: q       (nptsnz,3)
+              real(kind=4),    intent(inout) :: pgscav  (nptsnz,maxnsg,2)
+              real(kind=4),    intent(inout) :: tempk   (nptsnz)
+              real(kind=4),    intent(inout) :: tempi   (nptsnz)
+              real(kind=4),    intent(inout) :: rtemp   (nptsnz)
+              real(kind=4),    intent(inout) :: psacw   (nptsnz)
+              real(kind=4),    intent(inout) :: rad1    (nptsnz)
+              real(kind=4),    intent(inout) :: fctr    (nptsnz)
+!!if_off
+!
+! Local variables
+!
+   real(kind=4), dimension(nptsnz) :: shtemp, shtemp1, shtemp2, shtemp3, shtemp4, shtemp7
+   integer(kind=4)                 :: ncount, ncount1, ncount2, ncount3
+   integer(kind=4)                 :: j, i, ij, jk, jj, ipos, m
+
+!  determine the new positions of the indicies
+
+   ncount = 0
+   ncount1 = 0
+   ncount2 = 0
+   ncount3 = 0
+
+!  split the array for  Clear, SN, SN+CW,  CW
+   ipos = nptsnz + 1
+
+!  CW only icheck1=3
+   do j = 1, nptsnz
+      if ((icheck1(j) == 3)) then
+         ipos = ipos - 1
+         ncount3 = ncount3 + 1
+         jgrid(ipos) = j
+      end if
+   end do
+
+!  SN+CW icheck1=2
+   do j = 1, nptsnz
+      if ((icheck1(j) == 2)) then
+         ipos = ipos - 1
+         ncount2 = ncount2 + 1
+         jgrid(ipos) = j
+      end if
+   end do
+
+!  SN only icheck=1
+   do j = 1, nptsnz
+      if ((icheck1(j) == 1)) then
+         ipos = ipos - 1
+         ncount1 = ncount1 + 1
+         jgrid(ipos) = j
+      end if
+   end do
+
+!  Clear icheck1=0
+   do j = 1, nptsnz
+      if ((icheck1(j) == 0)) then
+         ipos = ipos - 1
+         ncount = ncount + 1
+         jgrid(ipos) = j
+      end if
+   end do
+
+!  use these to rearrange the G data array
+   do i = 1, maxnsg
+      do j = 1, nptsnz
+         jk = jgrid(j)
+         shtemp(j) = gaz_conc(jk, i)
+      end do
+      do j = 1, nptsnz
+         gaz_conc(j, i) = shtemp(j)
+      end do
+   end do
+
+!  use these to rearrange the AQ data array
+   do m = 1, 2
+      do i = 1, maxnsaq
+         do j = 1, nptsnz
+            jk = jgrid(j)
+            shtemp(j) = aq(jk, i, m)
+         end do
+         do j = 1, nptsnz
+            aq(j, i, m) = shtemp(j)
+         end do
+      end do
+   end do
+
+!  use these to rearrange the Q data array
+   do jj = 1, 3
+      do j = 1, nptsnz
+         jk = jgrid(j)
+         shtemp(j) = q(jk, jj)
+      end do
+      do j = 1, nptsnz
+         q(j, jj) = shtemp(j)
+      end do
+   end do
+
+!  use these to rearrange the PGSCAV data array
+
+   do ij = 1, 2
+      do i = 1, maxnsg
+         do j = 1, nptsnz
+            jk = jgrid(j)
+            shtemp(j) = pgscav(jk, i, ij)
+         end do
+         do j = 1, nptsnz
+         pgscav(j, i, ij) = shtemp(j)
+         end do
+      end do
+   end do
+
+!  use these to rearrange the: tempk, tempi, rtemp, psacw, rad1 and fctr data array
+   do j = 1, nptsnz
+      jk = jgrid(j)
+      shtemp(j) = tempk(jk)
+      shtemp1(j) = tempi(jk)
+      shtemp2(j) = rtemp(jk)
+      shtemp3(j) = psacw(jk)
+      shtemp4(j) = rad1(jk)
+      shtemp7(j) = fctr(jk)
+
+   end do
+   do j = 1, nptsnz
+      tempk(j) = shtemp(j)
+      tempi(j) = shtemp1(j)
+      rtemp(j) = shtemp2(j)
+      psacw(j) = shtemp3(j)
+      rad1(j) = shtemp4(j)
+      fctr(j) = shtemp7(j)
+   end do
+
+!  defined n1, n2, n3
+   n1 = ncount + 1
+   n2 = ncount + ncount1 + 1
+   n3 = ncount + ncount1 + ncount2 + 1
+
+return
+end

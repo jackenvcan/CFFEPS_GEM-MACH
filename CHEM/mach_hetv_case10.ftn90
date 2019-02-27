@@ -1,0 +1,194 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_hetv_case10.ftn90
+! Creation       : P. Makar, V. Bouchet, A. Nenes, S. Gravel, B. Pabla, S. Menard
+! Description    : Heterogeneous chemistry solver for case10.  Based on algorithm's
+!                  in Nenes et al's ISORROPIA solver, recoded to vectorize over the
+!                  gridpoint dimension.  All input arrays are of length npts (total
+!                  number of gridpoints submitted from the calling code.  The
+!                  subsection of each 1-D array between index ns10 and ne10 (inclusive)
+!                  has been pre-sorted, and contains the gridpoint data that must
+!                  be solved using case10's algorithm.  Operations within this
+!                  subroutine therefore take place over array bounds from ns10 to ne10.
+!
+!                  Units on input are moles/kg air.
+!
+! Extra info :     Athanasios Nenes, Mail Code 210-41, Dept. of Chemical Engineering,
+!                  California Institute of Technology, Pasadena, Ca., 91125, USA
+!                  nenes@its.caltech.edu
+!
+!                  The conditions for which this case is called are as follows:
+!                  TA/TS >= 2.0 , mdrh_amnit_amsul <= RH < drhamnit
+!                  This case uses linear interpolation between the solutions for the
+!                  systems of equations for "dry" and "wet" conditions.
+!                  The dry case and conditions are:
+!                  case 13, TA/TS >= 2.0, rh < mdrh_amnit_amsul
+!                  The wet case and wet case conditions are:
+!                  case 15, TA/TS >= 2.0, drhamnit <= RH < drhamsul
+!                  Interpolation is based on the parameter WF1; the linear interpolant
+!                  between wet and dry systems.  When WF1 = 1, the dry system is the
+!                  solution, when WF1 = 0, the wet system is the solution.  Values of
+!                  WF between these limits indicate an interpolation between the solutions
+!                  for the wet and dry cases.
+!                  For the conditions noted above, the value of WF is given by:
+!                  wf = ( drhamnit - rh ) / ( drhamnit - mdrh_amnit_amsul)
+!
+! Arguments  IN
+!
+!            OUT
+!
+!=============================================================================
+!
+!!if_on
+subroutine mach_hetv_case10 (npts, nr, ns10, ne10, so4, no3, nh4, hso4, hno3, h, nh3, amsul, ambis, amnit, &
+                   leto, t, tc, rh, iter, itero, k0, p1, p2, eps, eps2, rho, lwn, ta, ts, tn,           &
+                   mdrh_amnit_amsul, drh_amnit, oh, ndiv, tstd, small, smrt                                )
+!!if_off
+   use mach_hetv_headers_mod, only: mach_hetv_case9, mach_hetv_case11
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: ns10
+   integer(kind=4), intent   (in) :: ne10
+   integer(kind=4), intent   (in) :: iter
+   integer(kind=4), intent   (in) :: itero
+   integer(kind=4), intent   (in) :: ndiv
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: small
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: eps
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent   (in) :: k0(nr)
+   real(kind=8),    intent   (in) :: p1(nr)
+   real(kind=8),    intent   (in) :: p2(nr)
+   real(kind=8),    intent  (out) :: so4             (npts)
+   real(kind=8),    intent  (out) :: no3             (npts)
+   real(kind=8),    intent  (out) :: nh4             (npts)
+   real(kind=8),    intent  (out) :: hso4            (npts)
+   real(kind=8),    intent  (out) :: hno3            (npts)
+   real(kind=8),    intent  (out) :: h               (npts)
+   real(kind=8),    intent  (out) :: nh3             (npts)
+   real(kind=8),    intent  (out) :: amsul           (npts)
+   real(kind=8),    intent  (out) :: ambis           (npts)
+   real(kind=8),    intent  (out) :: amnit           (npts)
+   real(kind=8),    intent  (out) :: leto            (npts)
+   real(kind=8),    intent   (in) :: t               (npts)
+   real(kind=8),    intent   (in) :: tc              (npts)
+   real(kind=8),    intent   (in) :: rh              (npts)
+   real(kind=8),    intent   (in) :: rho             (npts)
+   real(kind=8),    intent  (out) :: lwn             (npts)
+   real(kind=8),    intent(inout) :: ta              (npts)
+   real(kind=8),    intent(inout) :: ts              (npts)
+   real(kind=8),    intent(inout) :: tn              (npts)
+   real(kind=8),    intent   (in) :: mdrh_amnit_amsul(npts)
+   real(kind=8),    intent   (in) :: drh_amnit       (npts)
+   real(kind=8),    intent  (out) :: oh              (npts)
+!!if_off
+!
+!  Local variables:
+!
+   integer(kind=4)               :: i
+   real(kind=8)                  :: wfmin, wfmax
+   real(kind=8), dimension(npts) :: so4d, no3d, nh4d, hso4d, amsuld, ambisd, amnitd, letod, hd, hno3d, nh3d
+   real(kind=8), dimension(npts) :: wf, wf1
+   external qqexit
+
+!  Array dimensioning check:
+   if (ns10 < 1 .or. ns10 > npts .or. ne10 > npts .or. ne10 < ns10) then
+      write(0, *) '### Error in mach_hetv_case10 ###'
+      write(0, *) '# error in array bounds in case10'
+      write(0, *) '###         ABORT         ###'
+      call qqexit(1)
+   end if
+
+!  Calculate value of WF.
+   wfmin = 2.0d0
+   wfmax = -2.0d0
+   do i = ns10, ne10
+      wf(i) = (drh_amnit(i) - rh(i)) / (drh_amnit(i) - mdrh_amnit_amsul(i))
+      wfmin = min(wfmin, wf(i))
+      wfmax = max(wfmax, wf(i))
+   end do
+   if (wfmax > 1.0d0) then
+      write(0, *) '### Error in mach_hetv_case10 ###'
+      write(0, *) '# interpolant out of bounds ( > 1) in case10.'
+      write(0, *) '###         ABORT         ###'
+      call qqexit(1)
+   end if
+   if (wfmin < 0.0d0) then
+      write(0, *) '### Error in mach_hetv_case10 ###'
+      write(0, *) '# interpolant out of bounds ( < 0) in case10.'
+      write(0, *) '###         ABORT         ###'
+      call qqexit(1)
+   end if
+!IBM* UNROLL(8)
+   do i = ns10, ne10
+      wf1(i) = min(max(1.0d0 - wf(i),0.D0),1.D0)
+   end do
+
+!  Calculate dry particle gases and components using Case 9.
+
+   call mach_hetv_case9(npts, nr, ns10, ne10, so4d, no3d, nh4d, hno3d, nh3d, amsuld, ambisd, amnitd, letod, t,  &
+              k0, p1, p2, rho, lwn, ta, ts, tn, tstd, smrt)
+
+!  Calculate wet particle gases and components using Case 11 .
+
+   call mach_hetv_case11(npts, nr, ns10, ne10, so4, no3, nh4, hso4, hno3, h, nh3, amsul, ambis, amnit, leto, t, &
+                        tc, rh, iter, itero, k0, p1, p2, eps, eps2, rho, lwn, ta, ts, tn, oh, ndiv, tstd,    &
+                        small, smrt)
+
+!  Interpolate between the two cases to get the final result (which
+!  replaces the array variables used for the wet case):
+
+   do i = ns10, ne10
+      oh(i)   = wf1(i) * oh(i)
+      h(i)    = wf1(i) * h(i)
+      nh4(i)  = wf1(i) * nh4(i)
+      no3(i)  = wf1(i) * no3(i)
+      hso4(i) = wf1(i) * hso4(i)
+      so4(i)  = wf1(i) * so4(i)
+
+!  Solid phases, gases:
+      amsul(i) = wf(i) * amsuld(i) +  wf1(i) * amsul(i)
+      amnit(i) = wf(i) * amnitd(i) +  wf1(i) * amnit(i)
+      ambis(i) = wf(i) * ambisd(i) +  wf1(i) * ambis(i)
+      leto(i)  = wf(i) * letod(i)  +  wf1(i) * leto(i)
+      nh3(i)   = wf(i) * nh3d(i)   +  wf1(i) * nh3(i)
+      hno3(i)  = wf(i) * hno3d(i)  +  wf1(i) * hno3(i)
+
+!  Liquid water content:
+!     lwn(i) = wf1(i) * lwn(i)
+   end do
+
+   return
+end

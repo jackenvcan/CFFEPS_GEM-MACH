@@ -1,0 +1,127 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : chm_nml_mod.ftn90
+! Creation       : H. Landry, Mai 2008
+! Description    : Modules defining namelist keys
+!
+! Addition_1
+!      By: A. Kallaur
+!      Date: September 19 2011
+!      Synopsis: Add logical variables  "chm_master_switch" and "chm_emis_master_switch" as
+!                as part of high level control mechanism.
+! Extra info     :
+!
+!============================================================================
+
+module chm_nml_mod
+   use chm_utils_mod, only: NMLKEY_LEN
+
+   save
+
+   character(len=NMLKEY_LEN) chm_model_s           ! Name of chemistry model                (Default = 'undefined')
+   character(len=NMLKEY_LEN) chm_pkg_gas_s         ! Name of gas species package            (Default = 'undefined')
+   character(len=NMLKEY_LEN) chm_pkg_pm_s          ! Name of PM species package             (Default = 'undefined')
+   character(len=NMLKEY_LEN) chm_strato_s          ! Name of Stratospheric O3 scheme        (Default = 'NIL')
+   character(len=NMLKEY_LEN) chm_biog_s            ! Name of emissions package              (Default = 'undefined')
+   character(len=NMLKEY_LEN) chm_gas_drydep_s      ! Name of dry deposition scheme of gas   (Default = 'undefined')
+   character(len=NMLKEY_LEN) chm_soa_s             ! Name of SOA scheme                     (Default = 'undefined')
+   character(len=NMLKEY_LEN) chm_vert_diff_s       ! Name of vertical diffusion algo        (Default = 'undefined')
+   character(len=NMLKEY_LEN) chm_mj_treatment_s    ! Name of major point treatment algo     (Default = 'undefined')
+   character(len=NMLKEY_LEN) chm_hetchem_s         ! Name of heterogeneous chemistry scheme (Default = 'undefined')
+   character(len=NMLKEY_LEN) chm_seaflux_s         ! Name of sea salt flux scheme           (Default = 'undefined')
+   character(len=NMLKEY_LEN) chm_winddust_s        ! Name of wind dust package              (Default = 'undefined')
+   character(len=NMLKEY_LEN) chm_pm_drydep_s       ! Name of dry deposition scheme of PM    (Default = 'undefined')
+   character(len=NMLKEY_LEN) chm_aqueous_s         ! Name of aqueous phase chemistry scheme (Default = 'undefined')
+   character(len=NMLKEY_LEN) chm_fugitive_dust_s   ! Name of fugitive dust chemistry scheme (Default = 'undefined')
+   character(len=NMLKEY_LEN) chm_mass_s            ! Name of mass conservation scheme       (Default = 'bc'  )
+   character(len=NMLKEY_LEN) chm_mono_s            ! Name of monotonicity scheme            (Default = 'clip')
+
+   logical(kind=4) chm_master                        ! If false, then GEM should run as if in chm_stub mode  (Def=T)
+   logical(kind=4) chm_emis_master                   ! if false, reading all types (mobile,biogenic, major) of emissions are off (Def=T)
+   logical(kind=4) chm_get_ae_emis_l                 ! Do we import area emissions?                 (Default = .false.)
+   logical(kind=4) chm_get_be_emis_l                 ! Do we import biogenic emissions?             (Default = .false.)
+   logical(kind=4) chm_get_mj_emis_l                 ! Do we import major point sources emissions?  (Default = .false.)
+   logical(kind=4) chm_htap_emis_l                   ! Are we running with the HTAP set of emissions?  (Default = .false.)
+   logical(kind=4) chm_do_mjpts_l                    ! Do we have any maj. pt. srcs at all for local grid (tile)? (Def. = .true.)
+   logical(kind=4) done_mjpts_cnx_main_specie_list   ! Has connection between linked list and main specie list been made?
+   integer(kind=4) chm_step_factor                   ! Chemistry to physics timestep factor         (Default = '-1')
+   logical(kind=4) done_stack_info                   ! Log. Switch to process stack info only once per run.
+   logical(kind=4) done_mjpts_sort                   ! Logical switch to sort or not major point sources emssions
+   logical(kind=4) chm_gaschem_online_l              ! In current state of code, key controls nothing (Default = .false.)
+   logical(kind=4) chm_hetchem_metstlb_l             ! Heterogenous metastable option              (Default = .false.)
+   logical(kind=4) chm_hetv_single_l                 ! Calculating only heterogenous metastable option uing optimized _single code (Default = .false.)
+   logical(kind=4) chm_incld_l                       ! Do we apply in-cloud process?               (Default = .false.)
+   logical(kind=4) chm_blcld_l                       ! Do we apply below cloud process?            (Default = .false.)
+   integer(kind=4) chm_pm_coag_step_intvl            ! Interval of time steps to calculate coagulation coefficient for PM (Default='-1')
+   integer(kind=4) chm_debug_2d_i, chm_debug_3d_i    ! Number of debug variables respectively for 2D and 3D fields (default = -1, max = 18)
+   integer(kind=4) chm_intrsec_ndiv                  ! Number of subdivisions per bin in mach_cam_intrsec*
+   integer(kind=4) chm_intrsec_ver                   ! Version number of the code in mach_cam_intrsec*
+   logical(kind=4) chm_aqhi_l                        ! Output of AQHI index: AQ25 and AQ10         (Default = .false.)
+   logical(kind=4) chm_diag_wetdep_l                 ! Diagnostic for wet deposition               (Default = .false.)
+   logical(kind=4) chm_diag_drydep_l                 ! Diagnostic for dry deposition               (Default = .false.)
+   logical(kind=4) chm_diag_accum_l                  ! Diagnostic for accumulators                 (Default = .false.) 
+   logical(kind=4) chm_diag_colum_l                  ! Diagnostic for column values                (Default = .false.) 
+   integer(kind=4) chm_moyhr                         ! Accumulation interval in hours              (Default = 24     )
+   integer(kind=4) chm_acchr                         ! Running mean interval in hours              (Default = 24     )
+   logical(kind=4) chm_get_fire_emis_l               ! Do we import fire emissions (as major point for now)? (Default = .false.)
+
+
+   integer(kind=4)  nk_start  ! chemistry activated only from level nk_start to level chm_nk
+   integer(kind=4)  jd        ! j slice number for diagnostic outputs of cam species
+   integer(kind=4)  id        ! i grid number for diagnostic outputs of cam species
+   integer(kind=4)  dlev      ! model level number for diagnostic outputs of cam species
+   integer(kind=4)  it        ! time step for diagnostic outputs of cam species
+   integer(kind=4)  itr       ! tracer index for diagnostic outputs of cam species
+
+   real(kind=4)  aerosize(13) ! aerosol bin boundaries; depends upon number of bins
+
+   real(kind=4)                        :: em_nesdt                   ! Emissions preperation timestep (s)
+
+   namelist /chemistry_cfgs/ chm_pkg_pm_s,           chm_pkg_gas_s,         chm_model_s,         chm_biog_s,        &
+                             chm_strato_s,                                                                          &
+                             chm_get_ae_emis_l,      chm_get_be_emis_l,     chm_get_mj_emis_l,                      &
+                             chm_gas_drydep_s,       chm_step_factor,       chm_mass_s,          chm_mono_s,        &
+                             chm_vert_diff_s,        em_nesdt,              chm_htap_emis_l,                        &
+                             nk_start,               chm_soa_s,             chm_mj_treatment_s,  chm_hetchem_s,     &
+                             chm_hetchem_metstlb_l,  chm_hetv_single_l,     chm_seaflux_s,       chm_winddust_s,    &
+                             chm_pm_drydep_s,        chm_aqueous_s,         jd,                  id,                &
+                             dlev,                   it,                    itr,                 aerosize,          &
+                             chm_incld_l,            chm_blcld_l,           chm_gaschem_online_l,                   &
+                             chm_pm_coag_step_intvl, chm_debug_2d_i,        chm_debug_3d_i,                         &
+                             chm_intrsec_ndiv,       chm_intrsec_ver,       chm_aqhi_l,          chm_master,        &
+                             chm_emis_master,        chm_fugitive_dust_s,   chm_diag_wetdep_l,   chm_diag_drydep_l, &
+                             chm_diag_accum_l,       chm_diag_colum_L,      chm_moyhr,           chm_acchr,         &
+                             chm_get_fire_emis_l
+                             
+end module chm_nml_mod
+
+

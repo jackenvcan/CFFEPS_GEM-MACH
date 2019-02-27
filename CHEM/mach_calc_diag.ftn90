@@ -1,0 +1,370 @@
+!-------------------------------------- LICENCE BEGIN ------------------------------------
+!Environment Canada - Atmospheric Science and Technology License/Disclaimer,
+!                     version 3; Last Modified: May 7, 2008.
+!This is free but copyrighted software; you can use/redistribute/modify it under the terms
+!of the Environment Canada - Atmospheric Science and Technology License/Disclaimer
+!version 3 or (at your option) any later version that should be found at:
+!http://collaboration.cmc.ec.gc.ca/science/rpn.comm/license.html
+!
+!This software is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY;
+!without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+!See the above mentioned License/Disclaimer for more details.
+!You should have received a copy of the License/Disclaimer along with this software;
+!if not, you can write to: EC-RPN COMM Group, 2121 TransCanada, suite 500, Dorval (Quebec),
+!CANADA, H9P 1J3; or send e-mail to service.rpn@ec.gc.ca
+!-------------------------------------- LICENCE END --------------------------------------
+!** S/P MACH_CALC_DIAG
+!!if_on
+subroutine mach_calc_diag (busdyn,busvol,busper,busdyn_size,busvol_size,busper_size,step,slab_index)
+!!if_off
+   use chm_utils_mod,      only: ik, chm_timestep
+   use chm_datime_mod,     only: secondsin1hour
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_consphychm_mod
+   use chm_nml_mod
+   use linoz_mod
+   use mach_pkg_debug_mod
+   use chm_species_info_mod
+   use chm_species_idx_mod
+   implicit none
+!
+!  Declaration of subroutine arguments
+!
+!
+! Declare Subroutine Arguments
+!
+!!if_on
+   integer(kind=4), intent(in)    :: step, slab_index
+   integer(kind=4), intent(in)    :: busdyn_size, busvol_size, busper_size
+   real   (kind=4), intent(inout) :: busdyn(busdyn_size)
+   real   (kind=4), intent(inout) :: busvol(busvol_size)
+   real   (kind=4), intent(inout) :: busper(busper_size)
+!!if_off
+!
+! Declare Local variables
+!
+   logical init
+!
+!
+!Author
+!          I. Ivanova  May 2015
+!
+!Revisions
+! 001      I. Ivanova      (May 2015) -  add gas-phase & PM total column amounts
+!
+!
+!Object
+!          Calculates averages and accumulators of chemical tendencies and diagnostics
+!          (similarly to 'calcdiag' in physics)
+!
+!Arguments
+!
+!          - Input/Output -
+! busdyn   Dynamic bus for chemistry
+! busper   Permanent bus for chemistry
+!
+!          - Input -
+! busvol   Volatile bus for chemistry
+!
+!          - Input -
+! busdyn_size     dimension of busdyn
+! busper_size     dimension of busper
+! busvol_size     dimension of busvol
+! step            Flag for first chem. step in current
+! slab_index      Slice number
+!
+!IMPLICITES
+!
+!MODULES
+!
+!*
+   integer :: i, k, this_ik
+   real    :: moyhr,moyhr_steps, hr_step, moysti, acchr, acchr_steps
+!
+!
+!****************************************************************
+!     ACCUMULATIONS                                             *
+!     -------------                                             *
+!****************************************************************
+!
+!     compute the averaging interval (inverse), with all available data averaged when
+!     moving through driver step=0
+
+       hr_step = chm_timestep * float(step) / sngl(secondsin1hour) ! hrs
+
+      if (chm_moyhr.gt.0) then
+         moyhr = float(chm_moyhr)
+         moyhr_steps = moyhr / chm_timestep * sngl(secondsin1hour)
+         moysti = 1./moyhr_steps
+      endif
+
+!
+!****************************************************************
+!     AVERAGES                                                  *
+!     --------                                                  *
+!****************************************************************
+!
+!     set averages to zero every chm_moyhr hours
+      if (chm_moyhr.gt.0) then
+!
+         RESET_AVERAGES: if (step == 0 .or. mod(step-1,int(moyhr_steps)).eq.0) then
+!
+            if (slab_index == 44) &
+            print*,'mach_calc_diag: RESET AVERAGES: step, moyhr_steps, moyhr, moysti',step,int(moyhr_steps),chm_moyhr,moysti
+!
+            do i = 1, chm_ni
+               busper(sm(sp_tcol_O3  ) % a2d_offset + i - 1)  = 0.0
+               busper(sm(sp_tcol_NO2 ) % a2d_offset + i - 1 ) = 0.0
+               busper(sm(sp_tcol_NO  ) % a2d_offset + i - 1 ) = 0.0
+               busper(sm(sp_tcol_PAN ) % a2d_offset + i - 1 ) = 0.0
+               busper(sm(sp_tcol_HNO3) % a2d_offset + i - 1 ) = 0.0
+               busper(sm(sp_tcol_N2O5) % a2d_offset + i - 1 ) = 0.0
+               busper(sm(sp_tcol_SO2 ) % a2d_offset + i - 1 ) = 0.0
+               busper(sm(sp_tcol_SO4 ) % a2d_offset + i - 1 ) = 0.0
+               busper(sm(sp_tcol_CO  ) % a2d_offset + i - 1 ) = 0.0
+               busper(sm(sp_tcol_HCHO) % a2d_offset + i - 1 ) = 0.0
+               busper(sm(sp_tcol_ISOP) % a2d_offset + i - 1 ) = 0.0
+            end do
+!
+            do k = 1, chm_nk
+               do i = 1, chm_ni
+
+               this_ik = ik(i, k, chm_ni)
+!
+               busper(sm(sp_col_O3)  % a3d_offset + this_ik ) = 0.0
+               busper(sm(sp_col_NO2) % a3d_offset + this_ik ) = 0.0
+               busper(sm(sp_col_NO)  % a3d_offset + this_ik ) = 0.0
+               busper(sm(sp_col_HU)  % a3d_offset + this_ik ) = 0.0
+               busper(sm(sp_tend_O3) % a3d_offset + this_ik) = 0.0
+               busper(sm(sp_O3  ) % a3d_offset + this_ik ) = 0.0
+               busper(sm(sp_NO2 ) % a3d_offset + this_ik ) = 0.0
+               busper(sm(sp_NO  ) % a3d_offset + this_ik ) = 0.0
+               busper(sm(sp_PAN ) % a3d_offset + this_ik ) = 0.0
+               busper(sm(sp_HNO3) % a3d_offset + this_ik ) = 0.0
+               busper(sm(sp_N2O5) % a3d_offset + this_ik ) = 0.0
+               busper(sm(sp_SO2 ) % a3d_offset + this_ik ) = 0.0
+               busper(sm(sp_SO4 ) % a3d_offset + this_ik ) = 0.0
+               busper(sm(sp_CO  ) % a3d_offset + this_ik ) = 0.0
+               busper(sm(sp_HCHO) % a3d_offset + this_ik ) = 0.0
+               busper(sm(sp_ISOP) % a3d_offset + this_ik ) = 0.0
+!
+               end do
+            end do
+!
+         endif RESET_AVERAGES
+!
+      endif
+!
+      if (chm_moyhr.gt.0 .and. step.ne.0) then
+
+         if (slab_index == 44)  &
+         print*,'mach_calc_diag: AVERAGES: step, moyhr',step,moyhr
+!
+!   2D
+!
+         do i = 1, chm_ni
+! AZO3
+            busper(sm(sp_tcol_O3  ) % a2d_offset + i - 1) = busper(sm(sp_tcol_O3 )  % a2d_offset + i - 1) + &
+                                                       busvol(sm(sp_tcol_O3 )  % vol_offset + i - 1)
+! AZN2
+            busper(sm(sp_tcol_NO2 ) % a2d_offset + i - 1) = busper(sm(sp_tcol_NO2 ) % a2d_offset + i - 1) + &
+                                                       busvol(sm(sp_tcol_NO2 ) % vol_offset + i - 1)
+! AZNO
+            busper(sm(sp_tcol_NO  ) % a2d_offset + i - 1) = busper(sm(sp_tcol_NO  ) % a2d_offset + i - 1) + &
+                                                       busvol(sm(sp_tcol_NO  ) % vol_offset + i - 1)
+! AZPN
+            busper(sm(sp_tcol_PAN ) % a2d_offset + i - 1) = busper(sm(sp_tcol_PAN ) % a2d_offset + i - 1) + &
+                                                       busvol(sm(sp_tcol_PAN ) % vol_offset + i - 1)
+! AZH3
+            busper(sm(sp_tcol_HNO3) % a2d_offset + i - 1) = busper(sm(sp_tcol_HNO3) % a2d_offset + i - 1) + &
+                                                       busvol(sm(sp_tcol_HNO3) % vol_offset + i - 1)
+! AZ25
+            busper(sm(sp_tcol_N2O5) % a2d_offset + i - 1) = busper(sm(sp_tcol_N2O5) % a2d_offset + i - 1) + &
+                                                       busvol(sm(sp_tcol_N2O5) % vol_offset + i - 1)
+! AZS2
+            busper(sm(sp_tcol_SO2 ) % a2d_offset + i - 1) = busper(sm(sp_tcol_SO2 ) % a2d_offset + i - 1) + &
+                                                       busvol(sm(sp_tcol_SO2 ) % vol_offset + i - 1)
+! AZS4
+            busper(sm(sp_tcol_SO4 ) % a2d_offset + i - 1) = busper(sm(sp_tcol_SO4 ) % a2d_offset + i - 1) + &
+                                                       busvol(sm(sp_tcol_SO4 ) % vol_offset + i - 1)
+! AZCO
+            busper(sm(sp_tcol_CO  ) % a2d_offset + i - 1) = busper(sm(sp_tcol_CO  ) % a2d_offset + i - 1) + &
+                                                       busvol(sm(sp_tcol_CO  ) % vol_offset + i - 1)
+! AZHC
+            busper(sm(sp_tcol_HCHO) % a2d_offset + i - 1) = busper(sm(sp_tcol_HCHO) % a2d_offset + i - 1) + &
+                                                       busvol(sm(sp_tcol_HCHO) % vol_offset + i - 1)
+! AZIS
+            busper(sm(sp_tcol_ISOP) % a2d_offset + i - 1) = busper(sm(sp_tcol_ISOP) % a2d_offset + i - 1) + &
+                                                       busvol(sm(sp_tcol_ISOP) % vol_offset + i - 1)
+!
+            if (mod(step,int(moyhr_steps)).eq.0) then
+
+            busper(sm(sp_tcol_O3  ) % a2d_offset + i - 1) = busper(sm(sp_tcol_O3  ) % a2d_offset + i - 1) * moysti
+            busper(sm(sp_tcol_NO2 ) % a2d_offset + i - 1) = busper(sm(sp_tcol_NO2 ) % a2d_offset + i - 1) * moysti
+            busper(sm(sp_tcol_NO  ) % a2d_offset + i - 1) = busper(sm(sp_tcol_NO  ) % a2d_offset + i - 1) * moysti
+            busper(sm(sp_tcol_PAN ) % a2d_offset + i - 1) = busper(sm(sp_tcol_PAN ) % a2d_offset + i - 1) * moysti
+            busper(sm(sp_tcol_HNO3) % a2d_offset + i - 1) = busper(sm(sp_tcol_HNO3) % a2d_offset + i - 1) * moysti
+            busper(sm(sp_tcol_N2O5) % a2d_offset + i - 1) = busper(sm(sp_tcol_N2O5) % a2d_offset + i - 1) * moysti
+            busper(sm(sp_tcol_SO2 ) % a2d_offset + i - 1) = busper(sm(sp_tcol_SO2 ) % a2d_offset + i - 1) * moysti
+            busper(sm(sp_tcol_SO4 ) % a2d_offset + i - 1) = busper(sm(sp_tcol_SO4 ) % a2d_offset + i - 1) * moysti
+            busper(sm(sp_tcol_CO  ) % a2d_offset + i - 1) = busper(sm(sp_tcol_CO  ) % a2d_offset + i - 1) * moysti
+            busper(sm(sp_tcol_HCHO) % a2d_offset + i - 1) = busper(sm(sp_tcol_HCHO) % a2d_offset + i - 1) * moysti
+            busper(sm(sp_tcol_ISOP) % a2d_offset + i - 1) = busper(sm(sp_tcol_ISOP) % a2d_offset + i - 1) * moysti
+
+            endif
+
+            if (i == 33 .and. slab_index == 44)  &
+            print*,'mach_calc_diag: AVERAGES: (33,44) step  AZN2=', step, busper(sm(sp_tcol_NO2) % a2d_offset + i - 1)
+!
+         end do
+!
+!  3D 
+!
+         do k = 1, chm_nk
+            do i = 1, chm_ni
+
+            this_ik = ik(i, k, chm_ni)
+!
+! AYO3 (D.U.)
+            busper(sm(sp_col_O3)  % a3d_offset + this_ik) = busper(sm(sp_col_O3) % a3d_offset + this_ik) + &
+                                                          busvol(sm(sp_col_O3) % vol_offset + this_ik)
+! AYN2 (Peta molec. cm-2)
+            busper(sm(sp_col_NO2)  % a3d_offset + this_ik) = busper(sm(sp_col_NO2) % a3d_offset + this_ik) + &
+                                                          busvol(sm(sp_col_NO2) % vol_offset + this_ik)
+! AYNO (Peta molec. cm-2)
+            busper(sm(sp_col_NO)  % a3d_offset + this_ik) = busper(sm(sp_col_NO) % a3d_offset + this_ik) + &
+                                                          busvol(sm(sp_col_NO) % vol_offset + this_ik)
+! AYHU (Peta molec. cm-2)
+            busper(sm(sp_col_HU)  % a3d_offset + this_ik) = busper(sm(sp_col_HU) % a3d_offset + this_ik) + &
+                                                          busvol(sm(sp_col_HU) % vol_offset + this_ik)
+! AGOZ  (ug /kg /sec)          
+            busper(sm(sp_tend_O3)  % a3d_offset + this_ik) = busper(sm(sp_tend_O3  ) % a3d_offset + this_ik) + &
+                                                             busvol(sm(sp_tend_O3  ) % vol_offset + this_ik) 
+! AMO3  (ug /kg)
+            busper(sm(sp_O3 )  % a3d_offset + this_ik) = busper(sm(sp_O3  ) % a3d_offset + this_ik) + &
+                                                         busdyn(sm(sp_O3  ) % dyn_offset + this_ik)
+! AMN2  (ug /kg)
+            busper(sm(sp_NO2 ) % a3d_offset + this_ik) = busper(sm(sp_NO2 ) % a3d_offset + this_ik) + &
+                                                         busdyn(sm(sp_NO2 ) % dyn_offset + this_ik)
+! AMNO  (ug /kg)
+            busper(sm(sp_NO  ) % a3d_offset + this_ik) = busper(sm(sp_NO  ) % a3d_offset + this_ik) + &
+                                                         busdyn(sm(sp_NO  ) % dyn_offset + this_ik)
+! AMPN  (ug /kg)
+            busper(sm(sp_PAN ) % a3d_offset + this_ik) = busper(sm(sp_PAN ) % a3d_offset + this_ik) + &
+                                                         busdyn(sm(sp_PAN ) % dyn_offset + this_ik)
+! AMH3  (ug /kg)
+            busper(sm(sp_HNO3) % a3d_offset + this_ik) = busper(sm(sp_HNO3) % a3d_offset + this_ik) + &
+                                                         busdyn(sm(sp_HNO3) % dyn_offset + this_ik)    
+! AM25  (ug /kg)
+            busper(sm(sp_N2O5) % a3d_offset + this_ik) = busper(sm(sp_N2O5) % a3d_offset + this_ik) + &
+                                                         busdyn(sm(sp_N2O5) % dyn_offset + this_ik)
+! AMS2  (ug /kg)
+            busper(sm(sp_SO2 ) % a3d_offset + this_ik) = busper(sm(sp_SO2 ) % a3d_offset + this_ik) + &
+                                                         busdyn(sm(sp_SO2 ) % dyn_offset + this_ik)  
+! AMS4  (ug /kg)
+            busper(sm(sp_SO4 ) % a3d_offset + this_ik) = busper(sm(sp_SO4 ) % a3d_offset + this_ik) + &
+                                                         busdyn(sm(sp_SO4 ) % dyn_offset + this_ik) 
+! AMCO  (ug /kg)
+            busper(sm(sp_CO  ) % a3d_offset + this_ik) = busper(sm(sp_CO  ) % a3d_offset + this_ik) + &
+                                                         busdyn(sm(sp_CO  ) % dyn_offset + this_ik)
+! AMHC  (ug /kg)
+            busper(sm(sp_HCHO) % a3d_offset + this_ik) = busper(sm(sp_HCHO) % a3d_offset + this_ik) + &
+                                                         busdyn(sm(sp_HCHO) % dyn_offset + this_ik)
+! AMIS  (ug /kg)
+            busper(sm(sp_ISOP) % a3d_offset + this_ik) = busper(sm(sp_ISOP) % a3d_offset + this_ik) + &
+                                                         busdyn(sm(sp_ISOP) % dyn_offset + this_ik)
+!
+            if (mod(step,int(moyhr_steps)).eq.0) then
+!
+            busper(sm(sp_tend_O3  ) % a3d_offset + this_ik) = busper(sm(sp_tend_O3  ) % a3d_offset + this_ik) * moysti
+            busper(sm(sp_O3  ) % a3d_offset + this_ik) = busper(sm(sp_O3  ) % a3d_offset + this_ik) * moysti
+            busper(sm(sp_NO2 ) % a3d_offset + this_ik) = busper(sm(sp_NO2 ) % a3d_offset + this_ik) * moysti
+            busper(sm(sp_NO  ) % a3d_offset + this_ik) = busper(sm(sp_NO  ) % a3d_offset + this_ik) * moysti
+            busper(sm(sp_PAN ) % a3d_offset + this_ik) = busper(sm(sp_PAN ) % a3d_offset + this_ik) * moysti
+            busper(sm(sp_HNO3) % a3d_offset + this_ik) = busper(sm(sp_HNO3) % a3d_offset + this_ik) * moysti
+            busper(sm(sp_N2O5) % a3d_offset + this_ik) = busper(sm(sp_N2O5) % a3d_offset + this_ik) * moysti
+            busper(sm(sp_SO2 ) % a3d_offset + this_ik) = busper(sm(sp_SO2 ) % a3d_offset + this_ik) * moysti
+            busper(sm(sp_SO4 ) % a3d_offset + this_ik) = busper(sm(sp_SO4 ) % a3d_offset + this_ik) * moysti
+            busper(sm(sp_CO  ) % a3d_offset + this_ik) = busper(sm(sp_CO  ) % a3d_offset + this_ik) * moysti
+            busper(sm(sp_HCHO) % a3d_offset + this_ik) = busper(sm(sp_HCHO) % a3d_offset + this_ik) * moysti
+            busper(sm(sp_ISOP) % a3d_offset + this_ik) = busper(sm(sp_ISOP) % a3d_offset + this_ik) * moysti
+!
+            endif
+
+            end do  !i = 1, chm_ni
+         end do    !k = 1, chm_nk
+!
+      endif
+
+!
+!****************************************************************
+!     ACCUMULATORS                                              *
+!     ------------                                              *
+!****************************************************************
+!
+!     set accumulators to zero at the beginning and after every chm_acchr hours, and by
+!     default (chm_acchr=0) as the model step goes through 0.
+
+      if (chm_acchr > 0) then
+         acchr = float(chm_acchr)
+         acchr_steps = acchr / chm_timestep * sngl(secondsin1hour)
+      end if
+
+      RESET_ACCUMULATORS: if (step == 0. .or. (chm_acchr > 0 .and. mod(step-1,int(acchr_steps)) == 0) .or. &
+           (chm_acchr == 0 .and. step-1 == 0)) then
+
+         if (slab_index == 44) &
+         print*,'mach_calc_diag: RESET ACCUMULATORS: step, acchr_steps, acchr',step, int(acchr_steps), chm_acchr
+
+         do i = 1, chm_ni
+
+! 2D
+
+!            busper(sm(sp_tcol_O3  ) % a2d_offset + i - 1)  = 0.0
+         enddo
+
+         do k = 1, chm_nk 
+            do i = 1, chm_ni
+! 3D
+            this_ik = ik(i, k, chm_ni)
+! AGO3
+!            busper(sm(sp_tend_O3 ) % a3d_offset + this_ik) = 0.0
+!
+            end do
+         end do
+!
+      endif RESET_ACCUMULATORS
+!
+      if (step.ne.0) then
+!
+!VDIR NODEP
+         do i = 1, chm_ni
+!
+!                        Accumulation of 2D chemical species
+
+! AZO3 (E+15 Peta molec cm-2 per acchr)
+!            busper(sm(sp_tcol_O3 ) % a2d_offset + i - 1 ) = busper(sm(sp_tcol_O3 ) % a2d_offset + i - 1)  + &
+!                                                      busvol(sm(sp_tcol_O3 ) %  vol_offset + i - 1) * chm_timestep
+
+!            if (i == 33  .and. slab_index == 44 )  &
+!            print*,'mach_calc_diag: ACCUMULATORS: (33,44) step ACCUM= ',step, busper(sm(sp_tcol_O3 ) % a2d_offset + i - 1 )
+
+         end do
+!
+!                        Accumulation of 3D chemical species
+!
+         do k = 1, chm_nk
+            do i = 1, chm_ni
+
+             this_ik = ik(i, k, chm_ni)
+
+! AGO3 (ug /kg /sec per acchr)
+!            busper(sm(sp_tend_O3)  % a3d_offset + this_ik) = busper(sm(sp_tend_O3  ) % a3d_offset + this_ik) + &
+!                                                             busdyn(sm(sp_tend_O3  ) % vol_offset + this_ik) * chm_timestep
+            end do
+         end do
+!
+      endif
+!
+return
+end subroutine mach_calc_diag

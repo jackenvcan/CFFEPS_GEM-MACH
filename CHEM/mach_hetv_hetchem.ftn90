@@ -1,0 +1,450 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_hetv_hetchem.ftn90
+! Creation       : V. Bouchet, S. Menard, P. Makar, S. Gravel, B. Pabla
+! Description    : Calling heterogeneous chemistry. Rearrange arrays and units conversion
+!
+! Extra info     : On input it is assumed that gaseous species and aerosol species
+!                  concentrations are in kg/kg-of-air. Concentration units are all
+!                  converted back before exiting this subroutine.
+!
+! Arguments  IN
+!
+!            OUT
+!
+!=============================================================================
+!
+!!if_on
+subroutine mach_hetv_hetchem (gascon, aerocon, tempk, zpres, npts, nptsnz, ibulk, jlat, &
+                              aeronum, rhrow_new, aerosize, kount, rhorow, hetselec)
+   use mach_cam_utils_mod,    only: maxns, maxnsp, isize 
+   use chm_ptopo_grid_mod,    only: chm_nk
+!!if_off
+   use chm_utils_mod,         only: chm_lun_out, global_debug
+   use chm_consphychm_mod,    only: rgasd
+   use mach_hetv_headers_mod, only: mach_hetv_hetvcall, mach_hetv_rebin
+   use mach_cam_pre_mod,      only: igs_SO4, igs_HNO3, igs_NH3
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: nptsnz
+   integer(kind=4), intent   (in) :: ibulk
+   integer(kind=4), intent   (in) :: jlat
+   integer(kind=4), intent   (in) :: kount
+   integer(kind=4), intent   (in) :: hetselec
+   real(kind=4),    intent(inout) :: gascon(npts,maxns,chm_nk)
+   real(kind=4),    intent(inout) :: aerocon(npts,maxnsp,chm_nk,isize)
+   real(kind=4),    intent   (in) :: tempk(npts,chm_nk)
+   real(kind=4),    intent   (in) :: zpres(npts,chm_nk)
+   real(kind=4),    intent   (in) :: aeronum(npts,chm_nk,isize)
+   real(kind=4),    intent   (in) :: rhrow_new(npts,chm_nk)
+   real(kind=4),    intent   (in) :: aerosize(2,isize)
+   real(kind=4),    intent   (in) :: rhorow(npts,chm_nk)
+!!if_off
+!
+!  local variables
+!
+   integer(kind=4), parameter  :: maxhet = 4, maxghet = 3
+   integer(kind=4) :: i, ivec, k, isz
+   real(kind=4)    :: orgmass, diff
+!  for heterogeneous chemistry)
+   real(kind=4)    :: het      (npts, maxhet, chm_nk, isize)
+   real(kind=4)    :: hetnew   (npts, maxhet, isize, chm_nk)
+   real(kind=4)    :: ghet     (npts, maxghet, chm_nk)
+   real(kind=4)    :: ghetnew  (npts, maxghet, chm_nk)
+   real(kind=4)    :: het_orig (npts, chm_nk, maxhet)
+   real(kind=4)    :: dhet_chem(npts, maxhet, chm_nk)
+   real(kind=4)    :: totalav  (npts, chm_nk, 4)
+   real(kind=4)    :: totalap  (npts, chm_nk, 4)
+   real(kind=4)    :: totav    (npts, chm_nk, 4)
+   real(kind=4)    :: totap    (npts, chm_nk, 4)
+   external qqexit
+
+
+!          |                                      | T |             |    |
+!  NAME    |          DESCRIPTION                 | Y |DIMENSIONS   |IN/ |
+!          |                                      | P |             |OUT |
+!          |                                      | E |             |    |
+!-------------------------------------------------------------------------
+! g        | gas/part species conc (ppm)          | R |npts, maxns, | i/o|
+!          |                                      |   |chm_nk       |    |
+! aerocon  | Aqueous sp. conc(molar) in cloud     | R |npts, maxnsp | i/o|
+!          | water & Ice/Snow                     |   |, chm_nk,    |    |
+!          |                                      |   |isize        |    |
+! tempk    | Atmospheric Temperature (Kelvin)     | R |npts, chm_nk | i  |
+! zpres    | Pressure (mb)                        | R |npts, chm_nk | i  |
+! rhorow   | air density (kg/m3)                  | R |npts, chm_nk | i  |
+! npts     | Number of column to integrate        | I | scalar      | i  |
+! nptsnz   | Total number of grids to integrate   | I | scalar      | i  |
+! ibulk    | Switch for bulk chemistry or bin     | I | scalar      | i  |
+!          | resolved                             |   |             |    |
+!          | ibulk=1(bulk chemistry activated)    |   |             |    |
+!          | ibulk=0(chemistry for activated bins)|   |             |    |
+
+   dhet_chem   = 0.0
+   diff        = 0.0
+   ghet        = 0.0
+   ghetnew     = 0.0
+   het         = 0.0
+   het_orig    = 0.0
+   hetnew      = 0.0
+   orgmass     = 0.0
+   totalap     = 0.0
+   totalav     = 0.0
+   totap       = 0.0
+   totav       = 0.0
+
+!  Modif: it is now assumed that hetchem is always called from aerocld_new and that
+!  species are coming in as kg/kg het. chem applies to all the grid points at this point
+!  If hetchem is calling isorropia (0), information coming in is in kg/kg
+!  (need unit conversion to ug/m3) If hetchem is calling hetv (1), no unit conversion is needed
+!  species will be passed to hetv in kg/kg
+
+   select case(hetselec)
+      case(0)
+         do k = 1, chm_nk
+            do i = 1, npts
+               do ivec = 1, 4
+                  totalav(i, k, ivec) = 0.0
+               end do
+               totalav(i, k, 1) = totalav(i, k, 1) + gascon(i, igs_SO4, k) * 96.0636 / 98.0795
+               totalav(i, k, 2) = totalav(i, k, 2) + gascon(i, igs_HNO3, k) * 62.0049 / 63.0128
+               totalav(i, k, 3) = totalav(i, k, 3) + gascon(i, igs_NH3, k) * 18.0385 / 17.03056
+               do isz = 1, isize
+                  totalav(i, k, 1) = totalav(i, k, 1) + aerocon(i, 1, k, isz)
+                  totalav(i, k, 2) = totalav(i, k, 2) + aerocon(i, 2, k, isz)
+                  totalav(i, k, 3) = totalav(i, k, 3) + aerocon(i, 3, k, isz)
+                  totalav(i, k, 4) = totalav(i, k, 4) + aerocon(i, 5, k, isz)
+               end do
+            end do
+         end do
+
+!   unit conversion from kg/kg to ug/m3 order needs to be changed to match what will be used
+!   by isocall regardless of where it comes from
+         do k = 1, chm_nk
+            do i = 1, npts
+               ghet(i, 1, k) = gascon(i, igs_SO4, k)  * rhorow(i, k) * 1.0e9   !h2so4
+               ghet(i, 2, k) = gascon(i, igs_HNO3, k) * rhorow(i, k) * 1.0e9   !hno3
+               ghet(i, 3, k) = gascon(i, igs_NH3, k)  * rhorow(i, k) * 1.0e9   !nh3
+                  do isz = 1, isize
+                     het(i, 1, k, isz) = aerocon(i, 1, k, isz) * rhorow(i, k) * 1.0e9 !so4
+                     het(i, 2, k, isz) = aerocon(i, 2, k, isz) * rhorow(i, k) * 1.0e9 !no3
+                     het(i, 3, k, isz) = aerocon(i, 3, k, isz) * rhorow(i, k) * 1.0e9 !nh4
+                     het(i, 4, k, isz) = aerocon(i, 5, k, isz) * rhorow(i, k) * 1.0e9 !sea s.
+                  end do
+            end do
+         end do
+
+         do k = 1, chm_nk
+            do i = 1, npts
+               do ivec = 1, 4
+                  totav(i, k, ivec) = 0.0
+               end do
+               totav(i, k, 1) = totav(i, k, 1) + ghet(i, 1, k) * 96.0636 / 98.0795
+               totav(i, k, 2) = totav(i, k, 2) + ghet(i, 2, k) * 62.0049 / 63.0128
+               totav(i, k, 3) = totav(i, k, 3) + ghet(i, 3, k) * 18.0385 / 17.03056
+               do isz = 1, isize
+                  totav(i, k, 1) = totav(i, k, 1) + het(i, 1, k, isz)
+                  totav(i, k, 2) = totav(i, k, 2) + het(i, 2, k, isz)
+                  totav(i, k, 3) = totav(i, k, 3) + het(i, 3, k, isz)
+                  totav(i, k, 4) = totav(i, k, 4) + het(i, 4, k, isz)
+               end do
+            end do
+         end do
+
+      case(1)
+!  (hetselc=1, hetv species needed in kg/kg)
+         do k = 1, chm_nk
+            do ivec = 1, npts
+               ghet(ivec, 1, k)=gascon(ivec, igs_SO4, k)
+               ghet(ivec, 2, k)=gascon(ivec, igs_HNO3, k)
+               ghet(ivec, 3, k)=gascon(ivec, igs_NH3, k)
+            end do
+         end do
+
+         do k = 1, chm_nk
+            do isz = 1, isize
+               do ivec=1, npts
+                  het(ivec, 1, k, isz)=aerocon(ivec, 1, k, isz)
+                  het(ivec, 2, k, isz)=aerocon(ivec, 2, k, isz)
+                  het(ivec, 3, k, isz)=aerocon(ivec, 3, k, isz)
+                  het(ivec, 4, k, isz)=aerocon(ivec, 5, k, isz)
+               end do
+            end do
+         end do
+
+         do k = 1, chm_nk
+            do i = 1, npts
+               do ivec = 1, 4
+                  totav(i, k, ivec)=0.
+               end do
+               totav(i, k, 1)=totav(i, k, 1)+ghet(i, 1, k)*96.0636/98.0795
+               totav(i, k, 2)=totav(i, k, 2)+ghet(i, 2, k)*62.0049/63.0128
+               totav(i, k, 3)=totav(i, k, 3)+ghet(i, 3, k)*18.0385/17.03056
+
+               do isz = 1, isize
+                  totav(i, k, 1)=totav(i, k, 1)+het(i, 1, k, isz)
+                  totav(i, k, 2)=totav(i, k, 2)+het(i, 2, k, isz)
+                  totav(i, k, 3)=totav(i, k, 3)+het(i, 3, k, isz)
+                  totav(i, k, 4)=totav(i, k, 4)+het(i, 4, k, isz)
+               end do
+            end do
+         end do
+
+   end select
+
+!  reduce dimension from (npts, chm_nk) to (npts*chm_nk)
+!  similar operation for size-dependant arrays are done later
+   do i = 1, maxghet
+      do k = 1, chm_nk
+         do ivec = 1, npts
+            ghetnew(ivec, i, k) = ghet(ivec, i, k)
+         end do
+      end do
+   end do
+
+
+   do isz = 1, isize
+      do k = 1, chm_nk
+         do i = 1, maxhet
+            do ivec = 1, npts
+               hetnew(ivec, i, isz, k) = het(ivec, i, k, isz)
+            end do
+         end do
+      end do
+   end do
+
+!  Keep track of original bulk conc of het if ibulk=1
+   if (ibulk == 1) then
+      do i = 1, maxhet
+         do k = 1, chm_nk
+            do ivec = 1, npts
+               het_orig(ivec, k, i) = 0.0
+            end do
+         end do
+      end do
+
+      do i = 1, maxhet
+         do k = 1, chm_nk
+            do ivec = 1, npts
+               do isz = 1, isize
+                  het_orig(ivec, k, i) = het_orig(ivec, k, i) + hetnew(ivec, i, isz, k)
+               end do
+            end do
+         end do
+      end do
+   end if
+
+!  call the original interface to heterogeneous chem.
+   select case(hetselec)
+      case(0)
+!        Do nothing.  At this point nothing else than HETV is available
+      case(1)
+!  hetvcall subroutine replaced, see e-mail from Paul feb 25/03head -54
+
+         do k = 1, chm_nk
+            call mach_hetv_hetvcall(npts, maxhet, maxghet, isize,                  &
+                          ghetnew(:, :, k), hetnew(:, :, :, k), tempk(:, k),        &
+                          rhrow_new(:, k), jlat, kount, rhorow(:, k))
+         end do
+   end select
+
+!  bring buffer back to original format and compile dhet
+   do i = 1, maxghet
+      do k = 1, chm_nk
+         do ivec = 1, npts
+            ghet(ivec, i, k) = ghetnew(ivec, i, k)
+         end do
+      end do
+   end do
+   if (ibulk == 1) then
+      do i = 1, maxhet
+         do k = 1, chm_nk
+            do ivec = 1, npts
+               dhet_chem(ivec, i, k) = hetnew(ivec, i, 1, k) - het_orig(ivec, k, i)
+            end do
+         end do
+      end do
+
+!     Rebinning of heterogeneous chemistry
+      call mach_hetv_rebin(het, dhet_chem, tempk, zpres, aerosize, aeronum, &
+                           npts, chm_nk, isize, maxhet, kount, jlat)
+
+
+   else
+      do i = 1, maxhet
+         do k = 1, chm_nk
+            do isz = 1, isize
+               do ivec = 1, npts
+                  het(ivec, i, k, isz) = hetnew(ivec, i, isz, k)
+               end do
+            end do
+         end do
+      end do
+   end if
+
+!  back to original arrays with right units depending on value of hetselec
+
+   if (hetselec == 0) then
+      do k = 1, chm_nk
+         do i = 1, npts
+            do ivec = 1, 4
+               totap(i, k, ivec) = 0.0
+            end do
+            totap(i, k, 1) = totap(i, k, 1) + ghet(i, 1, k) * 96.0636 / 98.0795
+            totap(i, k, 2) = totap(i, k, 2) + ghet(i, 2, k) * 62.0049 / 63.0128
+            totap(i, k, 3) = totap(i, k, 3) + ghet(i, 3, k) * 18.0385 / 17.03056
+            do isz = 1, isize
+               totap(i, k, 1) = totap(i, k, 1) + het(i, 1, k, isz)
+               totap(i, k, 2) = totap(i, k, 2) + het(i, 2, k, isz)
+               totap(i, k, 3) = totap(i, k, 3) + het(i, 3, k, isz)
+               totap(i, k, 4) = totap(i, k, 4) + het(i, 4, k, isz)
+            end do
+            do ivec = 1, 4
+               orgmass = totav(i, k, ivec) * 1.0e-3
+               diff = totap(i, k, ivec) - totav(i, k, ivec)
+               if (diff > orgmass .or. diff < -1.0 * orgmass) then
+                  write(0, *) '### Error in mach_hetv_hetchem ###'
+                  write(0, *) '# mass balance pb ', i, k, ivec, kount, jlat
+                  write(0, *) '#', totav(i, k, ivec), totap(i, k, ivec)
+                  write(0, *) '#', diff, orgmass
+                  write(0, *) '###         ABORT         ###'
+                  call qqexit(1)
+               end if
+            end do
+         end do
+      end do
+
+!  unit conversion from ug/m3 to kg/kg directly reassign to the right species
+
+      do k = 1, chm_nk
+         do i = 1, npts
+            gascon(i, igs_SO4, k)  = ghet(i, 1, k) * 1.0E-9 / rhorow(i, k)    !H2SO4
+            gascon(i, igs_HNO3, k) = ghet(i, 2, k) * 1.0E-9 / rhorow(i, k)    !HNO3
+            gascon(i, igs_NH3, k)  = ghet(i, 3, k) * 1.0E-9 / rhorow(i, k)    !NH3
+
+            do isz = 1, isize
+               aerocon(i, 1, k, isz) = het(i, 1, k, isz) * 1.0e-9 / rhorow(i, k) !so4
+               aerocon(i, 2, k, isz) = het(i, 2, k, isz) * 1.0e-9 / rhorow(i, k) !no3
+               aerocon(i, 3, k, isz) = het(i, 3, k, isz) * 1.0E-9 / rhorow(i, k) !NH4
+!   activate when sea salt is taken into account
+!            aerocon(i, 5, k, isz)=het(i, 4, k, isz)*1.E-9/rhorow(i, k) !sea s.
+            end do
+         end do
+      end do
+
+      do k = 1, chm_nk
+         do i = 1, npts
+            do ivec = 1, 4
+               totalap(i, k, ivec) = 0.0
+            end do
+            totalap(i, k, 1) = totalap(i, k, 1) + gascon(i, igs_SO4, k) * 96.0636 / 98.0795
+            totalap(i, k, 2) = totalap(i, k, 2) + gascon(i, igs_HNO3, k) * 62.0049 / 63.0128
+            totalap(i, k, 3) = totalap(i, k, 3) + gascon(i, igs_NH3, k) * 18.0385 / 17.03056
+            do isz = 1, isize
+               totalap(i, k, 1) = totalap(i, k, 1) + aerocon(i, 1, k, isz)
+               totalap(i, k, 2) = totalap(i, k, 2) + aerocon(i, 2, k, isz)
+               totalap(i, k, 3) = totalap(i, k, 3) + aerocon(i, 3, k, isz)
+               totalap(i, k, 4) = totalap(i, k, 4) + aerocon(i, 5, k, isz)
+            end do
+            do ivec = 1, 4
+               orgmass = totalav(i, k, ivec) * 1.0e-3
+               diff = totalap(i, k, ivec) - totalav(i, k, ivec)
+               if (diff > orgmass .or. diff < -1.0 * orgmass) then
+                  write(0, *) '### Error in mach_hetv_hetchem ###'
+                  write(0, *) '# mass balance pb ', i, k, ivec, kount, jlat
+                  write(0, *) '#', totalav(i, k, ivec), totalap(i, k, ivec)
+                  write(0, *) '#', diff, orgmass
+                  write(0, *) '#', totav(i, k, ivec), totap(i, k, ivec)
+                  write(0, *) '#', rhorow(i, k)*1.e3
+                  write(0, *) '###         ABORT         ###'
+                  call qqexit(1)
+               end if
+            end do
+         end do
+      end do
+
+   else
+
+!(hetselec =1, hetv species already in kg/kg)
+      do k = 1, chm_nk
+         do i = 1, npts
+            do ivec = 1, 4
+               totap(i, k, ivec)=0.
+            end do
+            totap(i, k, 1)=totap(i, k, 1)+ghet(i, 1, k)*96.0636/98.0795
+            totap(i, k, 2)=totap(i, k, 2)+ghet(i, 2, k)*62.0049/63.0128
+            totap(i, k, 3)=totap(i, k, 3)+ghet(i, 3, k)*18.0385/17.03056
+            do isz = 1, isize
+               totap(i, k, 1)=totap(i, k, 1)+het(i, 1, k, isz)
+               totap(i, k, 2)=totap(i, k, 2)+het(i, 2, k, isz)
+               totap(i, k, 3)=totap(i, k, 3)+het(i, 3, k, isz)
+               totap(i, k, 4)=totap(i, k, 4)+het(i, 4, k, isz)
+            end do
+            do ivec = 1, 4
+               orgmass = totav(i, k, ivec) * 1.e-3
+               diff = totap(i, k, ivec) - totav(i, k, ivec)
+               if (diff > orgmass .or. diff < -1. * orgmass) then
+                  write(0, *) '### Error in mach_hetv_hetchem ###'
+                  write(0, *) '# mass balance pb ', i, k, ivec, kount, jlat
+                  write(0, *) '#', totav(i, k, ivec), totap(i, k, ivec)
+                  write(0, *) '#', diff, orgmass
+                  write(0, *) '###         ABORT         ###'
+                  call qqexit(1)
+               endif
+            end do
+         end do
+      end do
+
+      do k = 1, chm_nk
+         do ivec = 1, npts
+            gascon(ivec, igs_SO4, k)  = ghet(ivec, 1, k)
+            gascon(ivec, igs_HNO3, k) = ghet(ivec, 2, k)
+            gascon(ivec, igs_NH3, k)  = ghet(ivec, 3, k)
+         end do
+      end do
+
+      do k = 1, chm_nk
+         do isz = 1, isize
+            do ivec = 1, npts
+               aerocon(ivec, 1, k, isz) = het(ivec, 1, k, isz)
+               aerocon(ivec, 2, k, isz) = het(ivec, 2, k, isz)
+               aerocon(ivec, 3, k, isz) = het(ivec, 3, k, isz)
+               aerocon(ivec, 5, k, isz) = het(ivec, 4, k, isz)
+            end do
+         end do
+      end do
+
+   end if
+
+   return
+end

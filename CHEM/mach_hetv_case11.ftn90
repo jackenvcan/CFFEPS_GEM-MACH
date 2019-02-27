@@ -1,0 +1,1187 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_hetv_case11.ftn90
+! Creation       : P. Makar, V. Bouchet, A. Nenes, S. Gravel, B. Pabla, S .Menard
+! Description    : Heterogeneous chemistry solver for case11.  Based on algorithm's
+!                  in Nenes et al's ISORROPIA solver, recoded to vectorize over the
+!                  gridpoint dimension.  All input arrays are of length npts (total
+!                  number of gridpoints submitted from the calling code.  The
+!                  subsection of each 1-D array between index ns11 and ne11 (inclusive)
+!                  has been pre-sorted, and contains the gridpoint data that must
+!                  be solved using case 11's algorithm.  Operations within this
+!                  subroutine therefore take place over array bounds from ns11 to ne11.
+!
+!                  Units on input are moles/kg air.
+!
+! Extra info     : Athanasios Nenes, Mail Code 210-41, Dept. of Chemical Engineering,
+!                  California Institute of Technology, Pasadena, Ca., 91125, USA
+!                  nenes@its.caltech.edu
+!
+!                  The conditions for which this case is called are as follows:
+!                  TA/TS >= 2.0,  drh_amnit <= rh < drh_amsul
+!                  The reactions representing this case are as follows(bracketed numbers
+!                  indicate that the solution is done in stages, as numbered):
+!                  (1)
+!                   (NH4)2SO4 <=> 2 NH4 + SO4,  k(NH4)2SO4
+!                  (2)
+!                    HNO3 <=> H + NO3, kHNO3
+!                    NH3 + H2O <=> NH4 + OH, kNH3
+!                    H2O <=> H + OH, kH2O
+!                  (3)
+!                    H + NH4 = NO3 + 2 SO4 + OH = 0
+!                  (4)
+!                     NH3 + H2O <=> NH4 + kH2O H2O/H, kNH3
+!                  (5)
+!                     HSO4 <=> H + SO4, kHSO4
+!
+!                  The system of equations to be solved in this case are as follows:
+!
+!                  (1)
+!                    NH4available = NH4NO3dry + (NH3
+!                    (delNH42SO4)^3 + NH4available*(delNH42SO4)^2
+!                                 + 1/4 (NH4available)^2 * delNH42SO4
+!                                                  -    k(NH4)2SO4/4 = 0
+!                    SO4 = SO4dry + delNH42SO4,
+!                    NH4 = NH4available + 2 delNH42SO4
+!                    NH3 = NH3dry - delNH3
+!                    (NH4)2SO4 = (NH4)2SO4dry - delNH42SO4
+!                  (2)
+!                    HNO3 = HNO3dry - delNO3,
+!                    NO3 = NH4NO3dry +  delNO3,
+!                    kHNO3 HNO3 = (NH4)(NO3)kH2O/(NH3 kNH3)
+!                  (3)
+!                    H2 + (NH4 - NO3 - 2 SO4) H - kH2O = 0
+!                  (4)
+!                    NH3 = (NH4)(OH)/(kNH3 H2O),
+!                    OH/H2O = kH2O/H,
+!                  (5)
+!                    kHSO4 (HSO4) =
+!                         (H-delHSO4)(SO4 - delHSO4)
+!                    Hnew = H -delHSO4,
+!                    SO4new = SO4 -delHSO4
+!                    HSO4 = HSO4in + delHSO4
+!
+!                   The solution to the system of equations:
+!
+!                  (1)
+!                    delNH42SO4 = largest positive real root of cubic equation or zero.
+!                    Note: SO4dry  = 0
+!                    SO4 = delNH42SO4,
+!                    NH4 = NH4NO3dry + delNH3 + 2 delNH42SO4
+!                    NH3 = NH3dry - delNH3
+!                    (NH4)2SO4 = (NH4)2SO4dry - delNH42SO4
+!                  (2)
+!                    delNO3 = [kHNO3 kNH3 (NH3)(HNO3dry)
+!                                    -  kH2O(NH4) (NH4NO3dry)]
+!                       /   [kH2O (NH4) + kHNO3 kNH3 NH3]
+!                    HNO3 = HNO3dry - delNO3,
+!                    NO3 = NH4NO3dry +  delNO3.
+!                  (3)
+!                    H = 0.5 {-(NH4 - NO3 - 2 SO4) + sqrt( (NH4 - NO3 - 2 SO4)^2 + 4 kH2O)
+!                  (4)
+!                    (NH3)(H)kNH3 - (NH4)kH2O = 0
+!                  (5)
+!                    delHSO4 = smallest positive real root of
+!                    delHSO4^2 - (H + SO4 + kHSO4) delHSO4
+!                      + [(H)(SO4)] = 0, or zero.
+!                    Hnew = H -delHSO4,
+!                    SO4new = SO4 -delHSO4
+!                    Variable, Range
+!                    delNH3, 0 to NH3dry
+!
+! Arguments  IN
+!
+!            OUT
+!
+!=============================================================================
+!
+!!if_on
+subroutine mach_hetv_case11(npts, nr, ns11, ne11, so4_t, no3_t, nh4_t, hso4_t, hno3_t, h_t, &
+                            nh3_t, amsul_t, ambis_t, amnit_t, leto_t, t_t, tc_t, aw_t, &
+                            iter, itero, k0, p1, p2, eps, eps2, rho_t, lwn_t, ta_t, ts_t,   &
+                            tn_t, oh_t, ndiv, tstd, small, smrt                             )
+!!if_off
+   use chm_utils_mod,         only: chm_lun_out, global_debug
+   use mach_hetv_headers_mod, only: mach_hetv_case9, mach_hetv_water, mach_hetv_activity, mach_hetv_poly3v
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: ns11
+   integer(kind=4), intent   (in) :: ne11
+   integer(kind=4), intent   (in) :: iter
+   integer(kind=4), intent   (in) :: itero
+   integer(kind=4), intent   (in) :: ndiv
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: small
+   real(kind=8),    intent   (in) :: smrt
+   real(kind=8),    intent   (in) :: eps
+   real(kind=8),    intent   (in) :: eps2
+   real(kind=8),    intent   (in) :: k0(nr)
+   real(kind=8),    intent   (in) :: p1(nr)
+   real(kind=8),    intent   (in) :: p2(nr)
+   real(kind=8),    intent  (out) :: so4_t  (npts)
+   real(kind=8),    intent  (out) :: no3_t  (npts)
+   real(kind=8),    intent  (out) :: nh4_t  (npts)
+   real(kind=8),    intent  (out) :: hso4_t (npts)
+   real(kind=8),    intent  (out) :: hno3_t (npts)
+   real(kind=8),    intent  (out) :: h_t    (npts)
+   real(kind=8),    intent  (out) :: nh3_t  (npts)
+   real(kind=8),    intent  (out) :: amsul_t(npts)
+   real(kind=8),    intent  (out) :: ambis_t(npts)
+   real(kind=8),    intent  (out) :: amnit_t(npts)
+   real(kind=8),    intent  (out) :: leto_t (npts)
+   real(kind=8),    intent   (in) :: t_t    (npts)
+   real(kind=8),    intent   (in) :: tc_t   (npts)
+   real(kind=8),    intent   (in) :: aw_t   (npts)
+   real(kind=8),    intent   (in) :: rho_t  (npts)
+   real(kind=8),    intent  (out) :: lwn_t  (npts)
+   real(kind=8),    intent(inout) :: ta_t   (npts)
+   real(kind=8),    intent(inout) :: ts_t   (npts)
+   real(kind=8),    intent(inout) :: tn_t   (npts)
+   real(kind=8),    intent  (out) :: oh_t   (npts)
+!!if_off
+!
+!  Local variables:
+!
+   integer(kind=4) :: ns11b, ne11b, istop
+   integer(kind=4) :: i, jo, rooteval, rootsrch, jsum, iws, iwe
+   real(kind=8) :: dndiv
+   real(kind=8), parameter :: lwmin = 1.D-20, rg = 8.3144D0 / 1.01325D+05
+   real(kind=8), parameter :: h2o = 1000.D0 / 18.01528D0    !moles H2O/kg H2o
+   real(kind=8) :: delouter, del
+   real(kind=8), dimension(npts)  :: so4, no3, nh4, hso4, amsul, ambis, amnit,  &
+                                     leto, h, hno3, nh3, lwn, rlwn,             &
+                                     t, aw, tc, rho, ta, ts, tn, oh, nh3dry, & 
+                                     hno3dry, amnitdry, amsuldry
+   real(kind=8), dimension(npts)  :: nh3dry_t, hno3dry_t, amnitdry_t, amsuldry_t, &
+                                     a, b, c, root, a2, b2, c2, delamsul2
+   real(kind=8), dimension(npts)  :: g_h_no3, g_h_no3_o, g_h_hso4, g_h_hso4_o, g_nh4_hso4,     &
+                                     g_nh4_hso4_o, g_nh42_so4, g_nh42_so4_o, g_h_oh, g_h_oh_o, &
+                                     g_nh4_oh, g_nh4_oh_o, g_nh4_no3, g_nh4_no3_o,             &
+                                     g_h2_so4, g_h2_so4_o, g_nh43_hso42, g_nh43_hso42_o,       &
+                                     lwo, g0_h_no3, g0_h2_so4, g0_h_hso4, g0_nh4_no3,          & 
+                                     g0_nh42_so4, g0_nh4_hso4, delnh3_lo, delnh3_hi
+   real(kind=8), dimension(npts)  :: choice, rtbis, dx, eval, diff_lo, diff, delno3, delamsul, &
+                                     delnh3, nh4available, v, difflo, diff_1, locmin, avdiff, lws
+   real(kind=8), dimension(npts)  :: khso4, kh2o, knh3, khno3, kamsul
+   integer, dimension(npts)       :: ind2, ind, rflag, rootloc, bflag, wflag, rootmin, islv, islv2
+! For HNO3 correction:
+   real(kind=8), dimension(npts)  ::  so4_check,no3_check,nh4_check,hso4_check,hno3_check,  &
+                                      h_check,t_check,tc_check,aw_check,rho_check,lwn_check
+   integer(kind=4) :: nh4_counter
+!
+!  Local variables that may be used in the solution:
+   character(len=20), parameter :: method = 'KM'
+   logical(kind=4)              ::  local_dbg
+   external qqexit
+
+   local_dbg = (.false. .or. global_debug)
+
+!  Array dimensioning check:
+
+   if(ns11 < 1 .or. ns11 > npts .or. ne11 > npts .or. ne11 <  ns11) then
+      write(0, *) '### Error in mach_hetv_case11 ###'
+      write(0, *) '# Error in array bounds in case11'
+      write(0, *) '###         ABORT         ###'
+      call qqexit(1)
+   end if
+
+!  Calculate dry particle gases and components using Case 9.  Note that the "dry" values of nh3, hno3,
+!  and nh4no3 are the only parts of this solution that are used here.
+   call mach_hetv_case9(npts, nr, ns11, ne11, so4_t, no3_t, nh4_t, hno3dry_t, nh3dry_t, amsuldry_t, ambis_t, amnitdry_t,  &
+                        leto_t, t_t, k0, p1, p2, rho_t, lwn_t, ta_t, ts_t, tn_t, tstd, smrt)
+
+
+!  NOTE:  THIS OPTION NOT ACTIVE IN THIS VERSION
+!  If the results of the dry calculation are such that there
+!  is no NH4NO3(s), then deliquescence will not occur; the
+!  correct solution to the system of equations is the dry
+!  calculation.  Although this will be calculated correctly
+!  in the code that follows, its more efficient to
+!  reorganize the input arrays at this stage, and only
+!  perform the calculations for those cases in which
+!  the dry NH4NO3 is non-zero.
+!  The following loop collects the cases for which
+!  the NH4NO3(s) is > 0, for continued processing,
+!  into a contiquous array:
+   ne11b = 0
+   ns11b = 1
+   do i = ns11, ne11
+      ne11b = ne11b + 1
+      ind(ne11b) = i
+      amnitdry(ne11b) = amnitdry_t(i)
+      amsuldry(ne11b) = amsuldry_t(i)
+      nh3dry(ne11b)   = nh3dry_t(i)
+      hno3dry(ne11b)  = hno3dry_t(i)
+      t(ne11b)        = t_t(i)
+      tc(ne11b)       = tc_t(i)
+      aw(ne11b)       = aw_t(i)
+      rho(ne11b)      = rho_t(i)
+      lwn(ne11b)      = lwn_t(i)
+      ta(ne11b)       = ta_t(i)
+      ts(ne11b)       = ts_t(i)
+      tn(ne11b)       = tn_t(i)
+      end do
+
+!  If none of the points have dry NH4NO3 > 0, can skip
+!  to the end of the routine and use the dry values:
+   if(ne11b == 0) goto 5000
+
+!  Continue processing for the points for which dry
+!  NH4NO3(s) >0 ...  Note that the arrays used
+!  between this point and the continuation line 5000
+!  are all for these cases.
+!  Initial guess for components:  SO4 = 0, HSO4 = 0,
+!  NH4 = NH4NO3dry, NO3 = NH4NO3dry, H = 0
+
+!IBM* UNROLL(2)
+   do i = ns11b, ne11b
+      so4(i) = 0.D0
+      hso4(i) = 0.D0
+      nh4(i) = amnitdry(i)
+      h(i) = 0.D0
+      no3(i) = amnitdry(i)
+      amsul(i) = 0.D0
+   end do
+
+!IBM* UNROLL(4)
+   do i = ns11b, ne11b
+      lwn(i) = 1.D0
+      wflag(i) = 0
+      delnh3_hi(i) = 1.D0
+      delnh3_lo(i) = 1.D0
+   end do
+
+!  Looping point for outer iteration (subdivision
+!  of function interval and search for roots):
+   rooteval = 0
+   rootsrch = 0
+
+!  Set value of subdivision for root search:
+   dndiv = 1.0D0 / dble(ndiv)
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      dx(i) = (nh3dry(i) + 2.D0 * amsuldry(i) + amnitdry(i)) * dndiv
+   end do
+
+2000  continue
+
+!   Initial guess for liquid water content (will be replaced
+!   in calculations to follow:
+
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      lwo(i) = 1.D0
+   end do
+
+!   Reset concentrations to starting liquid water content
+!IBM* UNROLL(4)
+   do i = ns11b, ne11b
+      ta(i)    = ta(i)    * lwn(i)
+      ts(i)    = ts(i)    * lwn(i)
+      tn(i)    = tn(i)    * lwn(i)
+      nh3(i)   = nh3(i)   * lwn(i)
+   end do
+
+!IBM* UNROLL(4)
+   do i = ns11b, ne11b
+      hno3(i)  = hno3(i)  * lwn(i)
+      so4(i)   = 0.D0  !so4(i)   * lwn(i)
+      h(i)     = 0.D0  !h(i)     * lwn(i)
+      no3(i)   = amnitdry(i) * lwn(i) !no3(i)   * lwn(i)
+   end do
+
+!IBM* UNROLL(4)
+   do i = ns11b, ne11b
+      nh4(i)   = amnitdry(i) * lwn(i) !nh4(i)   * lwn(i)
+      hso4(i)  = 0.D0  !hso4(i)  * lwn(i)
+      amnit(i) = amnit(i) * lwn(i)
+      amsul(i) = 0.D0  !amsul(i) * lwn(i)
+   end do
+
+!IBM* UNROLL(4)
+   do i = ns11b, ne11b
+      ambis(i)   = ambis(i)   * lwn(i)
+      leto(i)    = leto(i)    * lwn(i)
+      nh3dry(i)  = nh3dry(i)  * lwn(i)
+      hno3dry(i) = hno3dry(i) * lwn(i)
+   end do
+
+!IBM* UNROLL(4)
+   do i = ns11b, ne11b
+      amnitdry(i) = amnitdry(i) * lwn(i)
+      amsuldry(i) = amsuldry(i) * lwn(i)
+      delnh3(i)   = delnh3(i) * lwn(i)
+   end do
+
+!  Zero the 'old value' activity coefficient arrays
+   do i=ns11b, ne11b
+      g_h_no3_o(i)      = 0.D0
+      g_h_hso4_o(i)     = 0.D0
+      g_nh4_hso4_o(i)   = 0.D0
+      g_nh4_no3_o(i)    = 0.D0
+      g_nh4_oh_o(i)     = 0.D0
+      g_nh42_so4_o(i)   = 0.D0
+      g_h_oh_o(i)       = 0.D0
+      g_h2_so4_o(i)     = 0.D0
+      g_nh43_hso42_o(i) = 0.D0
+   end do
+!
+      rooteval = rooteval + 1
+
+!  First root evaluation is for lower bound,
+!   delnh3 = - (2.D0*amsuldry(i)+amnitdry(i))
+   if(rooteval == 1) then
+!IBM* UNROLL(8)
+      do i=ns11b, ne11b
+         delnh3(i)    = - (2.D0 * amsuldry(i) + amnitdry(i))
+      end do
+   end if
+
+   if(rooteval == 2) then
+
+!  Store results of first root evaluation:
+!IBM* UNROLL(8)
+      do i=ns11b, ne11b
+         difflo(i) = diff_lo(i)
+         diff_1(i) = diff_lo(i)
+      end do
+
+!  Set the indirect address for the location
+!  of the sign change (rootloc) and the counter for the number of
+!  sign changes (rflag) for the given gridpoint to zero:
+!IBM* UNROLL(4)
+      do i = ns11b, ne11b
+         rootloc(i) = 0
+         rflag(i)   = 0
+         rootmin(i) = 0
+         locmin(i)  = 1.D30
+      end do
+   end if
+
+!  Subsequent root evaluations (but before the binary search
+!  refinement):  determine the value of the variable to be
+!  used for the next function evaluation:
+   if(rooteval > 1 .and. rooteval <=  ndiv + 1) then
+!IBM* UNROLL(8)
+      do i = ns11b, ne11b
+         delnh3(i) = - (2.D0 * amsuldry(i) + amnitdry(i)) + dx(i) * dble(rooteval - 1)
+      end do
+   end if
+!
+   if(rooteval > 2 .and. rooteval <=  ndiv + 2) then
+!  Determine whether the boundaries of the current sub interval
+!  constitute the minimum for the entire interval.  If so,
+!  store the right-hand index:
+
+!IBM* UNROLL(4)
+   do i = ns11b, ne11b
+         avdiff(i) = 0.5D0 * abs(diff(i) + diff_1(i))
+         locmin(i) = min(locmin(i), avdiff(i))
+   end do
+   do i = ns11b, ne11b
+      if(avdiff(i) <=  locmin(i)) rootmin(i) = rooteval - 1
+   end do
+
+!  Determine whether a sign change occurred in the last
+!  interval:
+
+   do i = ns11b, ne11b
+      if(sign(1.d0, diff_1(i)) * sign(1.d0, diff(i)) <  0.d0) then
+         rflag(i) = rflag(i) + 1
+      end if
+   end do
+
+!  If it was the first sign change detected for the given gridpoint, save its location:
+
+   do i = ns11b, ne11b
+      if(rflag(i) == 1) then
+         rootloc(i) = rooteval - 1
+         rflag(i) = 2
+      end if
+   end do
+
+!  Update the variable and evaluated function arrays:
+!IBM* UNROLL(8)
+      do i = ns11b, ne11b
+         diff_1(i) = diff(i)
+      end do
+   end if
+
+!  The next section determines the boundaries to be used in the
+!  binary search refinement of the given root.  Sometimes both limits
+!  of the search are set to the same value (upper or lower boundary
+!  of the entire interval), if no sign change occurred in the entire interval.
+   if(rooteval == ndiv + 2) then
+
+!  Set the "boundary has been chosen" flag to "off":
+
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      bflag(i) = 0
+   end do
+
+! following block changed (see paul's e-mail dated Jan 15/03)
+!  Use the lower limit of the variable space, if that lower limit
+!  corresponds to a root:
+
+   do i = ns11b, ne11b
+      if(abs(difflo(i)) <=  eps .and. rootloc(i) == 0) then
+            delnh3_lo(i) = - (2.D0 * amsuldry(i) + amnitdry(i))
+            delnh3_hi(i) = - (2.D0 * amsuldry(i) + amnitdry(i))
+            bflag(i)  = 1
+      end if
+   end do
+
+!  If a root was found in the variable space for the function at the
+!  given gridpoint, use the stored index to give the boundaries:
+
+   do i = ns11b, ne11b
+      if(rootloc(i) /= 0 .and. bflag(i) == 0) then
+         delnh3_lo(i) = - (2.D0 * amsuldry(i) + amnitdry(i)) + dx(i) * dble(rootloc(i) - 2)
+         delnh3_hi(i) = delnh3_lo(i) + dx(i)
+         bflag(i) = 1
+      end if
+   end do
+
+!  If no root was found in the variable space at the given gridpoint,
+!  but the upper limit is a root, use that value for the root:
+   do i = ns11b, ne11b
+      if(bflag(i) == 0 .and. abs(diff(i)) <=  eps .and. rootloc(i) == 0) then
+         delnh3_lo(i) = delnh3(i)
+         delnh3_hi(i) = delnh3(i)
+         bflag(i)  = 1
+      end if
+   end do
+
+!  If no root was found in the variable space at the given gridpoint,
+!  and all the values of the root evaluations were positive, then
+!  K[NH3] (NH3)(H) - (NH4) K[H2O] > 0 always - this implies that
+!  there will always be higher NH3 concentrations than is necessary
+!  to satisfy the NH3 and water equilibrium equations - while
+!  local minima (not roots) may exist, the chemically correct course
+!  in this case is to assume that NH3 is at the minimum
+!  value.  This in turn requires that the variable, del_nh3 (the amount
+!  of NH3 lost from the dry phase when NH4NO3 deliquesces) is set to the
+!  maximum value; NH3 = NH3dry - del_nh3.  In order to ensure that this
+!  is done, both boundaries of the root search are set to the maximum value
+!  of del_nh3:
+
+      do i = ns11b, ne11b
+         if(bflag(i) == 0 .and. diff(i) > 0.) then
+            delnh3_lo(i) = delnh3(i)
+            delnh3_hi(i) = delnh3(i)
+            bflag(i) = 1
+         end if
+      end do
+
+!  If no root was found in the variable space at the given gridpoint,
+!  and all the values of the root evaluations were negative, then
+!  K[NH3] (NH3)(H) - (NH4) K[H2O] < 0 always - this implies that
+!  there will always be lower NH3 concentrations than is necessary
+!  to satisfy the NH3 and water equilibrium equations - while
+!  local minima (not roots) may exist, the chemically correct course
+!  in this case is to assume that NH3 is at the maximum
+!  value.  This in turn requires that the variable, del_nh3 (the amount
+!  of NH3 lost from the dry phase when NH4NO3 deliquesces) is set to the
+!  minimum value; NH3 = NH3dry - del_nh3.  In order to ensure that this
+!  is done, both boundaries of the root search are set to the minimum value
+!  of del_nh3:
+
+      do i = ns11b, ne11b
+         if(bflag(i) == 0 .and. diff(i) <  0.) then
+            delnh3_lo(i) = - (2.D0 * amsuldry(i) + amnitdry(i))
+            delnh3_hi(i) = - (2.D0 * amsuldry(i) + amnitdry(i))
+            bflag(i) = 1
+         end if
+      end do
+
+!  Check to make sure that some boundaries for the binary search were found:
+      jsum = 0
+!IBM* UNROLL(8)
+      do i = ns11b, ne11b
+         jsum = jsum + bflag(i)
+      end do
+      if(jsum <  (ne11b - ns11b + 1)) then
+         write(chm_lun_out, *) '> WARNING <'
+         write(chm_lun_out, *) '> Root interval not set in Case 1'
+         write(chm_lun_out, *) '> Condition occurred at the following gridpoint:'
+         do i = ns11b, ne11b
+            if(bflag(i) == 0) write(chm_lun_out, *) '> ', i
+         end do
+      end if
+   end if
+
+!  If the initial subdivision of the variable space has been completed,
+!  start the bisection search refinement of the chosen function interval
+
+   if(rooteval >= ndiv + 2) rootsrch = rootsrch + 1
+
+!  Reevaluate the function on the lhs of the interval:
+   if(rootsrch == 1) then
+!IBM* UNROLL(8)
+      do i=ns11b, ne11b
+         delnh3(i) = delnh3_lo(i)
+      end do
+   end if
+
+!  Reevaluate the function on the rhs of the interval:
+   if(rootsrch == 2) then
+!IBM* UNROLL(8)
+      do i=ns11b, ne11b
+         delnh3(i) = delnh3_hi(i)
+      end do
+   end if
+
+!  On the third function evaluation, the bisection search
+!  has commenced.  The first stage of this is to orient the
+!  search so that the positive value of the root equation
+!  lies on the right of the interval.  Note that from this
+!  point forward, the "_hi" value ceases to be the upper
+!  limit of the variable - it is now the increment in the
+!  variable as the function proceeds towards the root.
+   if(rootsrch == 3) then
+      do i = ns11b, ne11b
+!  "choice" is -1 if diff_lo<0, 1 otherwise:
+         choice(i) = sign (1.E+0, real(diff_lo(i)))
+         dx(i) = choice(i) * (delnh3_lo(i) - delnh3_hi(i))
+
+!  "choice" is 1 if diff_lo<0, 0 otherwise
+         choice(i)=0.5D+0*(1.D+0-choice(i))
+         rtbis(i) = choice(i) * delnh3_lo(i) + (1.D+0-choice(i)) * delnh3_hi(i)
+         eval(i)=min(eval(i), diff_lo(i)*diff(i))
+         delnh3_hi(i)=0.5*dx(i)
+         delnh3_lo(i)=rtbis(i)
+         delnh3(i) = delnh3_lo(i) + delnh3_hi(i)
+!  rtbis is used to store the value of dx for future convergence calcs.
+!           if(i = 4096) write(32, *) 'value of dx: ', dx(i), i
+         rtbis(i)=max(abs(dx(i)), small)
+      end do
+   end if
+
+!  All subsequent root evaluations:  determine which side of the
+!  interval contains the root crossing, rearrange the bounds, and
+!  subdivide the interval again:
+
+   delouter = 0.D0
+   if(rootsrch > 3) then
+      do i = ns11b, ne11b
+!  "choice" is 1 if diff<0, 0 otherwise:
+         choice(i) = 0.5D+0 * (1.D+0 - sign (1.E+0, real(diff(i)) )   )
+
+!  don't update if old value of delhi/dello < eps
+         if(abs(delnh3_hi(i) / rtbis(i))  >  eps) then
+            delnh3_lo(i) = delnh3(i) * choice(i) + (1.D+0 - choice(i)) * delnh3_lo(i)
+            delnh3_hi(i) = delnh3_hi(i) * 0.5D0
+            delnh3(i)    = delnh3_lo(i) + delnh3_hi(i)
+         end if
+         delouter        = max( delouter, abs(delnh3_hi(i) / rtbis(i)))
+      end do
+   end if
+
+!  The convergence parameter "del" and the number of bisection
+!  iterations "iter" are used to exit the outer loop further down in the code.
+
+   jo = 0
+1000  continue
+   jo = jo + 1
+
+!  Calculate liquid water, based on current ion concentration.
+
+   call mach_hetv_water(npts, ns11b, ne11b, so4, h, no3, nh4, hso4, aw, lwo, lwn)
+
+!  Important note:  if the dry particle initial conditions
+!  are such that there's no initial ammonium nitrate, then
+!  deliquescence should not take place, the water should be
+!  close to zero, and many of the equations in the original
+!  system will no longer be valid.  In HETV, this may
+!  manifest itself as erroneously high water values via
+!  HNO3 being used as a potential solute in the ZSR calculations.
+!  This is corrected here; in the event that the initial (dry)
+!  ammonium nitrate concentration is zero, the water will be
+!  reset to its lower limit value of 1D-20
+
+   do i = ns11b, ne11b
+         if(amnitdry(i) <=  0.D0) lwn(i) = 1.D-20
+   end do
+
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      rlwn(i) = 1.0D0 / lwn(i)
+   end do
+
+!IBM* UNROLL(4)
+   do i = ns11b, ne11b
+      ta(i)       = ta(i)      * lwo(i) * rlwn(i)
+      ts(i)       = ts(i)      * lwo(i) * rlwn(i)
+      tn(i)       = tn(i)      * lwo(i) * rlwn(i)
+      nh3(i)      = nh3(i)     * lwo(i) * rlwn(i)
+   end do
+
+!IBM* UNROLL(4)
+   do i = ns11b, ne11b
+      hno3(i)     = hno3(i)    * lwo(i) * rlwn(i)
+      so4(i)      = so4(i)     * lwo(i) * rlwn(i)
+      h(i)        = h(i)       * lwo(i) * rlwn(i)
+      no3(i)      = no3(i)     * lwo(i) * rlwn(i)
+   end do
+
+!IBM* UNROLL(4)
+   do i = ns11b, ne11b
+      nh4(i)      = nh4(i)     * lwo(i) * rlwn(i)
+      hso4(i)     = hso4(i)    * lwo(i) * rlwn(i)
+      amnit(i)    = amnit(i)   * lwo(i) * rlwn(i)
+      amsul(i)    = amsul(i)   * lwo(i) * rlwn(i)
+   end do
+
+!IBM* UNROLL(4)
+   do i = ns11b, ne11b
+      ambis(i)    = ambis(i)   * lwo(i) * rlwn(i)
+      leto(i)     = leto(i)    * lwo(i) * rlwn(i)
+      nh3dry(i)   = nh3dry(i)  * lwo(i) * rlwn(i)
+      hno3dry(i)  = hno3dry(i) * lwo(i) * rlwn(i)
+   end do
+
+!IBM* UNROLL(4)
+   do i = ns11b, ne11b
+      amnitdry(i) = amnitdry(i) * lwo(i) * rlwn(i)
+      amsuldry(i) = amsuldry(i) * lwo(i) * rlwn(i)
+      delnh3(i)   = delnh3(i)   * lwo(i) * rlwn(i)
+   end do
+
+!  Update liquid water content
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      lwo(i) = lwn(i)
+   end do
+
+!  Calculate rates for Equilibrium constants
+   do i = ns11b, ne11b
+!  5:  HSO4- <=> SO4= + H+
+      khso4(i) = k0(5) * exp( p1(5) * (tstd / t(i) - 1.d+00) &
+               + p2(5) * (1.d+00 + log( tstd / t(i) ) - tstd / t(i) )  )
+!  3:  NH3(g_eq) <=> NH3(aq)
+!  4:  NH3(aq) + H2O <=> NH4+ + OH-
+!  Net NH3(g_eq) + H2O <=> NH4+ + OH-:  knh3=k3*k4
+
+      knh3(i) = ( k0(3) * exp( p1(3) * (tstd / t(i) - 1.d+00)              &
+               + p2(3) * (1.d+00 + log( tstd / t(i) ) - tstd / t(i) )  ))* &
+                  ( k0(4) * exp( p1(4) * (tstd / t(i) - 1.d+00)            &
+               + p2(4) * (1.d+00 + log( tstd / t(i) ) - tstd / t(i) )  ))
+   end do
+
+   do i = ns11b, ne11b
+!  1:  HNO3(g_eq) <=> HNO3(aq)
+!  2:  HNO3(aq) <=> H+ + NO3-
+!  Net  HNO3(g_eq) <=> H+ + NO3- : khno3=k1*k2
+      khno3(i) = ( k0(1) * exp( p1(1) * (tstd / t(i) - 1.D+00)             &
+               + p2(1) * (1.d+00 + log( tstd / t(i) ) - tstd / t(i) )  ))* &
+                  ( k0(2) * exp( p1(2) * (tstd / t(i) - 1.D+00)            &
+               + p2(2) * (1.d+00 + log( tstd / t(i) ) - tstd / t(i) )  ))
+
+!  7:  (NH4)2SO4(s) <=> 2 NH4+ + SO4=
+      kamsul(i) = k0(7) * exp( p1(7) * (tstd / t(i) - 1.D+00) &
+               + p2(7) * (1.d+00 + log( tstd / t(i) ) - tstd / t(i) )  )
+   end do
+
+!  Calculate OH concentration for activity coefficient calculations
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      kh2o(i) = k0(10) * exp( p1(10) * (tstd / t(i) - 1.D+00) &
+         + p2(10) * (1.d+00 + log( tstd / t(i) ) - tstd / t(i) )  )
+!  OH assumed to be small; can't get [OH] from given
+!  system of equations
+      oh(i) = 1.d-30
+   end do
+
+!  Calculate activity coefficients
+
+   call mach_hetv_activity (method, npts, ns11b, ne11b, h, hso4, nh4, no3, so4, oh,  &
+                           g_h_no3, g_h_hso4, g_nh4_hso4, g_nh42_so4, g_h_oh,       &
+                           g_nh4_oh, g_nh4_no3, g_h2_so4, g_nh43_hso42, g0_h_no3,   &
+                           g0_h2_so4, g0_h_hso4, g0_nh4_no3, g0_nh42_so4, g0_nh4_hso4, tc)
+
+   del = 0.D0
+   do i=ns11b, ne11b
+      del = max(del, abs( (g_h_no3(i)-g_h_no3_o(i))/g_h_no3(i) ) )
+      g_h_no3_o(i) = g_h_no3(i)
+      del = max(del, abs( (g_h_hso4(i)-g_h_hso4_o(i))/g_h_hso4(i) ) )
+      g_h_hso4_o(i) = g_h_hso4(i)
+      del = max(del, abs( (g_nh4_hso4(i)-g_nh4_hso4_o(i))/g_nh4_hso4(i) ) )
+      g_nh4_hso4_o(i) = g_nh4_hso4(i)
+      del = max(del, abs( (g_nh4_no3(i)-g_nh4_no3_o(i))/g_nh4_no3(i) ) )
+      g_nh4_no3_o(i) = g_nh4_no3(i)
+      del = max(del, abs( (g_nh4_oh(i)-g_nh4_oh_o(i))/g_nh4_oh(i) ) )
+      g_nh4_oh_o(i) = g_nh4_oh(i)
+      del = max(del, abs( (g_nh42_so4(i)-g_nh42_so4_o(i))/g_nh42_so4(i) ) )
+      g_nh42_so4_o(i) = g_nh42_so4(i)
+      del = max(del, abs( (g_h_oh(i)-g_h_oh_o(i))/g_h_oh(i) ) )
+      g_h_oh_o(i) = g_h_oh(i)
+      del = max(del, abs( (g_h2_so4(i)-g_h2_so4_o(i))/g_h2_so4(i) ) )
+      g_h2_so4_o(i) = g_h2_so4(i)
+      del = max(del, abs( (g_nh43_hso42(i)-g_nh43_hso42_o(i))/g_nh43_hso42(i) ) )
+      g_nh43_hso42_o(i) = g_nh43_hso42(i)
+   end do
+
+!  Factor activity coefficients into equilibrium constants
+!  to simplify calculations.
+!  *  Conversion factors:
+!  *
+!  *        atmospheres -> moles/kg H2O:
+!  *
+!  *   atmospheres *1.01325E5(kg m^-1 s^-2 /atm) /
+!  *    { 8.3144 (kg m^2 s^-2 mol^-1 K^-1) * T (K) * Lw (kg H2O/kg air)
+!  *          * rho (kg air/m3 air)  }    =  moles/(kg H2O)
+!  *
+!  *        atmospheres^-1 -> (moles/kg H2O)^-1 :
+!  *
+!  *         1          8.3144 * T * Lw * rho     kg H2O
+!  *   ------------- * ----------------------  = --------
+!  *   atmospheres      1.01325E5                 moles
+!  *
+
+   do i = ns11b, ne11b
+
+! 5:  HSO4- <=> SO4= + H+
+!  Multiply by the square of the H-HSO4 activity coefficient,
+!  and divide by the cube of the H2SO4 activity coefficient:
+
+      khso4(i) = khso4(i) * (g_h_hso4(i) * g_h_hso4(i)) / (g_h2_so4(i) * g_h2_so4(i) * g_h2_so4(i))
+!
+! 1, 2:  HNO3(g_eq) <=> HNO3(aq) <=> H+ + NO3-
+! k1: Original units (moles HNO3(aq)/kg H2O)/(atm HNO3(g)), but
+! gas is already in moles/(kg H2O); multiply by (R T Lwn rho).
+! k2: Divide by the square of the HNO3 activity coefficient
+!
+      khno3(i) = khno3(i) * rg * t(i) * lwn(i) * rho(i) / (g_h_no3(i) * g_h_no3(i))
+!
+! 3:  NH3(g_eq) <=> NH3(aq), NH3(aq) + H2O <=> NH4+ + OH-
+!  ==> NH3(g) + H2O <=> NH4+ + OH-
+!
+! k3: Original units (moles NH3(aq)kg H2O)/(atm NH3(g)), but
+! gas is already in moles/(kg H2O); multiply by (R T Lwn rho).
+! k4: Multiply by the square of the HNO3 activity coefficient,
+!  and divide by (the square of the NH4NO3 activity coefficient
+!  times Kh2o (=Kw).
+!  i.e. k4=(NH4)(OH)/( (NH3)(H2O) ), kH2O = (H)(OH)/(H2O)
+!  Therefore,
+!      k4/kH2O = (NH4)/( (NH3) (H) ) .  Then multiply by
+!  gamma(H)/gamma(NO3) to correct for non-equilibrium.
+!  Rather than divide by kH2O here, the kH2O value
+!  is carried to the denominator in the relevant equations
+      knh3(i) = knh3(i) * rg * t(i) * lwn(i) * rho(i) * (g_h_no3(i) * g_h_no3(i)) / &
+              (g_nh4_no3(i) * g_nh4_no3(i))
+
+! 7:  (NH4)2SO4(s) <=> 2 NH4+ + SO4=
+!  Divide by the cube of the ammonium sulphate activity coefficient:
+
+      kamsul(i) = kamsul(i) / (g_nh42_so4(i)*g_nh42_so4(i)*g_nh42_so4(i))
+
+   end do
+
+!   Solve inner system of equations.
+!
+!  The value of delNH3 is varied from 0 to NH3dry in a multi-stage
+!  binary search.  In the first stage, system (1, 2 & 3) is solved with
+!  the given value of delNH3 as a constant.  System (1) determines the
+!  amount of ammonium sulphate leaving the crystalline state with
+!  the addition of water (the resulting NH4 is partitioned between
+!  NH4+ and NH3).  System (2) determines the amount of nitrate being
+!  transferred to/from HNO3 following the addition of water.  The
+!  dry phase ammonium nitrate is assumed to be totally deliquesed.
+!  System (3) determines the H ion concentration required to maintain
+!  a charge balance with the ion concentrations determined in (1)
+!  and (2).  Note that HSO4 is not part of the system of equations
+!  at this stage; HSO4 concentrations are determined using a later
+!  adjustment in system (5).  The root of the (HSO4-less) equations
+!  is tested using system (4):  the overall result is a search for the
+!  root of the NH4 <=> NH3 equilibrium equation as a function of the
+!  available NH3.  Once this system has converged, the concentration
+!  of HSO4 (and adjustments to H and SO4) are calculated.
+
+!IBM* UNROLL(4)
+   do i= ns11b, ne11b
+      nh4available(i) = amnitdry(i) + delnh3(i)
+      a(i)            = nh4available(i)                             !*lwn(i)
+      b(i)            = 0.25D0 * nh4available(i) * nh4available(i)  !*lwn(i)*lwn(i)
+      c(i)            = - 0.25D0 * kamsul(i)                        !*lwn(i)*lwn(i)*lwn(i)
+   end do
+
+!  Determine the smallest positive real root of the cubic polynomial
+!  delnh42so4^3
+!              +  nh4available * delnh42so4^2
+!                        + 0.25 * (nh4available)^2 * delnh42so4
+!                                              - 0.25 * knh42so4 = 0
+!
+!  Note:  if the liquid water content reaches the minimum value, then
+!  the condensed phase has iterated to a waterless result.  Some of the
+!  parts of the poly3 solver will have low number limit difficulties
+!  with this situation.  In order to avoid these problems, poly3 is called
+!  only for those points with water larger than the minimum limit, and
+!  the delamsul value for the low water cases is taken to be zero.
+
+   iws = 1
+   iwe = 0
+   do i = ns11b, ne11b
+      if(lwn(i) > lwmin) then
+      iwe = iwe + 1
+      ind2(iwe) = i
+      a2(iwe) = a(i)
+      b2(iwe) = b(i)
+      c2(iwe) = c(i)
+      end if
+   end do
+   if(iwe /= 0) then
+      call mach_hetv_poly3v(a2, b2, c2, delamsul2, islv2, npts, iws, iwe)
+   end if
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      delamsul(i) = 0.D0
+      islv(i) = 1
+   end do
+!IBM* UNROLL(8)
+   do i = iws, iwe
+      delamsul(ind2(i)) = delamsul2(i)
+      islv(ind2(i)) = islv2(i)
+   end do
+
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      delamsul(i) = delamsul(i)   !/lwn(i)
+   end do
+
+!  Note:
+!  (1) If islv(i) = 1, then the equation does not have a positive
+!     real root.  If this is the case, no ammonium sulphate dissolves.
+   do i = ns11b, ne11b
+      delamsul(i) = dble(1 - islv(i)) * delamsul(i)
+   end do
+!
+!  (2) The (NH4)2SO4 that may be lost from the crystalline
+!     phase calculated in poly3  (delamsul) is the amount that would
+!     have to be lost from the crystalline phase in order for
+!     kamsul - (nh4)^2 * so4 = 0 to be maintained.  If this amount is
+!     greater than the dry phase ammonium sulphate, then the ammonium
+!     sulphate is assumed to be totally dissolved; delamsul = amsuldry,
+!     and amsul = 0.
+!
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      delamsul(i) = min(delamsul(i), amsuldry(i))
+   end do
+
+!  Determine so4, nh4, nh3, (nh4)2so4 values (rest of system 1):
+!IBM* UNROLL(4)
+   do i = ns11b, ne11b
+      so4(i) = delamsul(i)
+      nh4(i) = max(0.D0, amnitdry(i) + delnh3(i) + 2.D0 * delamsul(i))
+      amsul(i) = max(0.D0, amsuldry(i) - delamsul(i))
+      nh3(i) = max(0.D0, nh3dry(i) - delnh3(i))
+   end do
+
+!  Note:  if there's no (NH4)2SO4 dissociating, and no dry NH4NO3
+!  to dissociate, then the gas-phase concentration of NH3 should be
+!  the dry value.  i.e. if delamsul=0, indicating that
+!  no root could be found for the (NH4)2SO4 <-> 2 NH4 + SO4 equation,
+!  and nh4no3dry=0, reset NH3 to the dry value, and
+!  ensure that NH4+ is zero.
+
+   do i = ns11b, ne11b
+      if(delamsul(i) == 0.0 .and. amnitdry(i) == 0.0) then
+         nh3(i) = nh3dry(i)
+         nh4(i) = 0.0D0
+      end if
+   end do
+
+!  Note that kh2o = kw in the following, and that the aw values
+!  cancel out.
+!IBM* UNROLL(4)
+   do i = ns11b, ne11b
+!  Correction, Nov 17, 2008:  if the NH4+ = 0, then
+!  the ammonia equilibrium can no longer be used, and
+!  the delno3 equation is invalid.  P.A. Makar/J. Murphy
+        if(nh4(i) /= 0.D0) then
+!  Non-zero NH4+, use delno3 equation:
+          delno3(i) =                                       &
+          min(max(( khno3(i) * knh3(i) * nh3(i)*hno3dry(i)  &
+          - kh2o(i)*nh4(i)*amnitdry(i) )  /                 &
+          ( kh2o(i)*nh4(i) + khno3(i)*knh3(i)*nh3(i) ),     &
+           0.D0),hno3dry(i))
+!
+          hno3(i) = hno3dry(i) - delno3(i)
+          no3(i) = amnitdry(i) + delno3(i)
+        else
+!  NH4+ = 0; set HNO3 = HNO3dry, and NO3- to zero, for now.
+          hno3(i) = hno3dry(i)
+          no3(i) = 0.D0
+        end if
+   end do
+
+!  Determine the concentration of H required to maintain
+!  charge balance.  Note that c(i) is defined negative, therefore
+!  the root is always real and larger in magnitude than b(i).
+!  If b(i) is negative, the positive root results in a positive H;
+!  if b(i) is positive, the positive root results in a positive H.
+!  The negative root will result in a negative value of H, regardless
+!  of the sign of b(i).  Positive root for the quadratic is therefore
+!  used.
+!
+!  Note that a taylor expansion of the square root is used in the
+!  instance that round-off error can mess up the root.
+!  "kh2o" = kw in the following.  Note that gamma H+ x gamma OH-
+!  = 1 is assumed.
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      b(i) = nh4(i) - 2.D0 * so4(i) - no3(i)
+      c(i) = - kh2o(i) * aw(i)
+   end do
+
+   do i = ns11b, ne11b
+      if(b(i) /= 0.D0) then
+         v(i) = 4.d0 * (c(i)) / (b(i) * b(i))
+   else
+      v(i) = 1.D+03
+      end if
+   end do
+
+   do i = ns11b, ne11b
+      if(abs(v(i)) <=  smrt .and. b(i) > 0.D0) then
+         h(i) =  - ((((  14.D0 * c(i) / (b(i) * b(i)) + 5.D0)     &
+                    * c(i) / (b(i) * b(i)) + 2.D0)                &
+                    * c(i) / (b(i) * b(i)) + 1.D0)                &
+                    * c(i) / (b(i) * b(i)) + 1.D0) * c(i) / b(i)
+      else
+         h(i) = 0.5d0 * (-b(i) + sqrt(b(i) * b(i) - 4.d0 * c(i)) )
+      end if
+      h(i) = max(h(i),0.D0)
+   end do
+
+!  Convergence check:  Have the activity coefficients
+!  changed by more than eps2 in the last iteration?  If
+!  so, repeat the calculation with the new activity
+!  coefficients.  Keep track of the number of iterations.
+
+   if(del > eps2 .and. jo <  itero) goto 1000
+
+!   Activity coefficients changed by less than eps2 during
+!   the previous iteration; the first part of the problem, for
+!   the lower limit of the variable (delnh3), has converged.
+!   Evaluate the root (system 4).
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      diff(i) = knh3(i) * nh3(i) * h(i) - nh4(i) * kh2o(i)
+   end do
+
+   if(rooteval == 1 .or. rootsrch == 1) then
+!IBM* UNROLL(8)
+      do i = ns11b, ne11b
+         diff_lo(i) = diff(i)
+      end do
+   end if
+!  Repeat the calculations, for all ndiv+1 initial function
+!  evaluations:
+   if(rooteval <=  ndiv+1) goto 2000
+!
+!  Once the first midpoint has been calculated, use the
+!  convergence checks from the last iteration do decide on
+!  whether or not the set of problems have converged.  If
+!  not, do another iteration.  If so, continue on and fill in
+!  the remaining terms in the system of equations.
+   if(rootsrch <=  3) goto 2000
+   if(delouter > eps .and. rootsrch <  iter) goto 2000
+
+!  "final" value of oh:  Note that this is actually oh * gamma(oh)*gamma(h)!
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      oh(i) = kh2o(i) * h2o / h(i)
+   end do
+!  Final stage is an adjustment of the so4 values in order to
+!  allow for the possible existence of hso4.  Note the b(i) is
+!  defined negative, so -b(i) is positive, and the (non-complex)
+!  quantity within the root will be a number smaller in magnitude
+!  than b(i).  The sign of the root must therefore be positive
+!  in order to get the smaller of the two roots.
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      b(i) = - (h(i) + so4(i) + khso4(i))
+      c(i) =    h(i) * so4(i)
+      root(i) = b(i)*b(i) - 4.D0*c(i)
+   end do
+
+!  Modification:  need to add condition that if there's no SO4
+!  to convert into HSO4, you don't bother to take the root:
+   do i = ns11b, ne11b
+      if(root(i) >= 0.D0 .and. so4(i) > 0.D0) then
+         hso4(i) = 0.5*( - b(i) - sqrt(root(i)) )
+      else
+         hso4(i) = 0.D0
+      end if
+      hso4(i) = max(hso4(i), 0.0D0)
+   end do
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      h(i) = max(h(i) - hso4(i), 0.0D0)
+      so4(i) = max(so4(i) - hso4(i), 0.0D0)
+   end do
+
+!  Zero all solids except (NH4)2SO4 before leaving the routine:
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      amnit(i) = 0.D0
+      ambis(i) = 0.D0
+      leto(i)  = 0.D0
+   end do
+
+!  Convert values back to moles/kg air from moles/kg water by
+!  multiplying by the liquid water content:
+!IBM* UNROLL(8)
+   do i= ns11b, ne11b
+      oh(i)    = oh(i)    * lwn(i)
+      ta(i)    = ta(i)    * lwn(i)
+      ts(i)    = ts(i)    * lwn(i)
+      tn(i)    = tn(i)    * lwn(i)
+   end do
+
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      nh3(i)   = nh3(i)   * lwn(i)
+      hno3(i)  = hno3(i)  * lwn(i)
+      so4(i)   = so4(i)   * lwn(i)
+      h(i)     = h(i)     * lwn(i)
+   end do
+
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      no3(i)   = no3(i)   * lwn(i)
+      nh4(i)   = nh4(i)   * lwn(i)
+      hso4(i)  = hso4(i)  * lwn(i)
+      amnit(i) = amnit(i) * lwn(i)
+   end do
+
+!IBM* UNROLL(8)
+   do i = ns11b, ne11b
+      amsul(i) = amsul(i) * lwn(i)
+      ambis(i) = ambis(i) * lwn(i)
+      leto(i)  = leto(i)  * lwn(i)
+   end do
+
+!  Final stage:  return the calculated values to their correct positions in the calling array,
+!  and use the dry results where no calculations were required.
+
+5000  continue
+
+!  (1)  Put dry values into output array as the default:
+   do i = ns11, ne11
+      oh_t(i)    = 0.D0
+      ta_t(i)    = ta_t(i)
+      ts_t(i)    = ts_t(i)
+      tn_t(i)    = tn_t(i)
+      nh3_t(i)   = nh3dry_t(i)
+      hno3_t(i)  = hno3dry_t(i)
+      so4_t(i)   = 0.D0
+      h_t(i)     = 0.D0
+      no3_t(i)   = 0.D0
+      nh4_t(i)   = 0.D0
+      hso4_t(i)  = 0.D0
+      amnit_t(i) = amnitdry_t(i)
+      amsul_t(i) = amsuldry_t(i)
+      ambis_t(i) = 0.D0
+      leto_t(i)  = 0.D0
+   end do
+
+!  (2) Overwrite the dry values with the "wet" results in
+!  those cases in which dry NH4NO3(s) was > 0:
+   do i = ns11b, ne11b
+      oh_t(ind(i))    = oh(i)
+      ta_t(ind(i))    = ta(i)
+      ts_t(ind(i))    = ts(i)
+      tn_t(ind(i))    = tn(i)
+      nh3_t(ind(i))   = nh3(i)
+      hno3_t(ind(i))  = hno3(i)
+      so4_t(ind(i))   = so4(i)
+      h_t(ind(i))     = h(i)
+      no3_t(ind(i))   = no3(i)
+      nh4_t(ind(i))   = nh4(i)
+      hso4_t(ind(i))  = hso4(i)
+      amnit_t(ind(i)) = amnit(i)
+      amsul_t(ind(i)) = amsul(i)
+      ambis_t(ind(i)) = ambis(i)
+      leto_t(ind(i))  = leto(i)
+   end do
+!
+! For those cases in which the ammonium ion is zero, some
+! nitric acid may still dissolve via the HNO3 <-> NO3-(aq) + H+(aq)
+! equilibrium.  Those cases are extracted here from the entire
+! set that are passed to this case, and are corrected for the
+! HNO3 concentration accordingly.
+!
+      nh4_counter=0
+      do i=ns11,ne11
+        if(nh4_t(i) == 0) then
+          nh4_counter = nh4_counter+1
+          so4_check(nh4_counter) = so4_t(i)
+          no3_check(nh4_counter) = no3_t(i)
+          nh4_check(nh4_counter) = nh4_t(i)
+          hso4_check(nh4_counter) = hso4_t(i)
+          hno3_check(nh4_counter) = hno3_t(i)
+          h_check(nh4_counter) = h_t(i)
+          t_check(nh4_counter) = t_t(i)
+          tc_check(nh4_counter) = tc_t(i)
+          aw_check(nh4_counter) = aw_t(i)
+          rho_check(nh4_counter) = rho_t(i)
+          lwn_check(nh4_counter) = lwn_t(i)
+       end if
+      end do
+!
+      if(nh4_counter > 0) then
+      call mach_hetv_corrhno3(npts,nr,1,nh4_counter,so4_check,no3_check, &
+                    nh4_check,hso4_check,hno3_check,h_check,             &
+                    t_check,tc_check,aw_check,k0,p1,                     &
+                    p2,rho_check,lwn_check,lwmin,tstd                    )
+      end if
+      nh4_counter=0
+      do i=ns11,ne11
+        if(nh4_t(i) == 0) then
+          nh4_counter = nh4_counter+1
+          so4_t(i) = so4_check(nh4_counter)
+          no3_t(i) = no3_check(nh4_counter)
+          nh4_t(i) = nh4_check(nh4_counter)
+          hso4_t(i) = hso4_check(nh4_counter)
+          hno3_t(i) = hno3_check(nh4_counter)
+          h_t(i) = h_check(nh4_counter)
+          lwn_t(i) = lwn_check(nh4_counter)
+       end if
+      end do
+
+   return
+end

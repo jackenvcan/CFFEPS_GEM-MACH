@@ -1,0 +1,99 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : chm_geopot.ftn90
+! Creation       : Verica Savic-Jovcic, October 2015
+! Description    : Compute heights (in m) above ground GEM thermodynamic levels
+! Modification   : Sylvie Gravel, February 2016
+!
+! Arguments:  IN/OUT
+!  metvar3d(:,:,MV3D_ZPLUS) = height in meters above ground
+!
+!============================================================================
+!!if_on
+subroutine chm_geopot(metvar3d,metvar2d)
+!!if_off
+  use chm_utils_mod, only: global_debug, chm_lun_out
+  use chm_consphychm_mod, only: grav
+  use chm_headers_mod, only: chm_gz_int
+  use chm_metvar_mod, only: MV3D_SIGT,MV3D_TPLUS,MV3D_HUPLUS,MV2D_TDIAG,MV2D_QDIAG,MV3D_ZPLUS
+!!if_on
+  use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+  use chm_metvar_mod, only: SIZE_MV2D,SIZE_MV3D
+!!if_off
+  implicit none
+!
+!  Variables from sub. arg. list
+!
+!!if_on
+  real(kind=4), intent(in)     :: metvar2d(chm_ni,SIZE_MV2D)
+  real(kind=4), intent(inout)  :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+!!if_off
+!
+  external mfotvt
+!
+!  Local variables
+!
+  real(kind=4)    :: tvirt(chm_ni, chm_nk+1), gzl(chm_ni, chm_nk+1), sigtl(chm_ni, chm_nk+1)
+  logical(kind=4) :: local_dbg
+!
+  local_dbg = (.false. .or. global_debug)
+
+  if (local_dbg) then
+    write(chm_lun_out, *) "ENTER chm_geopot"
+    write(chm_lun_out, *) " "
+  endif
+
+  tvirt = 0.
+  sigtl(:,:chm_nk) = metvar3d(:,:,MV3D_SIGT)
+  sigtl(:,chm_nk+1) = 1.
+!
+!  Calculate virtual temperature
+!
+  call mfotvt(tvirt(:,:chm_nk), metvar3d(:,:,MV3D_TPLUS), metvar3d(:,:,MV3D_HUPLUS),   chm_ni, chm_nk, chm_ni)
+  call mfotvt(tvirt(:,chm_nk+1),metvar2d(:  ,MV2D_TDIAG), metvar2d(:  ,MV2D_QDIAG)   , chm_ni, 1,      chm_ni)
+!
+!  Calculate geopotential height at thermodynamic levels above ground
+!       by integrating hydrostatic equation in sigma coordinate
+!
+  call chm_gz_int(gzl,tvirt,sigtl,chm_ni,chm_nk+1)
+!
+!  Scale geopotential height of thermodynamic levels to be in meters
+!
+  metvar3d(:,:,MV3D_ZPLUS) = gzl(:,:chm_nk)/grav
+
+  if (local_dbg) then
+    write(chm_lun_out, *) "EXIT chm_geopot"
+    write(chm_lun_out, *) " "
+  endif
+
+  return
+end

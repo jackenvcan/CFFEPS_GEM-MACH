@@ -1,0 +1,1342 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_incld_main.ftn90
+! Creation       : Sylvain Menard, Wanmin Gong, Ashu Dastoor, Ping Huang,
+!                  Craig Stroud, Sylvie Gravel, B. Pabla for GEM-MACH, June 2008
+!
+! Description    : This is a vectorize version of the ADOM stratus aqueous phase chemistry solver.
+!                  Modified for hosting aq chem and tracer-cloud interaction.
+!                  It also splits aerosol OC into primary and secondary components.
+!                  It compute cloud-to-rain conversion and wet flux
+!
+! Extra info     : A note on units:
+!                  On input it is assumed that gaseous species concentrations and
+!                  aerosol species concentrations are in kg/kg-of-air, cloud
+!                  water content q_bin are in kg/m^3-of-air. Internally for the aqueous-
+!                  phase chemistry integration, gaseous species concentrations are
+!                  converted to PPMV, aerosol (or aqueous) species concentration to
+!                  moles per litre of water (MOLAR), and cloud water content (liquid
+!                  and solid) to g/m^3-of air. Concentration units are all converted
+!                  back before exiting this subroutine.
+!
+! Arguments:
+!           IN
+!
+!            tempk       --> Atmospheric Temperature (Kelvin)
+!            psacw       --> CW to snow collection rates(gm/m3 s)
+!            rcrit       --> Critical radius expressed in terms of real bin index which is determine from aerosol activation
+!            rad1_bulk   --> Bulk droplet radius (micron)
+!            roarow      --> air density (kg/m3)
+!            fctr        --> Cloud-to-rain conversion rate (s-1)
+!
+!           OUT
+!            cld_chm     --> Cloud tracer concentration
+!            flux        --> Cloud-to-rain conversion rate (s-1)
+!
+!           IN/OUT
+!            RAD1        --> CW droplet radii (m)
+!            G           --> gas/part species conc (kg/kg_air)
+!            Q_BIN       --> Liquid water conc of cloudwater, Ice/Snow, & rainwater in air (kg/m**3-air)
+!            AEROCON     --> Aerosol concentration (aq and non aq species) kg/kg_air
+!            AERONUM     --> Number conconcenration
+!=============================================================================
+!
+!!if_on
+subroutine mach_incld_main(GAZ_CONC, AEROCON, Q_BIN, tempk, psacw, RAD1, rcrit, roarow, npts, nptsnz, ipos_g, &
+                           rad1_bulk, ibulk, jlat, CLD_CHM, adt2, FLUX, fctr, AERONUM)
+   use chm_ptopo_grid_mod,     only: chm_ni, chm_nk
+   use mach_cam_utils_mod,     only: maxnsg, maxnsp, maxns, maxnsaq, isize
+   use mach_cam_pre_mod,       only: nswdep
+!!if_off
+   use chm_consphychm_mod,     only: rgasd, rho_h2o, mwt_air
+   use mach_incld_headers_mod, only: mach_incld_shift3d_aero, mach_incld_soleq, mach_incld_upaqr1, &
+                                     mach_incld_dochem, mach_incld_steady1
+   use mach_incld_mod,         only: doh2o2, domnfe, dorooh, aqmin, gmin, dtsrt, dtmin, dtmax
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: nptsnz
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: ibulk
+   integer(kind=4), intent   (in) :: jlat
+   real(kind=4),    intent   (in) :: adt2
+   integer(kind=4), intent   (in) :: ipos_g   (maxnsg)
+   real(kind=4),    intent(inout) :: gaz_conc (npts,maxns,chm_nk)
+   real(kind=4),    intent(inout) :: aerocon  (npts,maxnsp,chm_nk,isize)
+   real(kind=4),    intent(inout) :: q_bin    (npts,3,chm_nk,isize)
+   real(kind=4),    intent   (in) :: tempk    (npts,chm_nk)
+   real(kind=4),    intent   (in) :: psacw    (npts,chm_nk)
+   real(kind=4),    intent(inout) :: rad1     (npts,chm_nk,isize)
+   real(kind=4),    intent   (in) :: rcrit    (npts,chm_nk)
+   real(kind=4),    intent   (in) :: roarow   (npts,chm_nk)
+   real(kind=4),    intent   (in) :: rad1_bulk(npts,chm_nk)
+   real(kind=4),    intent  (out) :: cld_chm  (npts,chm_nk,7)
+   real(kind=4),    intent  (out) :: flux     (npts,nswdep,chm_nk,2)
+   real(kind=4),    intent   (in) :: fctr     (npts,chm_nk)
+   real(kind=4),    intent(inout) :: aeronum  (npts,chm_nk,isize)
+!!if_off
+!
+! Local variables
+!
+   integer(kind=4), parameter         :: maxnsa = 30
+   integer(kind=4), parameter         :: ng = 11, naq = 12
+   integer(kind=4)                    :: nsize
+   integer(kind=4)                    :: idummy, ifirst, nstep
+   integer(kind=4)                    :: k, i, ivec, j, current_bin, n, is, kk
+   integer(kind=4)                    :: ii, isize_0, jj, ijk, nmax, ijump, iisyl1
+   integer(kind=4)                    :: iisyl2, iisyl3, iisyl4, n1, n2, n3
+   integer(kind=4)                    :: idrf, jk, m, ij, isum
+   integer(kind=4), dimension(nptsnz) :: icheck1, jjgrid
+
+   real(kind=4)                       :: lrt, dummy
+   real(kind=4)                       :: convert, ffr, resid
+   real(kind=4), parameter            :: smf = 1.0e-30, co2con = 340.0
+   real(kind=4), parameter            :: dtspmx = 225.0
+   real(kind=4)                       :: q_bin_t, st_ion, time, tfinal, tout, tin, remfrc, dtsplt
+
+   real(kind=4), dimension(maxnsp)  :: mwt_aero = (/96.0, 62.0, 18.0, 60.08, 67.180, 132.1342, 18.0, 132.1342, 12.01/)
+   real(kind=4), dimension(maxnsa)  :: rmwt = (/64.00, 96.00,  30.00, 46.00, 48.00, 34.00, 63.00,        &
+                                               121.00, 44.09,  93.43, 28.05, 57.30, 92.13, 117.97,       &
+                                                30.03, 44.05,  72.10, 72.00, 84.00, 62.00, 108.13,       &
+                                                47.00, 121.00, 68.11, 33.00, 61.00, 75.00, 28.00, 17.00, &
+                                               100.00 /)
+
+   real(kind=4), dimension(nptsnz, maxnsg)                  :: gnew, gtemp, g0
+   real(kind=4), dimension(nptsnz, maxnsaq, 2)              :: aqnew
+   real(kind=4), dimension(nptsnz, maxnsg, 2)               :: pgscav, pgscavtemp
+   real(kind=4), dimension(nptsnz, 3)                       :: qnew
+   real(kind=4), dimension(nptsnz)                          :: tempknew, tempinew, rtempnew, psacwnew
+   real(kind=4), dimension(nptsnz)                          :: rad1new, tempktemp, psacwtemp
+   real(kind=4), dimension(nptsnz)                          :: rhomnew, tempitemp, rtemptemp
+   real(kind=4), dimension(nptsnz, 25, 2)                   :: raq
+   real(kind=4), dimension(nptsnz, 5, 2)                    :: baq, baqtemp
+   real(kind=4), dimension(nptsnz, maxnsaq, 2)              :: aqtemp
+   real(kind=4), dimension(nptsnz, 3)                       :: q_binnew
+   real(kind=4), dimension(nptsnz, maxnsg, isize)           :: delg
+   real(kind=4), dimension(npts, maxns, chm_nk)             :: gtmp
+   real(kind=4), dimension(npts, chm_nk)                    :: rhom, fract
+   real(kind=4), dimension(npts, maxnsaq, 2, chm_nk, isize) :: aq, aq_orig
+
+   real(kind=4), dimension(npts, maxnsaq, chm_nk)           :: aqfrc
+   real(kind=4), dimension(npts, 3, chm_nk)                 :: qbin_bulk
+   real(kind=4), dimension(npts, maxnsaq, 2, chm_nk)        :: aq_bulk
+   real(kind=4), dimension(npts, chm_nk, isize)             :: vfrac
+
+   real(kind=4), dimension(nptsnz, maxnsaq, 2)              :: aq_before, daq_chem, daq_chem_temp
+   real(kind=4), dimension(nptsnz, maxnsaq, 2)              :: daq_flux, daq_flux_temp
+   real(kind=4), dimension(npts, chm_nk, maxnsaq, 2)        :: daq_chem_f, daq_flux_f
+
+   real(kind=4), dimension(nptsnz, nswdep, 2)               :: fluxnew, fluxtemp
+   real(kind=4), dimension(nptsnz)                          :: fctrnew, factor
+                                                     
+   external qqexit
+
+   aq          = 0.0
+   aq_before   = 0.0
+   aq_bulk     = 0.0
+   aq_orig     = 0.0
+   aqfrc       = 0.0
+   aqnew       = 0.0
+   aqtemp      = 0.0
+   baq         = 0.0
+   baqtemp     = 0.0
+   convert     = 0.0
+   daq_chem    = 0.0
+   daq_chem_f  = 0.0
+   daq_chem_temp = 0.0
+   daq_flux    = 0.0
+   daq_flux_f  = 0.0
+   daq_flux_temp = 0.0
+   delg        = 0.0
+   doh2o2      = 1.0
+   domnfe      = 1.0
+   dorooh      = 1.0
+   dtsplt      = 0.0
+   dummy       = 0.0
+   factor      = 0.0
+   fctrnew     = 0.0
+   ffr         = 0.0
+   fluxnew     = 0.0
+   fluxtemp    = 0.0
+   fract       = 0.0
+   g0          = 0.0
+   gnew        = 0.0
+   gtemp       = 0.0
+   gtmp        = 0.0
+   lrt         = 0.0
+   pgscav      = 0.0
+   pgscavtemp  = 0.0
+   psacwnew    = 0.0
+   psacwtemp   = 0.0
+   q_bin_t     = 0.0
+   q_binnew    = 0.0
+   qbin_bulk   = 0.0
+   qnew        = 0.0
+   rad1new     = 0.0
+   raq         = 0.0
+   remfrc      = 0.0
+   resid       = 0.0
+   rhom        = 0.0
+   rhomnew     = 0.0
+   rtempnew    = 0.0
+   rtemptemp   = 0.0
+   st_ion      = 0.0
+   tempinew    = 0.0
+   tempitemp   = 0.0
+   tempknew    = 0.0
+   tempktemp   = 0.0
+   tfinal      = 0.0
+   time        = 0.0
+   tin         = 0.0
+   tout        = 0.0
+   vfrac       = 0.0
+
+   idummy = 0
+   nsize  = isize
+
+!   initialize wetchem variables
+
+   gmin  = 1.0e-20
+   aqmin = 1.0e-20
+
+   dtsrt(1) = 0.001
+   dtsrt(2) = 22.5  ! in accordance with dtsplt of 225 s
+
+   dtmin = 1.0e-6
+   dtmax = 75.0   ! in accordance with dtsplt of 225 s
+
+   dtsplt = dtspmx  ! initial dtsplt (225 s)
+
+
+   do k = 1, chm_nk
+      do i = 1, maxns
+         do ivec = 1, npts
+            gaz_conc(ivec, i, k) = max(gaz_conc(ivec, i, k), gmin)
+         end do
+      end do
+   end do
+
+   do j = 1, 2
+      do k = 1, chm_nk
+         do i = 1, 8
+            do current_bin = 1, nsize
+               do ivec = 1, npts
+                  aq(ivec, i, j, k, current_bin) = 1.0e-18
+               end do
+            end do
+         end do
+
+            do current_bin = 1, nsize
+               do ivec = 1, npts
+                  aq(ivec, 9,  j, k, current_bin) = 1.0e-7
+                  aq(ivec, 10, j, k, current_bin) = 1.0e-7
+                  aq(ivec, 11, j, k, current_bin) = 1.0e-18
+                  aq(ivec, 12, j, k, current_bin) = 1.0e-18
+                  aq(ivec, 13, j, k, current_bin) = 1.0
+               end do
+            end do
+      end do
+   end do
+!
+   do j = 1, 3
+      do k = 1, chm_nk
+         do current_bin = 1, nsize
+            do ivec = 1, npts
+               q_bin(ivec, j, k, current_bin) = max(q_bin(ivec, j, k, current_bin), 0.0)
+            end do
+         end do
+      end do
+   end do
+
+!   Move g to gtmp and then pack species involved in aqueous chemistry back into g (in PPM)
+
+   do k = 1, chm_nk
+      do i = 1, maxns
+         do ivec = 1, npts
+            gtmp(ivec, i, k) = gaz_conc(ivec, i, k)
+         end do
+      end do
+   end do
+
+   do j = 1, maxnsg
+      do k = 1, chm_nk
+!*vdir novector
+          do ivec = 1, npts
+             i = ipos_g(j)
+
+!  gas perfect law .
+!  here we transform gas from kg/kg to ppmv assuming v1/v2(volume ratio) = n1/n2 (molar ratio)
+!  this is an approximation involving (p1=p2)
+
+             if (i /= 0) then
+                gaz_conc(ivec, j, k) = 1.0e+06 * gtmp(ivec, i, k) * (mwt_air / rmwt(i))
+             end if
+
+          end do
+      end do
+   end do
+
+!  Initialization
+!  However gaz_conc(5, 6, and 9) still contains concentrations for O3, H2O2
+!  and C3H8 (in kg/kg). To be cautious gaz_conc(4, 5, 6 and 9) should be
+!  reassigned with zero concentrations for the aqueous-phase chemistry
+!  calculation.  Wanmin G. June 08. 2000
+!
+!  (Note H2SO4 in the
+!  gas/particle list is not the same as H2SO4, i.e. sulphuric acid in
+!  gas-phase, in AURAMS.
+
+   do k = 1, chm_nk
+      do ivec = 1, npts
+         gaz_conc(ivec, 4, k)  = 0.0 !h2so4
+         gaz_conc(ivec, 5, k)  = 0.0 !nh4hso4
+         gaz_conc(ivec, 6, k)  = 0.0 !nh42so4
+         gaz_conc(ivec, 9, k)  = 0.0 !nh4no3
+         gaz_conc(ivec, 10, k) = 0.0
+         gaz_conc(ivec, 12, k) = co2con
+      end do
+   end do
+
+   if (ibulk == 1) then
+!  initialization of vfrac
+      vfrac(1:npts, 1:chm_nk, 1:isize) = 0.0
+
+!  computing qbin_bulk (kg/m3) from qbin (kg/m3) and also
+!  Computing VFRAC ... After discussions, we decide to calculate VFRAC by using qbulk and q_bin
+
+      do kk = 1, chm_nk
+         do ii = 1, npts
+            qbin_bulk(ii, 1, kk) = 0.0 ! water ! new array allocated with hpalloc
+            qbin_bulk(ii, 2, kk) = 0.0 ! ice  ! not used
+            do current_bin = int(rcrit(ii, kk)), nsize
+               qbin_bulk(ii, 1, kk) = qbin_bulk(ii, 1, kk) + q_bin(ii, 1, kk, current_bin)
+            end do
+            qbin_bulk(ii, 2, kk) = 0.0
+            qbin_bulk(ii, 3, kk) = 0.0
+
+!  we must calculate vfrac here because information's about cwc
+!  in each individual bin is lost a few line below when we
+!  transfer qbulk into the first size bin of q_bin .
+            do current_bin = int(rcrit(ii, kk)), nsize
+               if ((qbin_bulk(ii, 1, kk) + qbin_bulk(ii, 2, kk) > 0)) then
+                  vfrac(ii, kk, current_bin) = (q_bin(ii, 1, kk, current_bin) + q_bin(ii, 2, kk, current_bin)) /  &
+                                         (qbin_bulk(ii, 1, kk) + qbin_bulk(ii, 2, kk))
+               end if
+            end do
+!  transfer qbin_bulk into the first size bin of q_bin(overwrite the first bin!)
+            q_bin(ii, 1, kk, 1) = qbin_bulk(ii, 1, kk) ! save qbin_bulk in first bin
+            q_bin(ii, 2, kk, 1) = 0.0
+            q_bin(ii, 3, kk, 1) = 0.0
+         end do
+      end do
+
+!  assign qbulk to qbin(i) for i=isize_0, nsize
+
+      do kk = 1, chm_nk
+         do ii = 1, npts
+            do i = int(rcrit(ii, kk)), nsize
+               q_bin(ii, 1, kk, i) = qbin_bulk(ii, 1, kk)
+               q_bin(ii, 2, kk, i) = 0.0
+               q_bin(ii, 3, kk, i) = 0.0
+            end do
+         end do
+      end do
+   end if
+
+!  Assign aerocon to aq and unit conversion (kg/kg -> MOLAR)
+!  and partitioning conc for partially activated bin
+
+   do k = 1, chm_nk
+      do i = 1, npts
+!  Air density (in g/m^3)
+         rhom(i, k) = roarow(i, k) * 1000.0
+
+!  To avoid division by zero for grid with clear sky (go to 400)
+
+         fract(i, k) = max(0.0, (1.0 - (rcrit(i, k) - real(int(rcrit(i, k))))))
+         isize_0 = int(rcrit(i, k))
+
+         do current_bin = isize_0, nsize
+            q_bin_t = q_bin(i, 1, k, current_bin) + q_bin(i, 2, k, current_bin)
+            if (q_bin_t <= 0) cycle
+
+!  Convert = den_air * den_water / LWC / MWT
+!  (kg/m^3a) (kg/m^3w)  (kg/m^3a)
+!  Note => kmol/m^3 = mol/L, rhom in g/m^3 and den_water = 1000
+
+            convert = rhom(i, k) / q_bin_t
+
+
+            do j = 1, 2
+               ffr = q_bin(i, j, k, current_bin) / q_bin_t
+               aq(i, 4, j, k, current_bin) = aerocon(i, 1, k, current_bin) * convert / mwt_aero(1) * ffr ! so4=
+               aq(i, 5, j, k, current_bin) = aerocon(i, 2, k, current_bin) * convert / mwt_aero(2) * ffr ! no3-
+               aq(i, 6, j, k, current_bin) = aerocon(i, 3, k, current_bin) * convert / mwt_aero(3) * ffr ! nh4+
+!  exclude CAT1, FEMN at the moment (until proper partition
+!  from crustal material or other means is sorted out). This was done previously through assigning zero to
+!  aerocon(*, 4, *, *) in aerocld_new but now aerocon(*, 4, *, *) contains CM but not participating in aq chem
+!  except for transfer between hydrometeors due to internal mix assumption as seasalt, OC, EC, and POC
+               aq(i, 7, j, k, current_bin) = 0.0  ! CAT1+
+               aq(i, 8, j, k, current_bin) = 0.0  ! HCO3-  initial from dust
+               aq(i, 11, j, k, current_bin) = 0.0 ! FEMN
+!    evaluate H+ and OH-
+               aq(i, 9, j, k, current_bin) = 2.0 * aq(i, 4, j, k, current_bin) + aq(i, 5, j, k, current_bin) - aq(i, 6, j, k, current_bin)
+
+!    added to avoid negative proton concentrations.
+               if (aq(i, 9, j, k, current_bin) <= 0.0) then
+!    add residual to oh-
+                  resid = 1.0e-7 - aq(i, 9, j, k, current_bin)
+                  aq(i, 9, j, k, current_bin) = 1.0e-7
+               else
+                  resid = 0.0
+               end if
+!    estimate oh- from h+
+                  aq(i, 10, j, k, current_bin) = 1.0e-14 / aq(i, 9, j, k, current_bin) + resid
+            end do
+         end do
+
+         do j = 1, 2
+            do jj = 1, maxnsaq - 1
+               if (isize_0 <= isize) then
+               aq(i, jj, j, k, isize_0) = aq(i, jj, j, k, isize_0) * fract(i, k)
+               end if
+            end do
+         end do
+      end do
+   end do
+
+!  End of the initialisation
+
+!  new stuff for bulk chemistry
+
+!     step a) in Wanmin Gong Documentation for Aqueous phase
+!     Bulk Chemistry implementation
+!
+!     sum initial binned aqueous-phase tracer concentrations to
+!     produced initial bulk aqueous-phase tracer (eg. AQ_BULK)
+!     to go into the chemistry/wet-flux cycle
+!     W.G. June 30. 2000.
+!
+!     Also computing rad1_bulk in (m)
+!                                  S.M. June 30 , 2000.
+
+   IF (ibulk == 1) THEN
+
+!  Initilalization of DAQ_CHEM and DAQ_FLUX
+
+      do n = 1, 2
+         do is = 1, maxnsaq
+            do ivec = 1, nptsnz
+               daq_chem(ivec, is, n) = 0.0
+               daq_flux(ivec, is, n) = 0.0
+            end do
+         end do
+      end do
+
+!  We save a copy of aq_bin in aq_orig (to be used later)
+
+      aq_orig(:,:,:,:,:) = aq(:,:,:,:,:)
+
+!  computing aq_bulk from aq_bin
+      do jj = 1, 2
+         do j = 1, maxnsaq - 1
+            do kk = 1, chm_nk
+               do ii = 1, npts
+                  aq_bulk(ii, j, jj, kk) = 0.0  ! new array allocated with hpalloc
+                  do current_bin = int(rcrit(ii, kk)), nsize        ! all activated bins are
+                     aq_bulk(ii, j, jj, kk) = aq_bulk(ii, j, jj, kk) + aq(ii, j, jj, kk, current_bin)
+                  end do
+                  aq(ii, j, jj, kk, 1) = aq_bulk(ii, j, jj, kk) ! save aq_bulk in first bin
+               end do
+            end do
+         end do
+      end do
+!
+!  Transfering rad1_bulk in the first size bin for Bulk chemistry
+!
+!  Bulk droplet size ("RADCLD") is calculated in aeroact.f. It is
+!  calculated from bulk cloud water and total number of activated aerosols
+!  (cloud droplets). Please note that RADCLD is in micron in aeroact.f, so it
+!  needs to be multiplied by 1.e-06.
+
+      do kk = 1, chm_nk
+         do ii = 1, npts
+            rad1(ii, kk, 1) = (rad1_bulk(ii, kk)) * 1.0e-06
+         end do
+      end do
+   end if
+
+!
+!  Reduce dimension from (npts, chm_nk) to (npts*chm_nk)
+!  similar operation for size-dependant arrays are done later
+
+   do k = 1, chm_nk
+      do i = 1, maxnsg          ! maxns is replace by maxnsg
+         do ivec = 1, npts
+            ijk = (k - 1) * npts + ivec
+            gnew(ijk, i) = gaz_conc(ivec, i, k)
+            g0(ijk, i) = gaz_conc(ivec, i, k)
+         end do
+      end do
+   end do
+!
+   do k = 1, chm_nk
+      do ivec = 1, npts
+         ijk = (k - 1) * npts + ivec
+         tempknew(ijk) = tempk(ivec, k)
+         psacwnew(ijk) = psacw(ivec, k)
+         rhomnew(ijk) = rhom(ivec, k)
+      end do
+   end do
+
+!  end of buffer dimension reduction
+!
+!  compute tempi and rtemp (rtw)
+!
+   do ijk = 1, nptsnz
+      if ((tempknew(ijk) <= 0) .or. (rhomnew(ijk) <= 0)) go to 11
+      tempinew(ijk) = 1.0 / tempknew(ijk)
+      rtempnew(ijk) = mwt_air / rhomnew(ijk) * 1.0e+09 / rho_h2o
+ 11    continue
+   end do
+
+
+!  Assign continuous scavenging rates for gas/part.
+!  (note only part with q1 & gas/part with q2 are needed)
+!  PGSCAV(ijk, ispec, 1) are assigned with zeros here since the process
+!  is replaced with aerosol activation. PGSCAV(ijk, ispec, 2) are also
+!  assigned with zero except for HNO3 and NH3 scavenging by snow. This
+!  need to be revisited since a single scavenging rate is used for all
+!  size bins at the moment and the number is somewhat arbitary.
+!  						(WG, Nov., 1999)
+!
+   do ijk = 1, nptsnz
+! -determine so4p1 scavenging rates -
+! -increase snow scavenging rate by 50%.
+
+!  Note that PGSCAV(*, *, 2) were assigned with zero if snow/ice
+!  water content is zero (or less) originally. This will be dealt with
+!  later (before entering DOCHEM).
+!
+      pgscav(ijk, 4, 2) = psacwnew(ijk) * 1.5
+!
+!  set other scavenging rates
+!
+!  cloudwater nucleation scavenging determined from pcond/q1 * factor
+!  set factor = 1. for 100% condensation on new droplets
+!     pgscav(ijk, 4, 1) = cvmgt(0., pcond(1)/(qnew(ijk)+smf), qnew(ijk).le.0.)
+      pgscav(ijk, 4, 1) = 0.0
+!  so4p2 = so4p1 rate
+      pgscav(ijk, 5, 1) = pgscav(ijk, 4, 1)
+!  so4p3 = so4p1 rate
+      pgscav(ijk, 6, 1) = pgscav(ijk, 4, 1)
+!  nno3p = so4p1 rate
+      pgscav(ijk, 9, 1) = pgscav(ijk, 4, 1)
+!  dust = so4p1 rate
+      pgscav(ijk, 10, 1) = pgscav(ijk, 4, 1)
+!
+!  gas scavenging rates by rain
+!  (temporarily removed)
+!  ICE scavenging rates for particles and HNO3 & NH3
+!  SO4P2 = SO4P1 RATE
+!     PGSCAV(ijk, 5, 2) = PGSCAV(ijk, 4, 2)
+      pgscav(ijk, 5, 2) = 0.0
+!  so4p3 = so4p1 rate
+!     pgscav(ijk, 6, 2) = pgscav(ijk, 4, 2)
+      pgscav(ijk, 6, 2) = 0.0
+!  hno3 = 2 * so4p1 rate
+      pgscav(ijk, 7, 2) = pgscav(ijk, 4, 2) * 2.0
+!  nh3g = 2 * so4p1 rate
+      pgscav(ijk, 8, 2) = pgscav(ijk, 4, 2) * 2.0
+!  nno3 = so4p1 rate
+!     pgscav(ijk, 9, 2) = pgscav(ijk, 4, 2)
+      pgscav(ijk, 9, 2) = 0.0
+!  dust = so4p1 rate
+!     pgscav(ijk, 10, 2) = pgscav(ijk, 4, 2)
+      pgscav(ijk, 10, 2) = 0.0
+      pgscav(ijk, 4, 2) = 0.0
+
+   end do
+
+!  The following computations are carried out by size bins (Loop over size bins)
+
+   if (ibulk == 1) then
+      nmax = 1
+   else if (ibulk == 0) then
+      nmax = nsize
+   end if
+
+!
+   fluxnew(1:nptsnz, 1:nswdep, 1:2) = 0.0
+
+   do current_bin = 1, nmax
+
+!  calculate ionic strength and assign zero liquid water
+!  to the grids with ionic strength greater than 0.5
+
+      do kk = 1, chm_nk
+         do ii = 1, npts
+            st_ion = 0.5 * (aq(ii, 4, 1, kk, current_bin) * 4.0 + aq(ii, 5, 1, kk, current_bin) +  &
+                     aq(ii, 6, 1, kk, current_bin) + aq(ii, 7, 1, kk, current_bin) +  &
+                     aq(ii, 8, 1, kk, current_bin))
+            if (st_ion > 0.01) then
+               q_bin(ii, 1, kk, current_bin) = 0.0
+               q_bin(ii, 2, kk, current_bin) = 0.0
+               q_bin(ii, 3, kk, current_bin) = 0.0
+            end if
+         end do
+      end do
+
+!  re-initialise aq for non cloudy grids
+!  this is added in for output cloud ion conc and pH, and should
+!  not afftect the cloud chemistry integration. (WG, Mar 2001)
+
+      do j = 1, 2
+         do kk = 1, chm_nk
+            do ii = 1, npts
+               if (q_bin(ii, j, kk, current_bin) <= 0.0) then
+                  aq(ii, 1, j, kk, current_bin) = aqmin
+                  aq(ii, 2, j, kk, current_bin) = aqmin
+                  aq(ii, 3, j, kk, current_bin) = aqmin
+                  aq(ii, 4, j, kk, current_bin) = aqmin
+                  aq(ii, 5, j, kk, current_bin) = aqmin
+                  aq(ii, 6, j, kk, current_bin) = aqmin
+                  aq(ii, 7, j, kk, current_bin) = aqmin
+                  aq(ii, 8, j, kk, current_bin) = 1.0e-07
+                  aq(ii, 9, j, kk, current_bin) = 1.0e-07
+                  aq(ii, 10, j, kk, current_bin) = aqmin
+                  aq(ii, 11, j, kk, current_bin) = aqmin
+                  aq(ii, 12, j, kk, current_bin) = aqmin
+               end if
+            end do
+         end do
+      end do
+
+!  Reduce dimension from (i, k) to (ik) for aq, q_bin and rad1
+      ijump = 0
+      iisyl1 = 0
+      iisyl2 = 0
+      iisyl3 = 0
+      iisyl4 = 0
+
+      do j = 1, 2
+         do k = 1, chm_nk
+            do i = 1, maxnsaq
+               do ivec = 1, npts
+                  ijk = (k - 1) * npts + ivec
+                  aqnew(ijk, i, j) = aq(ivec, i, j, k, current_bin)
+               end do
+            end do
+         end do
+      end do
+   !
+      do k = 1, chm_nk
+         do ivec = 1, npts
+            ijk = (k - 1) * npts + ivec
+            fctrnew(ijk) = fctr(ivec, k)
+         end do
+      end do
+!
+      do k = 1, chm_nk
+         do ivec = 1, npts
+            ijk = (k - 1) * npts + ivec
+            rad1new(ijk) = rad1(ivec, k, current_bin)
+         end do
+      end do
+!  initialize delg and gnew
+      do j = 1, maxnsg
+         do i = 1, nptsnz
+            gnew(i, j) = g0(i, j)
+            delg(i, j, current_bin) = 0.0
+         end do
+      end do
+!
+      do j = 1, 3
+         do k = 1, chm_nk
+            do ivec = 1, npts
+               ijk = (k - 1) * npts + ivec
+               q_binnew(ijk, j) = q_bin(ivec, j, k, current_bin)
+
+
+!  At this point we look if all the grids in
+!  a size bin have q_bin=0 . If it is the case, we jump
+!  directly with go to 1000 for the next size bin.
+!                                     Sylvain M. Jan 2000./
+
+               if (q_binnew(ijk, j) <= 0.0) ijump = ijump + 1
+            end do
+         end do
+      end do
+      if (ijump == nptsnz * 3) cycle
+
+
+!  sorting out grids and shifting-
+!  make condition to get the exact place in the array for
+!  clear, snow(sn), snow+cloud water(sn+cw) and cloud water(cw) only.
+!
+      isum = 0
+      n1 = 0
+      n2 = 0
+      n3 = 0
+
+      do j = 1, nptsnz
+!  kg/m^3 to g/m^3
+         qnew(j, 1) = q_binnew(j, 1) * 1000.0
+         qnew(j, 2) = q_binnew(j, 2) * 1000.0
+!
+! clear part
+         if ((qnew(j, 1) <= 0.) .and. (qnew(j, 2) <= 0.)) icheck1(j) = 0
+         if ((qnew(j, 1) <= 0.) .and. (qnew(j, 2) <= 0.)) iisyl1 = iisyl1 + 1
+   !
+! only snow part sn
+         if ((qnew(j, 1) <= 0.) .and. (qnew(j, 2) > 0.)) icheck1(j) = 1
+         if ((qnew(j, 1) <= 0.) .and. (qnew(j, 2) > 0.)) iisyl2 = iisyl2 + 1
+   !
+! cw and sn part
+         if ((qnew(j, 1) > 0.) .and. (qnew(j, 2) > 0.)) icheck1(j) = 2
+         if ((qnew(j, 1) > 0.) .and. (qnew(j, 2) > 0.)) iisyl3 = iisyl3 + 1
+   !
+! only cloud water part cw
+         if ((qnew(j, 2) <= 0.) .and. (qnew(j, 1) > 0.)) icheck1(j) = 3
+         if ((qnew(j, 2) <= 0.) .and. (qnew(j, 1) > 0.)) iisyl4 = iisyl4 + 1
+   !
+!  if icheck1=1 then put the value at the beginning of the buffer and
+!  if icheck1=0 put value at the end of the buffer.
+         isum = isum + icheck1(j)
+         if (npts == 1) isum = 1   ! not very useful, sylvain !
+      end do
+
+      if (isum > 0) then
+         do ii = 1, nptsnz
+            jjgrid(ii) = ii
+         end do
+
+   ! call tmg_start0 ( 58, 'mach_incld_shift3d_aero')
+         call mach_incld_shift3d_aero(icheck1,                            &
+                                      n1, n2, n3, jjgrid,                 &
+                                      gnew, aqnew, qnew, pgscav,          &
+                                      tempknew, tempinew, rtempnew,       &
+                                      psacwnew, rad1new, nptsnz, fctrnew)
+   ! call tmg_stop0 ( 58 )
+
+      end if
+
+!  Compute variable coefficients for cloud and snow
+
+      do j = 1, 2
+         do i = 1, nptsnz
+            lrt = qnew(i, j) * rtempnew(i)
+            baq(i, 1, j) = 1.0e+15
+            if (lrt > 0.0) then
+               baq(i, 1, j) = 1.0 / (lrt + smf)
+            end if
+            baq(i, 2, j) = lrt
+            baq(i, 3, j) = 2.0 * baq(i, 1, j)
+            baq(i, 4, j) = 0.25 * baq(i, 1, j)
+            baq(i, 5, j) = 0.01 * baq(i, 1, j)
+         end do
+      end do
+
+!  factor for unit conversion (P/RT, mole m-3,
+!  where R is universal gas constant).
+
+!      do i = 1, nptsnz
+!         factor(i) = 1.0e+09 / rtempnew(i) / rho_h2o
+!      end do
+
+!
+!  step b) in Wanmin Gong Documentation for Aqueous phase
+!  Bulk Chemistry implementation
+!  At the end of each chemistry (DOCHEM) and Wet fluxes calculation
+!  steps within the chemistry /wet/fluxes loops, compute the
+!  changes in bulk aerosol tracer concentration , due to
+!  each processes and accumulate them, separatley, in two
+!  additionnal arrays (DAQ_CHEM, and DAQ_FLX)
+
+      if (ibulk == 1) then
+         aq_before(1:nptsnz, 1:maxnsaq, 1:2) = aqnew(1:nptsnz, 1:maxnsaq, 1:2)
+      end if
+
+
+!  Assign zero to psacw and pgscav(*, *, 2) for the grids
+!  with no snow/ice water (i.e. clear-sky and liquid-water-
+!  only grids).
+      do i = 1, n1 - 1
+         psacwnew(i) = 0.0
+!  hno3
+         pgscav(i, 7, 2) = 0.0
+!  nh3
+         pgscav(i, 8, 2) = 0.0
+      end do
+!
+      do i = n3, nptsnz
+         psacwnew(i) = 0.0
+!  hno3
+         pgscav(i, 7, 2) = 0.0
+!  nh3
+         pgscav(i, 8, 2) = 0.0
+      end do
+
+!  Initial equalibrium to initialize the system
+
+   ! call tmg_start0 ( 59, 'mach_incld_soleq')
+      call mach_incld_soleq(baq, gnew, aqnew(:, :, 1), qnew(:, 1), qnew(:, 2),   &
+                            tempknew, tempinew, rtempnew, pgscav,                &
+                            rad1new, nptsnz, n1, n2, n3                          )
+  ! call tmg_stop0 ( 59 )
+
+!  step b) Compute changes in BULK aerosol tracer concentration
+      if (ibulk == 1) then
+         do n = 1, 2
+            do is = 1, maxnsaq
+               do ivec = 1, nptsnz
+                  daq_chem(ivec, is, n) = daq_chem(ivec, is, n) +                &
+                           (aqnew(ivec, is, n) - aq_before(ivec, is, n))
+                  aq_before(ivec, is, n) = aqnew(ivec, is, n)
+               end do
+            end do
+         end do
+      end if
+
+!  Compute rate constants / variable coefficients
+
+   ! call tmg_start0 ( 60, 'mach_incld_upaqr1')
+      call mach_incld_upaqr1(aqnew, pgscav, qnew(:, 1), qnew(:, 2), rad1new,      &
+                             tempknew, tempinew, rtempnew,                        &
+                             raq, baq, gnew, nptsnz, n1, n2, n3                   )
+   ! call tmg_stop0 ( 60 )
+!
+!  Now entering in dochem -
+
+      time = 0.0        ! this is a scalar (initial time: 0 s)
+      tfinal = adt2    ! advection time step passed through arguement
+
+   !  Set out times
+      tout = dtsplt  ! scalar parameter = 240 s
+      tin = 0.0       ! scalar parameter
+      idrf = 1
+      ifirst = 1
+!
+!  Initial concentration
+
+250   continue
+
+      if (ifirst < 1) go to 305
+
+      tout = min(.6, 0.1 * dtsplt) ! tout = 0.6 s
+
+!  integrate mass transfer / chemistry for 0.1*dtsplt
+!  to get chemistry started before advection
+
+   ! call tmg_start0 ( 61, 'mach_incld_dochem -1st integrate mass for 0.1*dtsplt')
+      call mach_incld_dochem(NG, gnew, NAQ, aqnew, qnew, TIN, TOUT, IDRF,        &
+                             NSTEP, IFIRST, baq, pgscav, tempknew,               &
+                             tempinew, rtempnew, raq,                            &
+                             psacwnew, rad1new, npts, n1, n2, n3, nptsnz)
+  ! call tmg_stop0 ( 61 )
+
+!  step b) Compute changes in BULK aerosol tracer concentration
+
+      if (ibulk == 1) then
+         do n = 1, 2
+            do is = 1, maxnsaq
+               do ivec = 1, nptsnz
+                  daq_chem(ivec, is, n) = daq_chem(ivec, is, n) +     &
+                        (aqnew(ivec, is, n) - aq_before(ivec, is, n))
+
+                  aq_before(ivec, is, n) = aqnew(ivec, is, n)
+               end do
+            end do
+         end do
+      end if
+
+
+      if (ifirst < 0) go to 922
+      ifirst = 0
+      idrf = 2
+
+305   continue
+
+      if ((time + dtsplt) > tfinal) dtsplt = tfinal - time
+      tout = dtsplt
+
+!  Integrate mass transfer / chemistry for dtsplt
+
+   ! call tmg_start0 ( 63, 'mach_incld_dochem -Integrate mass for dtsplt')
+      call mach_incld_dochem(NG, gnew, NAQ, aqnew, qnew, TIN, TOUT, IDRF,   &
+                             NSTEP, IFIRST, baq, pgscav, tempknew,          &
+                             tempinew, rtempnew, raq,                       &
+                             psacwnew, rad1new, npts, n1, n2, n3, nptsnz)
+  ! call tmg_stop0 ( 63 )
+
+      if (ifirst < 0) go to 922
+
+!  Step b) Compute changes in BULK aerosol tracer concentration
+
+      if (ibulk == 1) then
+         do n = 1, 2
+            do is = 1, maxnsaq
+               do ivec = 1, nptsnz
+                  daq_chem(ivec, is, n) = daq_chem(ivec, is, n) +  &
+                        (aqnew(ivec, is, n) - aq_before(ivec, is, n))
+                  aq_before(ivec, is, n) = aqnew(ivec, is, n)
+               end do
+            end do
+         end do
+
+!  Cloud water to rain conversion
+!  fluxnew in moles per m3.
+
+!         do is = 1, 8
+!            do ivec = 1, nptsnz
+!               aqnew(ivec, is, 1  )   = aqnew(ivec, is, 1) * exp(-fctrnew(ivec) * tout)
+!               fluxnew(ivec, is, 1)   = fluxnew(ivec, is, 1) + (aq_before(ivec, is, 1) -  &
+!                                       aqnew(ivec, is, 1)) * baq(ivec, 2, 1) * factor(ivec) * 1.0e-06
+!               daq_flux(ivec, is, 1)  = daq_flux(ivec, is, 1) + (aqnew(ivec, is, 1) - aq_before(ivec, is, 1))
+!               aq_before(ivec, is, 1) = aqnew(ivec, is, 1)
+!            end do
+!         end do
+!  H+:
+!   ! call tmg_start0 ( 64, 'mach_incld_steady1')
+!	call mach_incld_steady1(aqnew, baq, nptsnz)
+!   ! call tmg_stop0 ( 64 )
+!
+!         do ivec = 1, nptsnz
+!            fluxnew(ivec, 9, 1) = fluxnew(ivec, 1, 1) + 2.0 * fluxnew(ivec, 4, 1) +  &
+!                                 fluxnew(ivec, 5, 1) - fluxnew(ivec, 6, 1) +         &
+!                                 fluxnew(ivec, 8, 1) - fluxnew(ivec, 7, 1)
+!            fluxnew(ivec, 9, 1) = max(0.0, fluxnew(ivec, 9, 1))
+!            daq_flux(ivec, 9, 1) = daq_flux(ivec, 9, 1) +  &
+!                                 (aqnew(ivec, 9, 1) - aq_before(ivec, 9, 1))
+!            aq_before(ivec, 9, 1) = aqnew(ivec, 9, 1)
+!         end do
+
+      end if
+
+!  advance time
+      time = time + dtsplt
+!
+600   continue
+
+      if (time + 1.0e-02 < tfinal) go to 250
+
+
+!  Reverse the shifting
+      if (isum > 0) then
+
+! tempk, tempi, rtemp, psacw
+
+         do j = 1, nptsnz
+            jk = jjgrid(j)
+            tempktemp(jk) = tempknew(j)
+            tempitemp(jk) = tempinew(j)
+            rtemptemp(jk) = rtempnew(j)
+            psacwtemp(jk) = psacwnew(j)
+         end do
+         tempknew(:) = tempktemp(:)
+         tempinew(:) = tempitemp(:)
+         rtempnew(:) = rtemptemp(:)
+         psacwnew(:) = psacwtemp(:)
+
+
+         do i = 1, maxnsg
+            do j = 1, nptsnz
+               jk = jjgrid(j)
+               gtemp(jk, i) = gnew(j, i)
+            end do
+         end do
+
+         gnew(:, :) = gtemp(:, :)
+
+         do m = 1, 2
+            do i = 1, maxnsaq
+               do j = 1, nptsnz
+                  jk = jjgrid(j)
+                  aqtemp(jk, i, m) = aqnew(j, i, m)
+               end do
+            end do
+         end do
+
+         aqnew(:, :, :) = aqtemp(:, :, :)
+
+!         do m = 1, 2
+!            do i = 1, nswdep
+!               do j = 1, nptsnz
+!                  jk = jjgrid(j)
+!                  fluxtemp(jk, i, m) = fluxnew(j, i, m)
+!               end do
+!            end do
+!         end do
+!
+!         fluxnew(:, :, :) = fluxtemp(:, :, :)
+
+         do m = 1, 2
+            do i = 1, 5
+               do j = 1, nptsnz
+                  jk = jjgrid(j)
+                  baqtemp(jk, i, m) = baq(j, i, m)
+               end do
+            end do
+         end do
+
+         baq(:, :, :) = baqtemp(:, :, :)
+
+         do m = 1, 2
+            do i = 1, maxnsg
+               do j = 1, nptsnz
+                  jk = jjgrid(j)
+                  pgscavtemp(jk, i, m) = pgscav(j, i, m)
+               end do
+            end do
+         end do
+
+         pgscav(:, :, :) = pgscavtemp(:, :, :)
+
+         if (ibulk == 1) then
+            do m = 1, 2
+               do i = 1, maxnsaq
+                  do j = 1, nptsnz
+                     jk = jjgrid(j)
+                     daq_chem_temp(jk, i, m) = daq_chem(j, i, m)
+!                     daq_flux_temp(jk, i, m) = daq_flux(j, i, m)
+                  end do
+               end do
+            end do
+
+            daq_chem(:, :, :) = daq_chem_temp(:, :, :)
+!            daq_flux(:, :, :) = daq_flux_temp(:, :, :)
+         end if
+      end if
+
+! reverse shifting completed-
+
+!  compute delg
+
+      do j = 1, maxnsg
+         do i = 1, nptsnz
+            delg(i, j, current_bin) = gnew(i, j) - g0(i, j)
+         end do
+      end do
+
+!  Cloud water to rain conversion
+!  fluxnew in moles per m3.
+
+     if (ibulk == 1) then
+!
+       aq_before(:,:,:) = aqnew(:,:,:)
+!
+         do is = 1, 8
+           do k = 1, chm_nk
+               do ivec = 1, npts
+                  ijk = (k - 1) * npts + ivec
+                  factor(ijk) = 1.0e+09 / rtempnew(ijk) / rho_h2o
+                  aqnew(ijk, is, 1  )   = max(aqmin, aqnew(ijk, is, 1) * exp(-fctr(ivec,k) * adt2))
+                  fluxnew(ijk, is, 1)   = fluxnew(ijk, is, 1) + (aq_before(ijk, is, 1) -  &
+                                          aqnew(ijk, is, 1)) * baq(ijk, 2, 1) * factor(ijk) * 1.0e-06
+                  daq_flux(ijk, is, 1)  = daq_flux(ijk, is, 1) + (aqnew(ijk, is, 1) - aq_before(ijk, is, 1))
+               end do
+            end do
+         end do
+!  H+:
+   ! call tmg_start0 ( 64, 'mach_incld_steady1')
+         call mach_incld_steady1(aqnew, baq, nptsnz)
+   ! call tmg_stop0 ( 64 )
+
+         do ivec = 1, nptsnz
+            fluxnew(ivec, 9, 1) = fluxnew(ivec, 1, 1) + 2.0 * fluxnew(ivec, 4, 1) +  &
+                                 fluxnew(ivec, 5, 1) - fluxnew(ivec, 6, 1) +         &
+                                 fluxnew(ivec, 8, 1) - fluxnew(ivec, 7, 1)
+            fluxnew(ivec, 9, 1) = max(0.0, fluxnew(ivec, 9, 1))
+            daq_flux(ivec, 9, 1) = daq_flux(ivec, 9, 1) +  &
+                                 (aqnew(ivec, 9, 1) - aq_before(ivec, 9, 1))
+         end do
+     end if
+
+!  Return HSO3-, H2O2(aq) and ROOH(aq) to SO2, H2O2(g) and ROOH(g)
+
+      do j = 1, 2
+         do jj = 1, 3
+         do i = 1, nptsnz
+            delg(i, jj, current_bin) = delg(i, jj, current_bin) +  aqnew(i, jj, j) * baq(i, 2, j)
+            aqnew(i, jj, j) = aqmin
+         end do
+         end do
+      end do
+
+!  update aq(npts, maxnsaq, 2, chm_nk, isize)
+
+      do j = 1, 2
+         do i = 1, maxnsaq
+            do k = 1, chm_nk
+               do ivec = 1, npts
+                  ijk = (k - 1) * npts + ivec
+                  aq(ivec, i, j, k, current_bin) = max(aqmin, aqnew(ijk, i, j))
+               end do
+            end do
+         end do
+      end do
+
+   end do
+
+!  end of the size-bin loop
+
+!  update gnew after integration over all bins
+
+   if (ibulk == 1) then
+      nmax = 1
+   else if (ibulk == 0) then
+      nmax = nsize
+   end if
+
+   do j = 1, maxnsg
+      do i = 1, nptsnz
+         gnew(i, j) = g0(i, j)
+!  loop index should be from 1 to 1 in bulk mode not from 1, 12!
+         do current_bin = 1, nmax
+            gnew(i, j) = gnew(i, j) + delg(i, j, current_bin)
+         end do
+      end do
+   end do
+
+! bring buffers back to original format
+!      (npts*chm_nk) -> (npts, chm_nk)
+
+   do m = 1, maxnsg
+      do k = 1, chm_nk
+         do ivec = 1, npts
+            ijk = (k - 1) * npts + ivec
+            gaz_conc(ivec, m, k) = gnew(ijk, m)
+         end do
+      end do
+   end do
+
+   do n = 1, 2
+      do m = 1, nswdep
+         do k = 1, chm_nk
+            do ivec = 1, npts
+               ijk = (k - 1) * npts + ivec
+               flux(ivec, m, k, n) = fluxnew(ijk, m, n)
+            end do
+         end do
+      end do
+   end do
+
+!  output cloud tracer concentration (moles/L-of-water)
+
+   do k = 1, chm_nk
+      do ivec = 1, npts
+         cld_chm(ivec, k, 1) = aq(ivec, 4, 1, k, 1)
+         cld_chm(ivec, k, 2) = aq(ivec, 5, 1, k, 1)
+         cld_chm(ivec, k, 3) = aq(ivec, 6, 1, k, 1)
+         cld_chm(ivec, k, 4) = max(0.0, -1.0 * alog10(aq(ivec, 9, 1, k, 1)))
+         cld_chm(ivec, k, 5) = daq_chem(npts*(k-1)+ivec, 4, 1)
+         cld_chm(ivec, k, 6) = daq_chem(npts*(k-1)+ivec, 5, 1)
+         cld_chm(ivec, k, 7) = daq_chem(npts*(k-1)+ivec, 6, 1)
+      end do
+   end do
+
+   if (ibulk == 1) then
+      do m = 1, 2
+         do i = 1, maxnsaq
+            do k = 1, chm_nk
+               do ivec = 1, npts
+                  ijk = (k - 1) * npts + ivec
+                  daq_chem_f(ivec, k, i, m) = daq_chem(ijk, i, m)
+                  daq_flux_f(ivec, k, i, m) = daq_flux(ijk, i, m)
+               end do
+            end do
+         end do
+      end do
+   end if
+
+!  step c) in Wanmin Gong Documentation for Aqueous phase
+!  Bulk Chemistry implementation
+!  Update the binned auqueous array with DAQ_CHEM distributed
+!  over the bins according to VFRAC
+
+   if (ibulk == 1) then
+      do j = 1, 2
+         do is = 1, maxnsaq
+            do current_bin = 1, isize
+               do k = 1, chm_nk
+                  do ivec = 1, npts
+                    aq_orig(ivec, is, j, k, current_bin) = aq_orig(ivec, is, j, k, current_bin) +  &
+                                                     vfrac(ivec, k, current_bin) * daq_chem_f(ivec, k, is, j)
+                  end do
+               end do
+            end do
+         end do
+      end do
+!
+! *** distribute bulk cloud-to-rain over bins by concentration
+! *** ratio instead of liquid water volume ratio
+! *** (WG, Oct. 2001)
+!
+      aqfrc(:, :, :) = 0.0
+!
+      do is = 1, maxnsaq
+         do k = 1, chm_nk
+            do ivec = 1, npts
+               aq_bulk(ivec, is, 1, k) = 0.0
+               do current_bin = int(rcrit(ivec, k)), isize
+                  aq_bulk(ivec, is, 1, k) = aq_bulk(ivec, is, 1, k) +  &
+                                            aq_orig(ivec, is, 1, k, current_bin)
+               end do
+               aqfrc(ivec, is, k) = daq_flux_f(ivec, k, is, 1) / (aq_bulk(ivec, is, 1, k) + 0.1 * aqmin)
+               aqfrc(ivec, is, k) = min(0.0, max(-1.0, aqfrc(ivec, is, k)))
+            end do
+         end do
+      end do
+!
+      do j = 1, 2
+         do is = 1, maxnsaq
+            do current_bin = 1, isize
+               do k = 1, chm_nk
+                  do ivec = 1, npts
+                     aq(ivec, is, j, k, current_bin) = aq_orig(ivec, is, j, k, current_bin) * (aqfrc(ivec, is, k) + 1.0)
+                     aq(ivec, is, j, k, current_bin) = max(0.0, aq(ivec, is, j, k, current_bin))
+                  end do
+               end do
+            end do
+         end do
+      end do
+
+!  adjust number concentration for cloud-to-rain removal
+!  and account for wet removal of non aqueous-phase aerosol
+!  components (sea salt and organic matter, internally mixed).
+!  Note: aerocon is in kg/kg, and flux in moles per m3 air.
+
+      do k = 1, chm_nk
+         do ivec = 1, npts
+            flux(ivec, 10, k, 1) = 0.0
+            flux(ivec, 11, k, 1) = 0.0
+            flux(ivec, 15, k, 1) = 0.0
+! fluxes for CM and EC
+            flux(ivec, 13, k, 1) = 0.0
+            flux(ivec, 14, k, 1) = 0.0
+         end do
+      end do
+
+       do k = 1, chm_nk
+          do ivec = 1, npts
+             do current_bin = int(rcrit(ivec, k)), isize
+                remfrc = aqfrc(ivec, 4, k)
+                remfrc = max(remfrc, -1.0)
+                remfrc = min(0.0, remfrc)
+                aeronum(ivec, k, current_bin) = (1.0 + remfrc) * aeronum(ivec, k, current_bin)
+                flux(ivec, 10, k, 1) = flux(ivec, 10, k, 1) - remfrc * aerocon(ivec, 5, k, current_bin) * rhom(ivec, k) / mwt_aero(5)
+                aerocon(ivec, 5, k, current_bin) = (1.0 + remfrc) * aerocon(ivec, 5, k, current_bin)
+                flux(ivec, 11, k, 1) = flux(ivec, 11, k, 1) - remfrc * aerocon(ivec, 6, k, current_bin) * rhom(ivec, k) / mwt_aero(6)
+                aerocon(ivec, 6, k, current_bin) = (1.0 + remfrc) * aerocon(ivec, 6, k, current_bin)
+                flux(ivec, 15, k, 1) = flux(ivec, 15, k, 1) - remfrc * aerocon(ivec, 8, k, current_bin) * rhom(ivec, k) / mwt_aero(8)
+                aerocon(ivec, 8, k, current_bin) = (1.0 + remfrc) * aerocon(ivec, 8, k, current_bin)
+
+! add cloud-to-rain for CM and EC
+! CM
+                flux(ivec, 13, k, 1) = flux(ivec, 13, k, 1) - remfrc * aerocon(ivec, 4, k, current_bin) * rhom(ivec, k) / mwt_aero(4)
+                aerocon(ivec, 4, k, current_bin) = (1.0 + remfrc) * aerocon(ivec, 4, k, current_bin)
+! EC
+                flux(ivec, 14, k, 1) = flux(ivec, 14, k, 1) - remfrc * aerocon(ivec, 7, k, current_bin) * rhom(ivec, k) / mwt_aero(9)
+                aerocon(ivec, 7, k, current_bin) = (1.0 + remfrc) * aerocon(ivec, 7, k, current_bin)
+            end do
+         end do
+      end do
+
+!  calculate rain water (mol per m3) due to cloud-to-rain
+!  Note: qbin_bulk is in kg/m3_air.
+      do k = 1, chm_nk
+         do ivec = 1, npts
+            flux(ivec, 12, k, 1) = qbin_bulk(ivec, 1, k) * fctr(ivec, k) *  adt2 * 1000.0 / 18.0
+         end do
+      end do
+   end if
+
+!  buffer back to original format completed-
+
+!  Update aerosol concentration after aqueous-phase processes
+
+   do k = 1, chm_nk
+      do i = 1, npts
+         isize_0 = int(rcrit(i, k))
+         do current_bin = isize_0 + 1, nsize
+            q_bin_t = q_bin(i, 1, k, current_bin) + q_bin(i, 2, k, current_bin)
+!  convert = den_air * den_water / lwc / mwt
+!  (kg/m^3a) (kg/m^3w)  (kg/m^3a)
+!  note => kmol/m^3 = mol/l, rhom in g/m^3 and den_water = 1000.
+            if (q_bin_t <= 0) go to 500
+            convert = rhom(i, k) / q_bin_t
+            aerocon(i, 1, k, current_bin) = (aq(i, 4, 1, k, current_bin) + aq(i, 4, 2, k, current_bin)) / convert * mwt_aero(1)
+            aerocon(i, 2, k, current_bin) = (aq(i, 5, 1, k, current_bin) + aq(i, 5, 2, k, current_bin)) / convert * mwt_aero(2)
+            aerocon(i, 3, k, current_bin) = (aq(i, 6, 1, k, current_bin) + aq(i, 6, 2, k, current_bin)) / convert * mwt_aero(3)
+! no updating for CM for now
+!      aerocon(i, 4, k, current_bin) = (aq(i, 7, 1, k, current_bin) + aq(i, 7, 2, k, current_bin)) / convert * mwt_aero(4) * 4.0
+         end do
+         if (isize_0 > isize) go to 500
+         q_bin_t = q_bin(i, 1, k, isize_0) + q_bin(i, 2, k, isize_0)
+         if (q_bin_t <= 0) go to 500
+         convert = rhom(i, k) / q_bin_t
+         aerocon(i, 1, k, isize_0) = aerocon(i, 1, k, isize_0) * (1.0 - fract(i, k)) + (aq(i, 4, 1, k, isize_0) +  &
+                                     aq(i, 4, 2, k, isize_0)) / convert * mwt_aero(1)
+         aerocon(i, 2, k, isize_0) = aerocon(i, 2, k, isize_0) * (1.0 - fract(i, k)) + (aq(i, 5, 1, k, isize_0) +  &
+                                     aq(i, 5, 2, k, isize_0)) / convert * mwt_aero(2)
+         aerocon(i, 3, k, isize_0) = aerocon(i, 3, k, isize_0) * (1.0 - fract(i, k)) + (aq(i, 6, 1, k, isize_0) +  &
+                                     aq(i, 6, 2, k, isize_0)) / convert * mwt_aero(3)
+
+!      aerocon(i, 4, k, isize_0) = aerocon(i, 4, k, isize_0) *  &
+!     	       (1.0 - fract(i, k)) + (aq(i, 7, 1, k, isize_0) +  &
+!              aq(i, 7, 2, k, isize_0)) / convert * mwt_aero(4) * 4.0
+ 500   continue
+      end do
+   end do
+
+!  Return gaz_conc(npts, maxnsg, chm_nk) to gaz_conc(npts, maxns, chm_nk) with update.
+!  The original gaseous species concentrations were stored in gtmp.
+
+   do j = 1, maxnsg
+      do k = 1, chm_nk
+!vdir novector
+         do i = 1, npts
+            ij = ipos_g(j)
+            if (ij /= 0) gtmp(i, ij, k) = 1.0e-06 * gaz_conc(i, j, k) * (rmwt(ij) / mwt_air)
+         end do
+      end do
+   end do
+   gaz_conc(:, :, :) = gtmp(:, :, :)
+
+return
+
+922   continue
+
+   write(0, *) '### Error in mach_incld_main ###'
+   write(0, *) '# ifirst was negative after calling mach_incld_dochem'
+   write(0, *) '###         ABORT         ###'
+   call qqexit(1)
+end

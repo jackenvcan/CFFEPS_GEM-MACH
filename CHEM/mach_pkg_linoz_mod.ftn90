@@ -1,0 +1,223 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_mod_pkg_linoz.ftn90
+! Creation       : H. Landry, Dec. 2007
+! Description    : Defines the indices initialisation s/r and the meta info of
+!                  fields that are part of the LINOZ gas package
+!
+!
+!============================================================================
+
+module mach_pkg_linoz_mod
+   use chm_utils_mod,        only: pre_increment
+   use chm_nml_mod, only: chm_mono_s, chm_mass_s
+   use chm_species_idx_mod
+   use chm_species_info_mod, only: species_master
+   save
+
+   contains
+!============================================================================
+! Name           : pkg_linoz_idxinit
+!
+! Description    : Initialize the indices of LINOZ package.  Starts with
+!                  the index passed as a dummy argument.
+!
+! Arguments:  IN/OUT
+!                idx  -> index to start from
+!============================================================================
+      integer function pkg_linoz_idxinit(idx)
+         implicit none
+
+         integer(kind=4), intent(inout) :: idx ! the index from where to start
+
+         integer(kind=4) start_index, nb_fields
+
+         start_index = idx
+
+! Please keep alphabetical order
+
+         sp_CFC11 = pre_increment(idx)
+         sp_CFC12 = pre_increment(idx)
+         sp_CH4   = pre_increment(idx)
+         sp_NOY   = pre_increment(idx)
+         sp_N2O   = pre_increment(idx)
+         sp_O3    = pre_increment(idx)
+
+!        chemical tendencies
+
+         sp_LIN1  = pre_increment(idx)
+         sp_LIN2  = pre_increment(idx)
+         sp_LIN3  = pre_increment(idx)
+         sp_LIN4  = pre_increment(idx)
+         sp_LIN5  = pre_increment(idx)
+         sp_LIN6  = pre_increment(idx)
+         sp_LIN7  = pre_increment(idx)
+
+!         sp_TCFC11 = pre_increment(idx)
+!         sp_TCFC12 = pre_increment(idx)
+!         sp_TCH4   = pre_increment(idx)
+!         sp_TN2O   = pre_increment(idx)
+!         sp_TO3    = pre_increment(idx)
+
+         nb_fields = idx - start_index
+         pkg_linoz_idxinit = nb_fields
+
+      end function pkg_linoz_idxinit
+
+
+!============================================================================
+! Name           : pkg_linoz_metainit
+!
+! Description    : Initialize the meta information for each species
+!
+! Arguments:  None
+!============================================================================
+      subroutine pkg_linoz_metainit()
+         implicit none
+!
+!        local variable
+         character(len = 21) :: tr_prop_s
+
+         tr_prop_s = ',min=0'
+         select case (chm_mono_s)
+           case ('CLIP')
+             tr_prop_s = trim(tr_prop_s)//',mono=1'
+           case ('ILMC')
+             tr_prop_s = trim(tr_prop_s)//',mono=2'
+           case ('NIL')
+             continue
+         end select
+         select case (chm_mass_s)
+           case ('BC')
+             tr_prop_s = trim(tr_prop_s)//',mass=1'
+           case ('NIL')
+             continue
+         end select
+
+
+         species_master(sp_O3) % dyn_name    =  'O3'
+         species_master(sp_O3) % dyn_lname   =  'TR/O3:P'
+         species_master(sp_O3) % dyn_string  =  'VN=TR/O3:P'//trim(tr_prop_s)//' ; ON=O3 ; VD=GEM-LINOZ SPECIES O3 ; VS=SLC;VB=D1'
+         species_master(sp_O3) % vd_name     =  'VO3'
+         species_master(sp_O3) % vd_lname    =  'O3_vd'
+         species_master(sp_O3) % vd_string   =  'VN=O3_vd; ON=VO3; VD=O3 deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_O3) % rb_name     =  'O3RB'
+         species_master(sp_O3) % rb_lname    =  'O3_rb'
+         species_master(sp_O3) % rb_string   =  'VN=O3_rb; ON=O3RB; VD=O3 molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_O3) % rc_name     =  'O3RC'
+         species_master(sp_O3) % rc_lname    =  'O3_rc'
+         species_master(sp_O3) % rc_string   =  'VN=O3_rc; ON=O3RC; VD=O3 total surface resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_O3) % mol_wt      =  48.00
+
+
+         species_master(sp_N2O) % dyn_name    =  'N2O'
+         species_master(sp_N2O) % dyn_lname   =  'TR/N2O:P'
+         species_master(sp_N2O) % dyn_string  =  'VN=TR/N2O:P'//trim(tr_prop_s)//' ; ON=N2O ; VD=GEM-LINOZ SPECIES N2O ; VS=SLC;VB=D1'
+         species_master(sp_NO2) % mol_wt      =  46.00
+
+
+         species_master(sp_NOY) % dyn_name    =  'NOY'
+         species_master(sp_NOY) % dyn_lname   =  'TR/NOY:P'
+         species_master(sp_NOY) % dyn_string  =  'VN=TR/NOY:P'//trim(tr_prop_s)//' ; ON=NOY ; VD=GEM-LINOZ SPECIES NOY ; VS=SLC;VB=D1'
+
+
+         species_master(sp_CH4) % dyn_name    =  'CH4'
+         species_master(sp_CH4) % dyn_lname   =  'TR/CH4:P'
+         species_master(sp_CH4) % dyn_string  =  'VN=TR/CH4:P'//trim(tr_prop_s)//' ; ON=CH4 ; VD=GEM-LINOZ SPECIES CH4 ; VS=SLC;VB=D1'
+         species_master(sp_CH4) % mol_wt      =  16.04
+
+
+         species_master(sp_CFC11) % dyn_name    =  'TF1'
+         species_master(sp_CFC11) % dyn_lname   =  'TR/TF1:P'
+         species_master(sp_CFC11) % dyn_string  =  'VN=TR/TF1:P'//trim(tr_prop_s)//' ; ON=TF1 ; VD=GEM-LINOZ SPECIES CFC11 ; VS=SLC;VB=D1'
+
+
+         species_master(sp_CFC12) % dyn_name    =  'TF2'
+         species_master(sp_CFC12) % dyn_lname   =  'TR/TF2:P'
+         species_master(sp_CFC12) % dyn_string  =  'VN=TR/TF2:P'//trim(tr_prop_s)//' ; ON=TF2 ; VD=GEM-LINOZ SPECIES CFC12 ; VS=SLC;VB=D1'
+
+
+         species_master(sp_LIN1) % vol_name    =  'LIN1'
+         species_master(sp_LIN1) % vol_lname   =  'cnchLIN1'
+         species_master(sp_LIN1) % vol_string  =  'VN=cnchLIN1 ; ON=LIN1 ; VD=GEM-BACH SPECIES LIN1 ; VS=SLC;VB=V1'
+
+         species_master(sp_LIN2) % vol_name    =  'LIN2'
+         species_master(sp_LIN2) % vol_lname   =  'cnchLIN2'
+         species_master(sp_LIN2) % vol_string  =  'VN=cnchLIN2 ; ON=LIN2 ; VD=GEM-BACH SPECIES LIN2 ; VS=SLC;VB=V1'
+
+         species_master(sp_LIN3) % vol_name    =  'LIN3'
+         species_master(sp_LIN3) % vol_lname   =  'cnchLIN3'
+         species_master(sp_LIN3) % vol_string  =  'VN=cnchLIN3 ; ON=LIN3 ; VD=GEM-BACH SPECIES LIN3 ; VS=SLC;VB=V1'
+
+         species_master(sp_LIN4) % vol_name    =  'LIN4'
+         species_master(sp_LIN4) % vol_lname   =  'cnchLIN4'
+         species_master(sp_LIN4) % vol_string  =  'VN=cnchLIN4 ; ON=LIN4 ; VD=GEM-BACH SPECIES LIN4 ; VS=SLC;VB=V1'
+
+         species_master(sp_LIN5) % vol_name    =  'LIN5'
+         species_master(sp_LIN5) % vol_lname   =  'cnchLIN5'
+         species_master(sp_LIN5) % vol_string  =  'VN=cnchLIN5 ; ON=LIN5 ; VD=GEM-BACH SPECIES LIN5 ; VS=SLC;VB=V1'
+
+         species_master(sp_LIN5) % vol_name    =  'LIN6'
+         species_master(sp_LIN5) % vol_lname   =  'cnchLIN6'
+         species_master(sp_LIN5) % vol_string  =  'VN=cnchLIN6 ; ON=LIN6 ; VD=GEM-BACH SPECIES LIN6 ; VS=SLC;VB=V1'
+
+         species_master(sp_LIN5) % vol_name    =  'LIN7'
+         species_master(sp_LIN5) % vol_lname   =  'cnchLIN7'
+         species_master(sp_LIN5) % vol_string  =  'VN=cnchLIN7 ; ON=LIN7 ; VD=GEM-BACH SPECIES LIN7 ; VS=SLC;VB=V1'
+
+
+!         species_master(sp_TO3) % vol_name    =  'TO3'
+!         species_master(sp_TO3) % vol_lname   =  'cnchTO3'
+!         species_master(sp_TO3) % vol_string  =  'VN=cnchTO3 ; ON=TO3 ; VD=GEM-BACH SPECIES TO3 ; VS=SLB;VB=V1'
+!
+!         species_master(sp_TN2O) % vol_name    =  'TN2O'
+!         species_master(sp_TN2O) % vol_lname   =  'cnchTN2O'
+!         species_master(sp_TN2O) % vol_string  =  'VN=cnchTN2O ; ON=TN2O ; VD=GEM-BACH SPECIES TN2O ; VS=SLB;VB=V1'
+!
+!         species_master(sp_TCH4) % vol_name    =  'TCH4'
+!         species_master(sp_TCH4) % vol_lname   =  'cnchTCH4'
+!         species_master(sp_TCH4) % vol_string  =  'VN=cnchTCH4 ; ON=TCH4 ; VD=GEM-BACH SPECIES TCH4 ; VS=SLB;VB=V1'
+!
+!         species_master(sp_TCFC11) % vol_name    =  'TF11'
+!         species_master(sp_TCFC11) % vol_lname   =  'cnchTF11'
+!         species_master(sp_TCFC11) % vol_string  =  'VN=cnchTF11 ; ON=TF11 ; VD=GEM-BACH SPECIES TF11 ; VS=SLB;VB=V1'
+!
+!         species_master(sp_TCFC12) % vol_name    =  'TF12'
+!         species_master(sp_TCFC12) % vol_lname   =  'cnchTF12'
+!         species_master(sp_TCFC12) % vol_string  =  'VN=cnchTF12 ; ON=TF12 ; VD=GEM-BACH SPECIES TF12 ; VS=SLB;VB=V1'
+
+
+      end subroutine pkg_linoz_metainit
+
+end module mach_pkg_linoz_mod
+
+

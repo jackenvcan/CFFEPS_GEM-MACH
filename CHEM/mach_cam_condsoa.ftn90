@@ -1,0 +1,127 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_cam_condsoa.ftn90
+! Creation       : S. Gong, S. Gravel and B. Pabla for GEM-MACH, June 2008
+!
+! Description    : SOA Condensation routine
+!
+! Extra info     : First version created by S. Gong Aug 29 1999 for CAM
+!                  Use the same fraction of suphate condensation into
+!                  each bin for the total soa.
+!
+! Arguments:  IN
+!               lev     -> chm_nk + 1
+!               il1     -> minimum index for chm_ni
+!               il2     -> maximum index for chm_ni
+!               throw   -> Temp
+!               isize   -> Number of size bins
+!               aeronum -> Number concentration of aerosols
+!               ntr     -> Total number of trace substances (gases and aerosols)
+!               roarow  -> Air density (kg/m3)
+!               nn      -> Loop index on aerosol types
+!               jlat    -> J Slice number
+!               delt    -> time step
+!               pvol    -> Bin volume of dry aerosol
+!               pcond   -> fractional condensation to each bin
+!               soa     -> Secondary organics aerosols
+!
+!             OUT
+!              RGRID    -> Initial concentration of tracers in each bin
+!              RTCOND   -> Mass transfer rate onto each particle size bin
+!
+!             INOUT
+!              XROW     -> Tracers concentration
+!
+!============================================================================
+!
+!!if_on
+subroutine mach_cam_condsoa (lev, il1, il2, RGRID, aeronum, XROW,      &
+                             ntr, nbnd, roarow, nn, jlat, delt,        &
+                             RTCOND, pvol, pcond, soa, pressg, t, shj, &
+                             aerosize)
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use mach_cam_utils_mod, only: isize
+!!if_off
+   use mach_cam_headers_mod, only: mach_cam_intrsec_outer
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: ntr
+   integer(kind=4), intent   (in) :: nbnd
+   integer(kind=4), intent   (in) :: lev
+   integer(kind=4), intent   (in) :: il1
+   integer(kind=4), intent   (in) :: il2
+   integer(kind=4), intent   (in) :: nn
+   integer(kind=4), intent   (in) :: jlat
+   real(kind=4),    intent   (in) :: delt
+   real(kind=4),    intent  (out) :: rgrid   (chm_ni,chm_nk,ntr)
+   real(kind=4),    intent   (in) :: aeronum (chm_ni,chm_nk,isize)
+   real(kind=4),    intent(inout) :: xrow    (chm_ni,lev,ntr)
+   real(kind=4),    intent   (in) :: roarow  (chm_ni,chm_nk)
+   real(kind=4),    intent  (out) :: rtcond  (chm_ni,chm_nk,isize)
+   real(kind=4),    intent   (in) :: pvol    (isize)
+   real(kind=4),    intent   (in) :: pcond   (chm_ni,chm_nk,isize)
+   real(kind=4),    intent   (in) :: soa     (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: pressg  (chm_ni)
+   real(kind=4),    intent   (in) :: t       (chm_ni,lev)
+   real(kind=4),    intent   (in) :: shj     (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: aerosize(2,isize)
+!!if_off
+!
+!  local variables
+!
+   integer(kind=4)  :: n, l, i
+   real(kind=4)     :: adt2, cond
+
+   cond = 0.0
+   adt2 = 2.0 * delt
+
+!  condensation rate of soa for each bin
+   do n = 1, isize
+      do l = 1, chm_nk
+         do i = il1, il2
+            cond = soa(i, l)
+            if (cond > 0.0 .and. aeronum(i, l, n) * roarow(i, l) >  1.0e6) then
+!  rate of soa condensed to each bin
+               rtcond(i, l, n) = pcond(i, l, n) * cond
+            else
+               rtcond(i, l, n) = 0.0
+            end if
+         end do
+      end do
+   end do
+
+!  call to compute the intersectional transport due to condensation process.
+   call mach_cam_intrsec_outer(lev, il1, il2, xrow, rgrid, ntr, nbnd, &
+                         nn, adt2, rtcond, aeronum, pvol, 0, &
+                         pressg, t, shj, roarow, aerosize)
+   return
+end

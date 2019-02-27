@@ -1,0 +1,625 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+! !============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_cam_aeroprop.ftn90
+! Creation       : S. Gong, G. Lesins, V. Bouchet, C. Stroud, S. Gravel, and
+!                  B. Pabla for GEM-MACH, June 2008
+! Description    : Aerosol property calculation
+!
+! Extra info     : - First version created by S. Gong Dec 05 1994 for CAM
+!                  - Vectorized the whole program and add working spaces.
+!                    (S. Gong, Jan 19, 1996)
+!                  - Combine previous aeroden and growth routines to compute
+!                    the aerosol ambient properties. (s. gong, jun 25, 1997)
+!                  - Modified parameterization valid for all sizes and rh
+!                    uses empirical osmotic coefficients (g. lesins, mar 13, 1998)
+!                  - Added nitrate, bc, dust added deliquescence & recryst data
+!                    (G. Lesins, Jun 19, 1998)
+!                  - Added organic aerosol type - treated as sulphate
+!                    (G. Lesins, May 05, 1999)
+!                  - Add the aerosol gravitational settling velocity calculation
+!                    which was done several times in other places.
+!                    (S. Gong, Sept 04, 1999)
+!                  - Split aerosol oc into primary and secondary components
+!                    (C. Stroud, Jul 2004)
+!                  - Changed OC Water Uptake Parameterization (C. Stroud, Jun 2005)
+!                  - Per suggestion of Paul Makar, Verica Savic-Jovcic modified
+!                    calculation of particle settling velocity to avoid supersonic
+!                    velocities for large particles (copied Paul's code from v1 in Oct 2015)
+!
+! Arguments:  IN
+!               lev     -> chm_nk+1
+!               il1     -> minimum index for chm_ni
+!               il2     -> maximum index for chm_ni
+!               ntr     -> Total number of trace substances (gases and aerosols)
+!               il1     -> Minimum index for chm_ni
+!               il2     -> Maximum index for chm_ni
+!          aerosize     -> Dry radius
+!             rhrow     -> Relative humidity
+!             throw     -> Temp
+!             roarow    -> Air density (kg/m3)
+!             rgrid     -> Mass mixing ratio for each trace substance
+!               shj     -> Local mid-layer sigma value
+!            pressg     -> Grid row of surface pressure [Pa]
+!
+!            OUT
+!              RHSIZE   -> Wet radius
+!              RHOP     -> Final wet density
+!              AERONUM  -> Number conconcenration (#/kg)
+!              TOTMAS   -> Total mass mixing ratio for each bin (all components)
+!              TRWTROW  -> Aerosol liquid water content for each bin.
+!              PDIFF    -> Diffusion coefficients
+!              PDEPV    -> gravitational settling velocity
+!
+!            The remaining arguments are working arrays added by lesins
+!                  bmix -> solute coefficient in kohler equation
+!                  fr1  -> estimated radius ratio at relative humidity=1
+!                  fc   -> critical relative humidity (supersaturated)
+!
+!============================================================================
+!
+!!if_on
+subroutine mach_cam_aeroprop( ntr, il1, il2, RHSIZE, aerosize, RHOP,     &
+                              rhrow, throw, rgrid, AERONUM, TOTMAS,      &
+                              TRWTROW, roarow, shj, pressg, PDIFF, PDEPV )
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use mach_cam_utils_mod, only: isize
+!!if_off
+   use chm_utils_mod,      only: global_debug
+   use chm_consphychm_mod, only: avno, grav, pi, rgasi
+   use mach_cam_pre_mod,   only: icom, iae1, aeroname, rhop0
+   implicit none
+!!if_on
+   integer(kind=4),  intent (in) :: ntr
+   integer(kind=4),  intent (in) :: il1
+   integer(kind=4),  intent (in) :: il2
+   real(kind=4),     intent(out) :: rhsize  (chm_ni,chm_nk,isize)
+   real(kind=4),     intent (in) :: aerosize(2,isize)
+   real(kind=4),     intent(out) :: rhop    (chm_ni,chm_nk,isize)
+   real(kind=4),     intent (in) :: rhrow   (chm_ni,chm_nk+1)
+   real(kind=4),     intent (in) :: throw   (chm_ni,chm_nk+1)
+   real(kind=4),     intent (in) :: rgrid   (chm_ni,chm_nk,ntr)
+   real(kind=4),     intent(out) :: aeronum (chm_ni,chm_nk,isize)
+   real(kind=4),     intent(out) :: totmas  (chm_ni,chm_nk,isize)
+   real(kind=4),     intent(out) :: trwtrow (chm_ni,chm_nk,isize)
+   real(kind=4),     intent (in) :: roarow  (chm_ni,chm_nk)
+   real(kind=4),     intent (in) :: shj     (chm_ni,chm_nk)
+   real(kind=4),     intent (in) :: pressg  (chm_ni)
+   real(kind=4),     intent(out) :: pdiff   (chm_ni,chm_nk,isize)
+   real(kind=4),     intent(out) :: pdepv   (chm_ni,chm_nk,isize)
+!!if_off
+!
+!  local variables
+!  numsol = total number of soluble aerosol types possible
+!  numins = total number of insoluble aerosol types possible
+!  soot, dust and primary organic are insoluble
+   integer(kind=4), parameter :: numsol = 5, numins = 3, numtypes = numsol + numins
+   integer(kind=4)            ::  inext, ilast, nt, ifound, j, nt0, n, no, l, i, iter
+!  OC factor is a factor used to multiply the organic carbon osmotic
+!  coefficients to force a difference from sulphate
+   real(kind=4), parameter    :: ocfactor = 0.54, aa1 = 1.257, aa2 = 0.4, aa3 = 1.1, cub = 1.0 / 3.0
+   real(kind=4)               :: tramass, rwi, theta, dsr, frctest, rh, awx1, frx1, frx3
+   real(kind=4)               :: bpr, vv, dd, ff, wmas, amu, pre, amfp, prii, priiv, cfac, taurel, amob
+   real(kind=4)               :: boltzk
+
+! following section contains data arrays for all aerosol types
+   real(kind=4)               :: nu(numtypes), mw(numtypes)
+   real(kind=4)               :: phik(numtypes), deliq(numtypes), recry(numtypes)
+   real(kind=4)               :: phit(11, numsol)
+
+! nu are the ions per solute molecule
+   real(kind=4), dimension(numtypes) :: nu_ = (/2.165, 3.0, 2.0, 1.0, 3.0, 0.0, 0.0, 0.0/)
+! mw are the molecular weights of the dry aerosol components
+   real(kind=4), dimension(numtypes) :: mw_ = (/67.180, 132.1342, 80.0435, 400.0, 132.1342, &
+                                          12.011, 60.08, 400.0/)
+! deliq is the deliquescence relative humidity
+   real(kind=4), dimension(numtypes) :: deliq_ = (/0.74, 0.70, 0.70, 0.70, 0.70, 1.1, 1.1, 1.1/)
+! recry is the recrystallization relative humidity
+   real(kind=4), dimension(numtypes) :: recry_ = (/0.45, 0.50, 0.50, 0.50, 0.50, 1.1, 1.1, 1.1/)
+
+! phit(j, i) is the phi(aw) table of coefficients
+! i is the solute index:
+!     1 = sea salt
+!     2 = (nh4)2so4
+!     3 = nh4no3
+!     4 = secondary organic
+!     5 = ammonium (modelled as ammonium sulfate)   !wanmin
+! i must be dimensioned to equal ntps
+! j is the data :
+!  1 = minimum aw for polynomial fit
+!  2 = aw break point between two polynomials
+!  3 = x^3 coef for aw > awbreak
+!  4 = x^2 coef
+!  5 = x^1 coef
+!  6 = x^0 coef
+!  7 = x^4 coef for aw <= awbreak
+!  8 = x^3 coef
+!  9 = x^2 coef
+!  10= x^1 coef
+!  11= x^0 coef
+
+   real(kind=4), dimension(11, numsol) :: phit_ =                                   &
+      reshape ( (/0.44, 0.92, 410.74729, -1138.2693, 1049.2792, -320.74562,         &
+                 -5.79690208, 17.7685336, -22.5253540, 11.8087027, -0.48210984,     &
+                  0.39, 0.92, 457.060777, -1280.47495, 1194.81750, -370.739425,     &
+                 -1.62440470, 4.07342346, -5.61205075, 3.873682106, -0.216021389,   &
+                  0.275, 0.81, 7.6174049, -19.354181, 17.103802, -4.5561686,        &
+                 -1.1108526, 3.7035588, -5.1408203, 4.0788267, -0.77326108,         &
+                  0.20, 0.85, 83.445, -225.41, 203.45, -60.477,                     &
+                  8.9501, -20.468, 16.738, -5.137, 1.0115,                          &
+                  0.39, 0.92, 457.060777, -1280.47495, 1194.81750, -370.739425,     &
+                -1.62440470, 4.07342346, -5.61205075, 3.873682106, -0.216021389/),  &
+      (/11, numsol/) )
+
+!  aerosol type data are in the following order:
+!  1. sea salt
+!  2. (nh4)2so4
+!  3. nh4no3
+!  4. secondary organic
+!  5. ammonium (modelled as (nh4)2so4)
+!  6. black carbon
+!  7. soil dust
+!  8. primary organic
+!  namsol are the permitted soluble aerosol names
+      character(len=8), dimension(numsol) :: namsol = &
+                (/'SEA-SALT', 'SULPHATE', 'NITRATES', 'OMCARBON', 'AMMONIUM'/)
+!  namins are the permitted insoluble aerosol names
+      character(len=8), dimension(numins) :: namins = (/'BLCARBON', 'SOILDUST', 'PMCARBON'/)
+
+! mww is the molecular weight of water
+! rw is the gas constant for water vapour             ( j / (kg k) )
+! denw is the density of water                        ( kg / m^3 )
+! sfcten is the surface tension between water and air ( j / m^2 )
+   real(kind=4), parameter  :: mww = 18.015, rw = 461.51, denw = 1000.0, sfcten = 0.076
+   real(kind=4)     :: avesize(isize)
+   real(kind=8)     :: r, q, d
+   real(kind=8)     :: xx, yy, np
+   real(kind=4)     :: sig, delrho, dp
+! ntps is the index number of the last soluble aerosol type (<= icom)
+! if ntps=icom then there are no insoluble components
+   integer(kind=4) :: ntps
+   integer(kind=4) :: sortnum(numtypes), ln(numtypes)
+! numiter is the number of iterations performed for kohler equation
+! numiter=2 should give better than 1% accuracy
+! numiter must not exceed the declared size of the last index in awx
+   integer(kind=4) :: numiter = 2
+!  deliqcry is a logical switch to handle size if rh is between
+!  crystallization and deliquescence.  if =.true. then final size is
+!  weighted average between dry and deliquesced sizes.  if =.false.
+!  then final size is the fully deliquesced size.
+   logical(kind=4) :: deliqcry =.true.
+   real(kind=4)    :: phix  (chm_ni, chm_nk, isize)
+   real(kind=4)    :: fmso  (chm_ni, chm_nk, isize)
+   real(kind=4)    :: phiaw1(chm_ni, chm_nk, isize)
+   real(kind=4)    :: amw   (chm_ni, chm_nk, isize)
+   real(kind=4)    :: bmix  (chm_ni, chm_nk, isize)     
+   real(kind=4)    :: fr1   (chm_ni, chm_nk, isize)
+   real(kind=4)    :: fc    (chm_ni, chm_nk, isize)
+   real(kind=4)    :: anu   (chm_ni, chm_nk, isize)
+   real(kind=4)    :: a     (chm_ni, chm_nk, isize)
+   real(kind=4)    :: frc   (chm_ni, chm_nk, isize)
+   real(kind=4)    :: deliqs(chm_ni, chm_nk, isize)
+   real(kind=4)    :: recrys(chm_ni, chm_nk, isize)
+   real(kind=4)    :: fmo   (chm_ni, chm_nk, isize, icom)
+   real(kind=4)    :: awx   (chm_ni, chm_nk, isize, 2)
+   logical(kind=4) :: local_dbg
+   external qqexit
+
+   amfp     = 0.0
+   amob     = 0.0
+   amu      = 0.0
+   amw      = 0.0
+   amw      = 0.0
+   anu      = 0.0
+   avesize  = 0.0
+   awx      = 0.0
+   awx1     = 0.0
+   bmix     = 0.0
+   bpr      = 0.0
+   cfac     = 0.0
+   d        = 0.0d0
+   dd       = 0.0
+   deliq    = 0.0
+   deliqs   = 0.0
+   dsr      = 0.0
+   ff       = 0.0
+   fmo      = 0.0
+   fmo      = 0.0
+   fmso     = 0.0
+   fmso     = 0.0
+   frctest  = 0.0
+   frx1     = 0.0
+   frx3     = 0.0
+   mw       = 0.0
+   nu       = 0.0
+   phiaw1   = 0.0
+   phik     = 0.0
+   phit     = 0.0
+   phix     = 0.0
+   pre      = 0.0
+   prii     = 0.0
+   priiv    = 0.0
+   q        = 0.0d0
+   r        = 0.0d0
+   recry    = 0.0
+   recrys   = 0.0
+   rh       = 0.0
+   rhop     = 0.0
+   rwi      = 0.0
+   taurel   = 0.0
+   theta    = 0.0
+   totmas   = 0.0
+   tramass  = 0.0
+   vv       = 0.0
+   wmas     = 0.0
+
+   local_dbg = (.false. .or. global_debug)
+
+!  sort the aerosol names (solubles first, then insolubles)
+   inext = 1
+   ilast = icom
+   do nt = 1, icom
+      ifound = 0
+      do j = 1, numsol
+         if (aeroname(nt) == namsol(j)) then
+            sortnum(inext) = j
+            ln(inext) = nt
+            inext = inext + 1
+            ifound = 1
+         end if
+      end do
+      if (ifound == 0) then
+         do j = 1, numins
+            if (aeroname(nt) == namins(j)) then
+               sortnum(ilast) = j + numsol
+               ln(ilast) = nt
+               ilast = ilast - 1
+               ifound = 1
+            end if
+         end do
+      end if
+      if (ifound == 0) then
+         write (0, *) '### Error in mach_cam_aeroprop ###'
+         write (0, *) '# UNKNOWN AEROSOL NAME'
+         write (0, *) '# icom IN AEROPROP= ', icom
+         write (0, *) '###         ABORT              ###'
+         call qqexit(1)
+      end if
+      if (nt == icom) ntps = inext - 1
+   end do
+
+!  arrange the data arrays in the correct order
+   do nt = 1, icom
+      mw(nt) = mw_(sortnum(nt))
+      nu(nt) = nu_(sortnum(nt))
+      deliq(nt) = deliq_(sortnum(nt))
+      recry(nt) = recry_(sortnum(nt))
+   end do
+   do nt = 1, ntps
+      do j = 1, 11
+         phit(j, nt) = phit_(j, sortnum(nt))
+      end do
+   end do
+
+!  total dry mass mixing ratio & dry aerosol composite density of aerosol in each bin
+!
+!  rho = (m1 + m2 + m3) / (m1 / rho1 + m2 / rho2 + m3 / rho3)
+!  in this do loop, rhop(*, *, *) is only holding the denominator of this equation
+
+   do nt = 1, icom
+      nt0 = ln(nt)
+      do n = 1, isize
+         no = n + isize * (nt0 - 1) + (iae1 - 1)
+         do l = 1, chm_nk
+            do i = il1, il2
+               tramass = max(1.0e-33, rgrid(i, l, no))
+               totmas(i, l, n) = totmas(i, l, n) + tramass
+               rhop(i, l, n) = rhop(i, l, n) + tramass / rhop0(nt0)
+            end do
+         end do
+      end do
+   end do
+
+! compute the mass fraction of each dry aerosol component, fmo
+   do nt = 1, icom
+      nt0 = ln(nt)
+      do n = 1, isize
+         no = n + isize * (nt0 - 1) + (iae1 - 1)
+         do l = 1, chm_nk
+            do i = il1, il2
+               tramass = max(1.0e-33, rgrid(i, l, no))
+               fmo(i, l, n, nt) = tramass / totmas(i, l, n)
+            end do
+         end do
+      end do
+   end do
+
+!  compute phi at aw=1 for each solute
+!  compute kohler b factor for each solute
+   do nt = 1, ntps
+      phik(nt) = phit(3, nt) + phit(4, nt) + phit(5, nt) + phit(6, nt)
+   end do
+
+! compute the solute mass fraction, fmso
+! compute average nu and average molecular weight of soluble part
+! compute phi at aw=1 for the mixed aerosol
+! compute average deliquescence and recrystallization points
+   do nt = 1, ntps
+      do n = 1, isize
+         do l = 1, chm_nk
+            do i = il1, il2
+               fmso(i, l, n) = fmso(i, l, n) + fmo(i, l, n, nt)
+               amw(i, l, n) = amw(i, l, n) + fmo(i, l, n, nt) / mw(nt)
+               anu(i, l, n) = anu(i, l, n) + nu(nt) * fmo(i, l, n, nt) / mw(nt)
+               phiaw1(i, l, n) = phiaw1(i, l, n) + phik(nt) * nu(nt) * fmo(i, l, n, nt) / mw(nt)
+               deliqs(i, l, n) = deliqs(i, l, n) + fmo(i, l, n, nt) * deliq(nt)
+               recrys(i, l, n) = recrys(i, l, n) + fmo(i, l, n, nt) * recry(nt)
+            end do
+         end do
+      end do
+   end do
+
+! compute the average dry aerosol radius, avesize
+   do n = 1, isize
+      rwi = (aerosize(1, n) + aerosize(2, n)) / 2.0
+      avesize(n) = rwi
+         do l = 1, chm_nk
+         do i = il1, il2
+            rhop(i, l, n) = totmas(i, l, n) / rhop(i, l, n)
+            if (fmso(i, l, n) /= 0.0) then
+               amw(i, l, n) = fmso(i, l, n) / amw(i, l, n)
+               anu(i, l, n) = anu(i, l, n) * amw(i, l, n) / fmso(i, l, n)
+               phiaw1(i, l, n) = phiaw1(i, l, n) * amw(i, l, n) / (fmso(i, l, n) * anu(i, l, n))
+               deliqs(i, l, n) = deliqs(i, l, n) / fmso(i, l, n)
+               recrys(i, l, n) = recrys(i, l, n) / fmso(i, l, n)
+            else
+               deliqs(i, l, n) = 1.1
+               recrys(i, l, n) = 1.1
+            end if
+!     * aerosol number concentration (#/kg_air)
+!      note:  4.189 = 4 * pi / 3
+            aeronum(i, l, n) = totmas(i, l, n) / (4.189 * rwi * rwi * rwi * rhop(i, l, n))
+         end do
+      end do
+   end do
+
+!  compute kohler a' factor and b factor for mixture
+!  compute radius ratio at rh=1 (fr1)
+!  compute critical radus ratio (frc)
+!  compute critical relative humidity (fc)
+   do n = 1, isize
+      do l = 1, chm_nk
+         do i = il1, il2
+            a(i, l, n) = 2.0 * sfcten / (denw * rw * throw(i, l + 1) * avesize(n))
+            if (amw(i, l, n) /= 0.) then
+               bmix(i, l, n) = anu(i, l, n) * phiaw1(i, l, n) * mww * rhop(i, l, n) *  &
+                               fmso(i, l, n) / (amw(i, l, n) * denw)
+            else
+               bmix(i, l, n) = 0.0
+            end if
+            q = -bmix(i, l, n) / (3.0 * a(i, l, n))
+            d = q * q * q + 0.25d0
+            if (d < 0.0 .and. q < 0.0) then
+               theta = real(acos(0.5 / sqrt(-q * q * q)))
+               fr1(i, l, n) = real(2.0 * sqrt(-q) * cos(theta / 3.0))
+            else
+               dsr = real(sqrt(d))
+               fr1(i, l, n) = real((0.5 + dsr) ** cub + (0.5 - dsr) ** cub)
+            end if
+
+
+!  this section can be commented out if you are not interested
+!  in computing the critical radius and critical relative humidity
+            q = q * 3.0
+            d = q * q * q + 1.0d0
+            if (d < 0.0 .and. q < 0.0) then
+               theta = real(acos(1.0 / sqrt(-q * q * q)))
+               frc(i, l, n) = real(2.0 * sqrt(-q) * cos(theta / 3.0))
+            else
+               dsr = real(sqrt(d))
+               frc(i, l, n) = real((1.0 + dsr) ** cub + (1.0 - dsr) ** cub)
+            end if
+            frctest = frc(i, l, n) ** 3.0
+            if (frctest == 1.0) then
+               fc(i, l, n) = 1.0
+            else
+               fc(i, l, n) = exp(a(i, l, n) / frc(i, l, n) - bmix(i, l, n) /  &
+                             (frctest - 1.0))
+            end if
+         end do
+      end do
+   end do
+
+! solve for the wet radius after water uptake
+   do iter = 1, numiter
+      phix = 0.0
+      do n = 1, isize
+         do nt = 1, ntps
+            do l = 1, chm_nk
+               do i = il1, il2
+                  rh = min(1.0, max(0.0, rhrow(i, l + 1)))
+                  if (iter == 1) then
+                     awx(i, l, n, iter) = rh * exp(-a(i, l, n) / (0.8 * fr1(i, l, n)))
+                     if (awx(i, l, n, iter) > 1.0) awx(i, l, n, iter) = 1.0
+                     awx1 = awx(i, l, n, iter)
+                     else
+                        awx1 = awx(i, l, n, iter - 1)
+                     end if
+                  if (awx1 > phit(2, nt)) then
+                     phix(i, l, n) = phix(i, l, n) + (phit(3, nt) * awx1 * awx1 * awx1 +  &
+                                     phit(4, nt) * awx1 * awx1 + phit(5, nt) * awx1 +     &
+                                     phit(6, nt)) * nu(nt) * fmo(i, l, n, nt) / mw(nt)
+                  else
+                     phix(i, l, n) = phix(i, l, n) + (phit(7, nt) * awx1 * awx1 * awx1    &
+                                    * awx1 + phit(8, nt) * awx1 * awx1 * awx1 +           &
+                                     phit(9, nt) * awx1 * awx1 + phit(10, nt) * awx1 +    &
+                                     phit(11, nt)) * nu(nt) * fmo(i, l, n, nt) / mw(nt)
+                  end if
+               end do
+            end do
+         end do
+
+         do l = 1, chm_nk
+            do i = il1, il2
+               rh = min(1.0, max(0.0, rhrow(i, l + 1)))
+               if (iter == 1) then
+                  awx1 = awx(i, l, n, iter)
+               else
+                  awx1 = awx(i, l, n, iter - 1)
+               end if
+               if (fmso(i, l, n) /= 0.0 .and. awx1 > 0.0) then
+                  phix(i, l, n) = phix(i, l, n) * amw(i, l, n) / (fmso(i, l, n) * anu(i, l, n))
+                  frx1 = (1.0 - anu(i, l, n) * phix(i, l, n) * mww * rhop(i, l, n) *  &
+                          fmso(i, l, n) / (amw(i, l, n) * denw * log(awx1))) ** cub
+               else
+                  phix(i, l, n) = 0.0
+                  frx1 = 1.0
+               end if
+
+!  this section greatly improves accuracy for rh ~ 1
+!  it can be commented out if speed is more important than accuracy
+
+               if (rh > 0.98 .and. frx1 > 1.0) then
+                  frx3 = frx1 * frx1 * frx1
+                  bpr = anu(i, l, n) * phix(i, l, n) * mww * rhop(i, l, n) *  &
+                        fmso(i, l, n) * frx3 / (amw(i, l, n) * denw * (frx3 - 1.0))
+                  q = dble(-a(i, l, n) / (3.0 * bpr))
+                  r = dble(-log(rh) / (2.0 * bpr))
+                  d = q * q * q + r * r
+                  if (d < 0.0 .and. q < 0.0) then
+                     theta = real(acos(r / sqrt(-q * q * q)))
+                     frx1 = real(1.0 / (2.0 * sqrt(-q) * cos(theta / 3.0)))
+                  else
+                     vv = real(abs(r + sqrt(d)))
+                     dd = real(abs(r - sqrt(d)))
+                     frx1 = real(1.0 / ((vv) ** cub + (dd) ** cub))
+                  end if
+               end if
+               awx(i, l, n, iter) = rh * exp(-a(i, l, n) / frx1)
+               rhsize(i, l, n) = avesize(n) * frx1
+            end do
+         end do
+      end do
+   end do
+
+! adjust size if rh < deliquescence point
+! compute the mean density of the wet aerosol
+
+   boltzk    = rgasi / avno
+   do n = 1, isize
+      do l = 1, chm_nk
+         do i = il1, il2
+            rh = rhrow(i, l + 1)
+            if (rh < deliqs(i, l, n)) then
+               if (rh < recrys(i, l, n)) then
+                  rhsize(i, l, n) = avesize(n)
+               else
+                  if (deliqcry) rhsize(i, l, n) = avesize(n) +  &
+                     (rhsize(i, l, n) - avesize(n)) *  &
+                     (rh - recrys(i, l, n)) / (deliqs(i, l, n) - recrys(i, l, n))
+               end if
+            end if
+            ff = avesize(n) / rhsize(i, l, n)
+            rhop(i, l, n) = denw + max(0.0, ff * ff * ff * (rhop(i, l, n) - denw))
+
+! compute the aerosol liquid water content of each size bin: wate
+! accumulate it for output [kg/kg air]
+            wmas = 4.189 * rhsize(i, l, n) ** 3 * aeronum(i, l, n) * rhop(i, l, n)
+            trwtrow(i, l, n) = max(0.0, wmas - totmas(i, l, n))
+
+! aerosol gravitational settling velocity and diffusion coefficient
+! air's dynamic viscosity
+            amu = 145.8 * 1.0e-8 * throw(i, l + 1) ** 1.5 / (throw(i, l + 1) + 110.4)
+! mid layer pressure in [pascal].
+            pre = pressg(i) * shj(i, l)
+!
+! mean molecular free path. k.v. beard [1976], j atm. sci., 33
+            amfp = 6.54e-8 * (amu / 1.818e-5) * (1.013e5 / pre) *  &
+                   (throw(i, l + 1) / 293.15) ** (1.0 / 2.0)
+            prii = 2.0 / 9.0 * grav / amu
+            priiv = prii * (rhop(i, l, n) - roarow(i, l))
+
+! cunningham slip correction factor and relaxation time = vg/grav.
+            cfac = 1.0 + amfp / rhsize(i, l, n) * (aa1 + aa2 *  &
+                   exp(-aa3 * rhsize(i, l, n) / amfp))
+            taurel = max(priiv * rhsize(i, l, n) ** 2 * cfac / grav, 0.0)
+
+! stokes friction and diffusion coefficients.
+            amob = 6.0 * pi * amu * rhsize(i, l, n) / cfac
+            pdiff(i, l, n) = boltzk * throw(i, l + 1) / amob
+
+! gravitational settling velocity.
+!
+!   The formula for the settling or terminal velocity in the following section of code is
+!   based on Beard, K.V., "Terminal Velocity and Shape of Cloud and Precipitation Drops Aloft",
+!   Journal of the Atmospheric Sciences, vol 33, pp 851-864, 1976, formulae in Table 1, with the
+!   exception of the wet diameter size < 19.E-06, wherein the full Cunningham slip correction
+!   was used (Beard's equation (3)) rather than his approximation in Table 1.
+!
+            dp = 2.0 * rhsize(i,l,n)
+            delrho = rhop(i,l,n) - roarow(i,l)
+            if(dp <= 19.e-06) then
+!  Small particles, diameters less than 19 um:
+               pdepv(i,l,n) = taurel * grav
+            else
+               if(dp <= 1.07e-03) then
+!  Larger particles (e.g. with significant water uptake), diameters between 19 um and 1.07 mm:
+                 xx = dlog(dble( 4. * roarow(i,l) * delrho * grav &
+                         * dp ** 3 / (3. * amu * amu) ))
+                 yy = -3.18657d+00 + ((((((-0.327815d-05 * xx) + 0.855176d-04 ) * xx &
+                                   -0.578878d-03 ) * xx - 0.987059d-03 ) * xx &
+                                   -0.153193d-02 ) * xx + 0.992696d+00 ) * xx
+                 pdepv(i,l,n) = amu * cfac / (roarow(i,l) * dp ) * real( dexp (yy) )
+               else
+!
+!  Particles with diameters > 1.07 mm:  droplets; surface tension effects must be considered:
+!  SIG = surface tension of water, N/m
+!  Surface tension temperature dependance based on data from:
+!  http://www.engineeringtoolbox.com/water-surface-tension-d_597.html, accessed June 20, 2011.
+!
+                 sig = -1.66912980e-04 * throw(i,l) + 1.21570339e-01
+!
+                 np = dble(sig ** 3 * roarow(i,l) ** 2 / (amu ** 4 * delrho * grav))
+                 np = np ** (1.d+00/6.d+00)
+                 xx = dlog(dble(4. * delrho * grav * (dp ** 2) / (3. * sig)) * np )
+                 yy = -5.00015d+00 + ((((( 0.238449d-02 * xx) - 0.542819d-01) * xx &
+                                + 0.475294d+00) * xx - 0.204914d+01) * xx &
+                                + 0.523778d+01) * xx
+                 pdepv(i,l,n) = amu * real ( np * dexp(yy) ) / (roarow(i,l) * dp)
+               end if
+            end if
+
+         end do
+      end do
+   end do
+
+   return
+end

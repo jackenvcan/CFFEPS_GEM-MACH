@@ -1,0 +1,555 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_pkg_diag_mod.ftn90
+! Creation       : S. Menard, August. 2013
+! Description    : Defines the indices initialisation s/r and the meta info of
+!                  fields that are part of the dry and wet deposition package
+!
+!============================================================================
+
+module mach_pkg_diag_mod
+   use chm_utils_mod,        only: pre_increment
+   use chm_nml_mod,          only: chm_strato_s
+   use chm_species_idx_mod
+   use chm_species_info_mod, only: species_master
+
+   save
+
+   contains
+!============================================================================
+! Name           : pkg_diag_wet_idxinit
+!
+! Description    : Initialize the indices of diagnostic fields.  Starts with
+!                  the index passed as a dummy argument.
+!
+! Arguments:  IN/OUT
+!                idx  -> index to start from
+!============================================================================
+      integer function pkg_diag_wet_idxinit(idx)
+         implicit none
+         
+         integer(kind=4), intent(inout) :: idx ! the index from where to start
+
+         integer(kind=4) start_index, nb_fields
+
+         start_index = idx
+
+! Note only these need to be incremented, other are already incremented in other module packages. 
+         sp_HSO3    = pre_increment(idx)
+         sp_HPXA    = pre_increment(idx)
+         sp_RPXA    = pre_increment(idx)  
+         sp_WSO4    = pre_increment(idx)
+         sp_WNO3    = pre_increment(idx)
+         sp_WNH4    = pre_increment(idx)
+         sp_CAT     = pre_increment(idx)
+         sp_HCO3    = pre_increment(idx)
+         sp_HION    = pre_increment(idx)
+         sp_SSLT    = pre_increment(idx)
+         sp_OCBN    = pre_increment(idx)
+         sp_WH2O    = pre_increment(idx)
+         sp_DUST    = pre_increment(idx)
+         sp_BLC     = pre_increment(idx)
+         sp_PCBN    = pre_increment(idx)
+
+         nb_fields = idx - start_index
+         pkg_diag_wet_idxinit = nb_fields
+
+         
+      end function pkg_diag_wet_idxinit
+!============================================================================
+! Name           : pkg_diag_col_idxinit
+!
+! Description    : Initialize the indices of diagnostic fields.  Starts with
+!                  the index passed as a dummy argument.
+!
+! Arguments:  IN/OUT
+!                idx  -> index to start from
+!============================================================================
+      integer function pkg_diag_col_idxinit(idx)
+         implicit none
+         
+         integer(kind=4), intent(inout) :: idx ! the index from where to start
+
+         integer(kind=4) start_index, nb_fields
+
+         start_index = idx
+
+         if (chm_strato_s == 'LINOZ') then
+            sp_LIN1  = pre_increment(idx)
+            sp_LIN2  = pre_increment(idx)
+            sp_LIN3  = pre_increment(idx)
+            sp_LIN4  = pre_increment(idx)
+            sp_LIN5  = pre_increment(idx)
+            sp_LIN6  = pre_increment(idx)
+            sp_LIN7  = pre_increment(idx)
+         endif
+
+         sp_diff_O3  = pre_increment(idx)
+! 3D total columns
+         sp_col_O3   = pre_increment(idx)
+         sp_col_NO2  = pre_increment(idx)
+         sp_col_NO   = pre_increment(idx)
+         sp_col_HU   = pre_increment(idx)
+! 2D tropo. columns
+         sp_tcol_O3   = pre_increment(idx)
+         sp_tcol_NO2  = pre_increment(idx)
+         sp_tcol_NO   = pre_increment(idx)
+         sp_tcol_PAN  = pre_increment(idx)
+         sp_tcol_HNO3 = pre_increment(idx)
+         sp_tcol_N2O5 = pre_increment(idx)
+         sp_tcol_SO2  = pre_increment(idx)
+         sp_tcol_SO4  = pre_increment(idx)
+         sp_tcol_CO   = pre_increment(idx)
+         sp_tcol_HCHO = pre_increment(idx)
+         sp_tcol_ISOP = pre_increment(idx)
+!
+nb_fields = idx - start_index
+         pkg_diag_col_idxinit = nb_fields
+
+         
+      end function pkg_diag_col_idxinit
+!
+!============================================================================
+! Name           : pkg_diag_col_metainit
+!
+! Description    : Initialize the meta information for each species
+!
+! Arguments:  None
+!============================================================================
+!
+      subroutine pkg_diag_col_metainit()
+         implicit none
+!
+!
+! 3D
+         if (chm_strato_s == 'LINOZ') then
+           species_master(sp_LIN1) % vol_name    =  "LIN1"
+           species_master(sp_LIN1) % vol_lname   =  "cnchLIN1"
+           species_master(sp_LIN1) % vol_string  =  "VN=cnchLIN1 ; ON=LIN1 ; VD=GEM-BACH SPECIES LIN1 ; VS=SLC;VB=V1"
+
+           species_master(sp_LIN2) % vol_name    =  "LIN2"
+           species_master(sp_LIN2) % vol_lname   =  "cnchLIN2"
+           species_master(sp_LIN2) % vol_string  =  "VN=cnchLIN2 ; ON=LIN2 ; VD=GEM-BACH SPECIES LIN2 ; VS=SLC;VB=V1"
+
+           species_master(sp_LIN3) % vol_name    =  "LIN3"
+           species_master(sp_LIN3) % vol_lname   =  "cnchLIN3"
+           species_master(sp_LIN3) % vol_string  =  "VN=cnchLIN3 ; ON=LIN3 ; VD=GEM-BACH SPECIES LIN3 ; VS=SLC;VB=V1"
+
+           species_master(sp_LIN4) % vol_name    =  "LIN4"
+           species_master(sp_LIN4) % vol_lname   =  "cnchLIN4"
+           species_master(sp_LIN4) % vol_string  =  "VN=cnchLIN4 ; ON=LIN4 ; VD=GEM-BACH SPECIES LIN4 ; VS=SLC;VB=V1"
+
+           species_master(sp_LIN5) % vol_name    =  "LIN5"
+           species_master(sp_LIN5) % vol_lname   =  "cnchLIN5"
+           species_master(sp_LIN5) % vol_string  =  "VN=cnchLIN5 ; ON=LIN5 ; VD=GEM-BACH SPECIES LIN5 ; VS=SLC;VB=V1"
+
+           species_master(sp_LIN6) % vol_name    =  "LIN6"
+           species_master(sp_LIN6) % vol_lname   =  "cnchLIN6"
+           species_master(sp_LIN6) % vol_string  =  "VN=cnchLIN6 ; ON=LIN6 ; VD=GEM-BACH SPECIES LIN6 ; VS=SLC;VB=V1"
+
+           species_master(sp_LIN7) % vol_name    =  "LIN7"
+           species_master(sp_LIN7) % vol_lname   =  "cnchLIN7"
+           species_master(sp_LIN7) % vol_string  =  "VN=cnchLIN7 ; ON=LIN7 ; VD=GEM-BACH SPECIES LIN7 ; VS=SLC;VB=V1"
+         endif
+
+         species_master(sp_diff_o3) % vol_name    =  "TDO3"
+         species_master(sp_diff_o3) % vol_lname   =  "tdo3_vol_std"
+         species_master(sp_diff_o3) % vol_string  =  "VN=TDO3_vol_std; ON=TDO3; VD=OZONE TENDENCY DIFFUSION (ug /kg/ sec) ; VS=SLC;VB=v0"
+
+         species_master(sp_col_O3) % vol_name    =  "YO3"
+         species_master(sp_col_O3) % vol_lname   =  "yo3_vol_std"
+         species_master(sp_col_O3) % vol_string  =  "VN=YO3_vol_std; ON=YO3; VD=OZONE 3D TOTAL COLUMN (D.U.) ; VS=SLC;VB=v0"
+
+         species_master(sp_col_NO2) % vol_name    =  "YNO2"
+         species_master(sp_col_NO2) % vol_lname   =  "yno2_vol_std"
+         species_master(sp_col_NO2) % vol_string  =  "VN=YNO2_vol_std; ON=YNO2; VD=NO2 3D TOTAL COLUMN (E+15 molec. cm-2) ; VS=SLC;VB=v0"
+
+         species_master(sp_col_NO ) % vol_name    =  "YNO"
+         species_master(sp_col_NO ) % vol_lname   =  "yno_vol_std"
+         species_master(sp_col_NO ) % vol_string  =  "VN=YNO_vol_std; ON=YNO; VD=NO 3D TOTAL COLUMN (E+15 molec. cm-2) ; VS=SLC;VB=v0"
+
+         species_master(sp_col_HU ) % vol_name    =  "YHU"
+         species_master(sp_col_HU ) % vol_lname   =  "yhu_vol_std"
+         species_master(sp_col_HU ) % vol_string  =  "VN=YHU_vol_std; ON=YHU; VD=H2O VAPOR 3D TOTAL COLUMN (E+15 molec. cm-2) ; VS=SLC;VB=v0"
+
+         species_master(sp_tcol_O3)  % vol_name   =  "ZO3"
+         species_master(sp_tcol_O3)  % vol_lname  =  "zo3_vol_std"
+         species_master(sp_tcol_O3)  % vol_string =  "VN=ZO3_vol_std; ON=ZO3; VD=TROPO. COLUMN O3 (molec /cm2) ; VS=ROW;VB=v0"
+
+         species_master(sp_tcol_NO2) % vol_name   =  "ZNO2"
+         species_master(sp_tcol_NO2) % vol_lname  =  "zno2_vol_std"
+         species_master(sp_tcol_NO2) % vol_string =  "VN=ZNO2_vol_std; ON=ZNO2; VD=TROPO. COLUMN NO2 (molec /cm2); VS=row;VB=v0"
+
+         species_master(sp_tcol_NO ) % vol_name   =  "ZNO"
+         species_master(sp_tcol_NO ) % vol_lname  =  "ZNO_col_std"
+         species_master(sp_tcol_NO ) % vol_string =  "VN=ZNO_vol_std;  ON=ZNO;  VD=TROPO. COLUMN NO  (molec /cm2); VS=row;VB=v0"
+
+         species_master(sp_tcol_PAN) % vol_name   =  "ZPAN"
+         species_master(sp_tcol_PAN) % vol_lname  =  "ZPAN_vol_std"
+         species_master(sp_tcol_PAN) % vol_string =  "VN=ZPAN_vol_std;  ON=ZPAN;  VD=TROPO. COLUMN PAN (molec /cm2); VS=row;VB=v0"
+
+         species_master(sp_tcol_HNO3) % vol_name   =  "ZHN3"
+         species_master(sp_tcol_HNO3) % vol_lname  =  "ZHN3_vol_std"
+         species_master(sp_tcol_HNO3) % vol_string =  "VN=ZHN3_vol_std;  ON=ZHN3;  VD=TROPO. COLUMN HNO3 (molec /cm2); VS=row;VB=v0"
+
+         species_master(sp_tcol_N2O5) % vol_name   =  "ZN25"
+         species_master(sp_tcol_N2O5) % vol_lname  =  "ZN25_vol_std"
+         species_master(sp_tcol_N2O5) % vol_string =  "VN=ZN25_vol_std;  ON=ZN25;  VD=TROPO. COLUMN N2O5 (molec /cm2); VS=row;VB=v0"
+
+         species_master(sp_tcol_SO2) % vol_name   =  "ZSO2"
+         species_master(sp_tcol_SO2) % vol_lname  =  "ZSO2_vol_std"
+         species_master(sp_tcol_SO2) % vol_string =  "VN=ZSO2_vol_std; ON=ZSO2; VD=TROPO. COLUMN SO2 (molec /cm2); VS=row;VB=v0"
+
+         species_master(sp_tcol_SO4) % vol_name   =  "ZSO4"
+         species_master(sp_tcol_SO4) % vol_lname  =  "ZSO4_vol_std"
+         species_master(sp_tcol_SO4) % vol_string =  "VN=ZSO4_vol_std; ON=ZSO4; VD=TROPO. COLUMN SO4 (molec /cm2); VS=row;VB=v0"
+
+         species_master(sp_tcol_CO ) % vol_name   =  "ZCO"
+         species_master(sp_tcol_CO ) % vol_lname  =  "ZCO_vol_std"
+         species_master(sp_tcol_CO ) % vol_string =  "VN=ZCO_vol_std;  ON=ZCO;  VD=TROPO. COLUMN CO  (molec /cm2); VS=row;VB=v0"
+
+         species_master(sp_tcol_HCHO) % vol_name   =  "ZHCH"
+         species_master(sp_tcol_HCHO) % vol_lname  =  "ZHCH_vol_std"
+         species_master(sp_tcol_HCHO) % vol_string =  "VN=ZHCH_vol_std;  ON=ZHCH;  VD=TROPO. COLUMN HCHO (molec /cm2); VS=row;VB=v0"
+
+         species_master(sp_tcol_ISOP) % vol_name   =  "ZISO"
+         species_master(sp_tcol_ISOP) % vol_lname  =  "ZISO_vol_std"
+         species_master(sp_tcol_ISOP) % vol_string =  "VN=ZISO_vol_std;  ON=ZISO;  VD=TROPO. COLUMN ISOP (molec /cm2); VS=row;VB=v0"
+! 2D end
+
+      end subroutine pkg_diag_col_metainit
+!
+!============================================================================
+! Name           : pkg_diag_acc_metainit
+!
+! Description    : Initialize the meta information for each species
+!
+! Arguments:  None
+!============================================================================
+!
+      subroutine pkg_diag_acc_metainit()
+         implicit none
+!
+! 3D Accumulators (gas)
+!
+         species_master(sp_col_O3)  % a3d_name   =  "AYO3"
+         species_master(sp_col_O3)  % a3d_lname  =  "AYO3_a3d"
+         species_master(sp_col_O3)  % a3d_string =  "VN=AYO3_a3d; ON=AYO3; VD=Accum. O3 total column D.U.; VS=slc;VB=p0"
+
+         species_master(sp_col_NO2) % a3d_name   =  "AYN2"
+         species_master(sp_col_NO2) % a3d_lname  =  "AYN2_a3d"
+         species_master(sp_col_NO2) % a3d_string =  "VN=AYN2_a3d; ON=AYN2; VD=Accum. NO2 total column Peta molec. cm-2; VS=slc;VB=p0"
+
+         species_master(sp_col_NO)  % a3d_name   =  "AYNO"
+         species_master(sp_col_NO)  % a3d_lname  =  "AYNO_a3d"
+         species_master(sp_col_NO)  % a3d_string =  "VN=AYNO_a3d; ON=AYNO; VD=Accum. NO total column Peta molec. cm-2; VS=slc;VB=p0"
+
+         species_master(sp_col_HU)  % a3d_name   =  "AYHU"
+         species_master(sp_col_HU)  % a3d_lname  =  "AYHU_a3d"
+         species_master(sp_col_HU)  % a3d_string =  "VN=AYHU_a3d; ON=AYHU; VD=Accum. Water Vapor total column Peta molec. cm-2; VS=slc;VB=p0"
+
+         species_master(sp_tend_O3) % a3d_name   =  "AGO3"
+         species_master(sp_tend_O3) % a3d_lname  =  "AGO3_a3d"
+         species_master(sp_tend_O3) % a3d_string =  "VN=AGO3_a3d; ON=AGO3; VD=Accum. O3 tendency gas-phase  ug /kg /sec; VS=slc;VB=p0"
+
+         species_master(sp_O3 ) % a3d_name   =  "AMO3"
+         species_master(sp_O3 ) % a3d_lname  =  "AMO3_a3d"
+         species_master(sp_O3 ) % a3d_string =  "VN=AMO3_a3d; ON=AMO3; VD=Accum. O3  mmr ug /kg; VS=slc;VB=p0"
+
+         species_master(sp_NO2) % a3d_name   =  "AMN2"
+         species_master(sp_NO2) % a3d_lname  =  "AMN2_a3d"
+         species_master(sp_NO2) % a3d_string =  "VN=AMN2_a3d; ON=AMN2; VD=Accum. NO2 mmr ug /kg; VS=slc;VB=p0"
+
+         species_master(sp_NO ) % a3d_name   =  "AMNO"
+         species_master(sp_NO ) % a3d_lname  =  "AMNO_a3d"
+         species_master(sp_NO ) % a3d_string =  "VN=AMNO_a3d; ON=AMNO; VD=Accum. NO  mmr ug /kg; VS=slc;VB=p0"
+
+         species_master(sp_PAN) % a3d_name   =  "AMPN"
+         species_master(sp_PAN) % a3d_lname  =  "AMPN_a3d"
+         species_master(sp_PAN) % a3d_string =  "VN=AMPN_a3d; ON=AMPN; VD=Accum. PAN mmr ug /kg; VS=slc;VB=p0"
+
+         species_master(sp_HNO3) % a3d_name   =  "AMH3"
+         species_master(sp_HNO3) % a3d_lname  =  "AMH3_a3d"
+         species_master(sp_HNO3) % a3d_string =  "VN=AMH3_a3d; ON=AMH3; VD=Accum. HNO3 mmr ug /kg; VS=slc;VB=p0"
+
+         species_master(sp_N2O5) % a3d_name   =  "AM25"
+         species_master(sp_N2O5) % a3d_lname  =  "AM25_a3d"
+         species_master(sp_N2O5) % a3d_string =  "VN=AM25_a3d; ON=AM25; VD=Accum. N2O5 mmr ug /kg; VS=slc;VB=p0"
+
+         species_master(sp_SO2) % a3d_name   =  "AMS2"
+         species_master(sp_SO2) % a3d_lname  =  "AMS2_a3d"
+         species_master(sp_SO2) % a3d_string =  "VN=AMS2_a3d; ON=AMS2; VD=Accum. SO2 mmr ug /kg; VS=slc;VB=p0"
+
+         species_master(sp_SO4) % a3d_name   =  "AMS4"
+         species_master(sp_SO4) % a3d_lname  =  "AMS4_a3d"
+         species_master(sp_SO4) % a3d_string =  "VN=AMS4_a3d; ON=AMS4; VD=Accum. SO4 mmr ug /kg; VS=slc;VB=p0"
+
+         species_master(sp_CO ) % a3d_name   =  "AMCO"
+         species_master(sp_CO ) % a3d_lname  =  "AMCO_a3d"
+         species_master(sp_CO ) % a3d_string =  "VN=AMCO_a3d; ON=AMCO; VD=Accum. CO  mmr ug /kg; VS=slc;VB=p0"
+
+         species_master(sp_HCHO) % a3d_name   =  "AMHC"
+         species_master(sp_HCHO) % a3d_lname  =  "AMHC_a3d"
+         species_master(sp_HCHO) % a3d_string =  "VN=AMHC_a3d; ON=AMHC; VD=Accum. HCHO mmr ug /kg; VS=slc;VB=p0"
+
+         species_master(sp_ISOP) % a3d_name   =  "AMIS"
+         species_master(sp_ISOP) % a3d_lname  =  "AMIS_a3d"
+         species_master(sp_ISOP) % a3d_string =  "VN=AMIS_a3d; ON=AMIS; VD=Accum. ISOP mmr ug /kg; VS=slc;VB=p0"
+!
+! 2D Accumulators (12 gas-phase)
+!
+         species_master(sp_tcol_O3 ) % a2d_name   =  "AZO3"
+         species_master(sp_tcol_O3 ) % a2d_lname  =  "AZO3_a2d"
+         species_master(sp_tcol_O3 ) % a2d_string =  "VN=AZO3_a2d; ON=AZO3; VD=Accum.  O3 tropo. column molec /cm2; VS=row;VB=p0"
+
+         species_master(sp_tcol_NO2) % a2d_name   =  "AZN2"
+         species_master(sp_tcol_NO2) % a2d_lname  =  "AZN2_a2d"
+         species_master(sp_tcol_NO2) % a2d_string =  "VN=AZN2_a2d; ON=AZN2; VD=Accum. NO2 tropo. column molec /cm2; VS=row;VB=p0"
+
+         species_master(sp_tcol_NO ) % a2d_name   =  "AZNO"
+         species_master(sp_tcol_NO ) % a2d_lname  =  "AZNO_a2d"
+         species_master(sp_tcol_NO ) % a2d_string =  "VN=AZNO_a2d; ON=AZNO; VD=Accum. NO  tropo. column molec /cm2; VS=row;VB=p0"
+
+         species_master(sp_tcol_PAN) % a2d_name   =  "AZPN"
+         species_master(sp_tcol_PAN) % a2d_lname  =  "AZPN_a2d"
+         species_master(sp_tcol_PAN) % a2d_string =  "VN=AZPN_a2d; ON=AZPN; VD=Accum. PAN tropo. column molec /cm2; VS=row;VB=p0"
+
+         species_master(sp_tcol_HNO3) % a2d_name   =  "AZH3"
+         species_master(sp_tcol_HNO3) % a2d_lname  =  "AZH3_a2d"
+         species_master(sp_tcol_HNO3) % a2d_string =  "VN=AZH3_a2d; ON=AZH3; VD=Accum. HNO3 tropo. column molec /cm2; VS=row;VB=p0"
+
+         species_master(sp_tcol_N2O5) % a2d_name   =  "AZ25"
+         species_master(sp_tcol_N2O5) % a2d_lname  =  "AZ25_a2d"
+         species_master(sp_tcol_N2O5) % a2d_string =  "VN=AZ25_a2d; ON=AZ25; VD=Accum. N2O5 tropo. column molec /cm2; VS=row;VB=p0"
+
+         species_master(sp_tcol_SO2) % a2d_name   =  "AZS2"
+         species_master(sp_tcol_SO2) % a2d_lname  =  "AZS2_a2d"
+         species_master(sp_tcol_SO2) % a2d_string =  "VN=AZS2_a2d; ON=AZS2; VD=Accum. SO2 tropo. column molec /cm2; VS=row;VB=p0"
+
+         species_master(sp_tcol_SO4) % a2d_name   =  "AZS4"
+         species_master(sp_tcol_SO4) % a2d_lname  =  "AZS4_a2d"
+         species_master(sp_tcol_SO4) % a2d_string =  "VN=AZS4_a2d; ON=AZS4; VD=Accum. SO4 tropo. column molec /cm2; VS=row;VB=p0"
+
+         species_master(sp_tcol_CO ) % a2d_name   =  "AZCO"
+         species_master(sp_tcol_CO ) % a2d_lname  =  "AZCO_a2d"
+         species_master(sp_tcol_CO ) % a2d_string =  "VN=AZCO_a2d; ON=AZCO; VD=Accum. CO tropo. column molec /cm2; VS=row;VB=p0"
+
+         species_master(sp_tcol_HCHO) % a2d_name   =  "AZHC"
+         species_master(sp_tcol_HCHO) % a2d_lname  =  "AZHC_a2d"
+         species_master(sp_tcol_HCHO) % a2d_string =  "VN=AZHC_a2d; ON=AZHC; VD=Accum. HCHO tropo. column molec /cm2; VS=row;VB=p0"
+
+         species_master(sp_tcol_ISOP) % a2d_name   =  "AZIS"
+         species_master(sp_tcol_ISOP) % a2d_lname  =  "AZIS_a2d"
+         species_master(sp_tcol_ISOP) % a2d_string =  "VN=AZIS_a2d; ON=AZIS; VD=Accum. ISOP tropo. column molec /cm2; VS=row;VB=p0"
+
+      end subroutine pkg_diag_acc_metainit
+!
+!============================================================================
+! Name           : pkg_diag_dry_metainit
+!
+! Description    : Initialize the meta information for each species
+!
+! Arguments:  None
+!============================================================================
+!
+      subroutine pkg_diag_dry_metainit()
+         implicit none
+!
+! Dry deposition (gas)
+!
+         species_master(sp_SO2) % dd_name   =  "DSO2"
+         species_master(sp_SO2) % dd_lname  =  "DSO2_dd"
+         species_master(sp_SO2) % dd_string =  "VN=DSO2_dd; ON=DSO2; VD=Dry deposition of gaseous SO2; VS=row;VB=p0"
+
+         species_master(sp_SO4) % dd_name   =  "DSO4"
+         species_master(sp_SO4) % dd_lname  =  "DSO4_dd"
+         species_master(sp_SO4) % dd_string =  "VN=DSO4_dd; ON=DSO4; VD=Dry deposition of gaseous sulphuric acid; VS=row;VB=p0"
+
+         species_master(sp_NO) % dd_name   =  "DNO"
+         species_master(sp_NO) % dd_lname  =  "DNO_dd"
+         species_master(sp_NO) % dd_string =  "VN=DNO_dd; ON=DNO; VD=Dry deposition of gaseous NO; VS=row;VB=p0"
+
+         species_master(sp_NO2) % dd_name   =  "DNO2"
+         species_master(sp_NO2) % dd_lname  =  "DNO2_dd"
+         species_master(sp_NO2) % dd_string =  "VN=DNO2_dd; ON=DNO2; VD=Dry deposition of gaseous NO2; VS=row;VB=p0"
+
+         species_master(sp_O3) % dd_name   =  "DO3"
+         species_master(sp_O3) % dd_lname  =  "DO3_dd"
+         species_master(sp_O3) % dd_string =  "VN=DO3_dd; ON=DO3; VD=Dry deposition of gaseous O3; VS=row;VB=p0"
+ 
+         species_master(sp_HNO3) % dd_name   =  "DHN3"
+         species_master(sp_HNO3) % dd_lname  =  "DHN3_dd"
+         species_master(sp_HNO3) % dd_string =  "VN=DHN3_dd; ON=DHN3   ; VD=Dry deposition of gaseous HNO3; VS=row;VB=p0"
+
+         species_master(sp_PAN) % dd_name   =  "DPAN"
+         species_master(sp_PAN) % dd_lname  =  "DPAN_dd"
+         species_master(sp_PAN) % dd_string =  "VN=DPAN_dd; ON=DPAN   ; VD=Dry deposition of gaseous PAN; VS=row;VB=p0"
+
+         species_master(sp_HONO) % dd_name   =  "DHNO"
+         species_master(sp_HONO) % dd_lname  =  "DHNO_dd"
+         species_master(sp_HONO) % dd_string =  "VN=DHNO_dd; ON=DHNO; VD=Dry deposition of gaseous HONO; VS=row;VB=p0"
+
+         species_master(sp_RNO3) % dd_name   =  "DRN3"
+         species_master(sp_RNO3) % dd_lname  =  "DRN3_dd"
+         species_master(sp_RNO3) % dd_string =  "VN=DRN3_dd; ON=DRN3; VD=Dry deposition of gaseous organic nitrate; VS=row;VB=p0"
+
+         species_master(sp_NH3) % dd_name   =  "DNH3"
+         species_master(sp_NH3) % dd_lname  =  "DNH3_dd"
+         species_master(sp_NH3) % dd_string =  "VN=DNH3_dd; ON=DNH3; VD=Dry deposition of gaseous NH3; VS=row;VB=p0"
+
+         species_master(sp_NOY) % dd_name   =  "DNOY"
+         species_master(sp_NOY) % dd_lname  =  "DNOY_dd"
+         species_master(sp_NOY) % dd_string =  "VN=DNOY_dd; ON=DNOY; VD=Dry deposition of gaseous NOY; VS=row;VB=p0"
+
+         species_master(sp_H2O2) % dd_name   =  "DH22"
+         species_master(sp_H2O2) % dd_lname  =  "DH22_dd"
+         species_master(sp_H2O2) % dd_string =  "VN=DH22_dd; ON=DH22; VD=Dry deposition of gaseous H2O2; VS=row;VB=p0"
+
+         species_master(sp_HCHO) % dd_name   =  "DHCH"
+         species_master(sp_HCHO) % dd_lname  =  "DHCH_dd"
+         species_master(sp_HCHO) % dd_string =  "VN=DHCH_dd; ON=DHCH; VD=Dry deposition of gaseous HCHO; VS=row;VB=p0"
+!
+! dry deposition (particles) if CAM activated
+         if (species_master(sp_SU) % dyn_name == "SU") then 
+
+         species_master(sp_SU) % dd_name   =  "PSO4"
+         species_master(sp_SU) % dd_lname  =  "PSO4_dd"
+         species_master(sp_SU) % dd_string =  "VN=PSO4_dd; ON=PSO4; VD=Dry deposition of particle sulphate; VS=row;VB=p0"
+
+         species_master(sp_SS) % dd_name   =  "PSS"
+         species_master(sp_SS) % dd_lname  =  "PSS_dd"
+         species_master(sp_SS) % dd_string =  "VN=PSS_dd; ON=PSS; VD=Dry deposition of particle sea-salt; VS=row;VB=p0"
+
+         species_master(sp_NI) % dd_name   =  "PNO3"
+         species_master(sp_NI) % dd_lname  =  "PNO3_dd"
+         species_master(sp_NI) % dd_string =  "VN=PNO3_dd; ON=PNO3; VD=Dry deposition of particle nitrate; VS=row;VB=p0"
+ 
+         species_master(sp_AM) % dd_name   =  "PNH4"
+         species_master(sp_AM) % dd_lname  =  "PNH4_dd"
+         species_master(sp_AM) % dd_string =  "VN=PNH4_dd; ON=PNH4; VD=Dry deposition of particle ammonium; VS=row;VB=p0"
+
+         species_master(sp_CM) % dd_name   =  "PCM"
+         species_master(sp_CM) % dd_lname  =  "PCM_dd"
+         species_master(sp_CM) % dd_string =  "VN=PCM_dd; ON=PCM; VD=Dry deposition of particle crustal material; VS=row;VB=p0"
+
+         species_master(sp_EC) % dd_name   =  "PEC"
+         species_master(sp_EC) % dd_lname  =  "PEC_dd"
+         species_master(sp_EC) % dd_string =  "VN=PEC_dd; ON=PEC; VD=Dry deposition of particle elemental carbon; VS=row;VB=p0"
+
+         species_master(sp_PC) % dd_name   =  "PPC"
+         species_master(sp_PC) % dd_lname  =  "PPC_dd"
+         species_master(sp_PC) % dd_string =  "VN=PPC_dd; ON=PPC; VD=Dry deposition of particle primary organic carbon; VS=row;VB=p0"
+
+         species_master(sp_OC) % dd_name   =  "POC"
+         species_master(sp_OC) % dd_lname  =  "POC_dd"
+         species_master(sp_OC) % dd_string =  "VN=POC_dd; ON=POC; VD=Dry deposition of particle secondary organic carbon; VS=row;VB=p0"
+
+         endif   ! for CAM variables
+
+      end subroutine pkg_diag_dry_metainit
+!
+!============================================================================
+! Name           : pkg_diag_wet_metainit
+!
+! Description    : Initialize the meta information for each species
+!
+! Arguments:  None
+!============================================================================
+!     
+      subroutine pkg_diag_wet_metainit()
+         implicit none
+! wet deposition
+
+         species_master(sp_HSO3) % wd_name   =  "HSO3"
+         species_master(sp_HSO3) % wd_lname  =  "HSO3_wd"
+         species_master(sp_HSO3) % wd_string =  "VN=HSO3_wd; ON=HSO3; VD=Wet deposition of HSO3-; VS=row;VB=p0"
+
+         species_master(sp_HPXA) % wd_name   =  "HPXA"
+         species_master(sp_HPXA) % wd_lname  =  "HPXA_wd"
+         species_master(sp_HPXA) % wd_string =  "VN=HPXA_wd; ON=HPXA; VD=Wet deposition of H2O2 (hydrogen peroxide); VS=row;VB=p0"
+
+         species_master(sp_RPXA) % wd_name   =  "RPXA"
+         species_master(sp_RPXA) % wd_lname  =  "RPXA_wd"
+         species_master(sp_RPXA) % wd_string =  "VN=RPXA_wd; ON=RPXA; VD=Wet deposition of ROOH (organic peroxide); VS=row;VB=p0"
+
+         species_master(sp_WSO4) % wd_name   =  "WSO4"
+         species_master(sp_WSO4) % wd_lname  =  "WSO4_wd"
+         species_master(sp_WSO4) % wd_string =  "VN=WSO4_wd; ON=WSO4; VD=Wet deposition of SO4(=); VS=row;VB=p0"
+
+         species_master(sp_WNO3) % wd_name   =  "WNO3"
+         species_master(sp_WNO3) % wd_lname  =  "WNO3_wd"
+         species_master(sp_WNO3) % wd_string =  "VN=WNO3_wd; ON=WNO3; VD=Wet deposition of NO3(-); VS=row;VB=p0"
+
+         species_master(sp_WNH4) % wd_name   =  "WNH4"
+         species_master(sp_WNH4) % wd_lname  =  "WNH4_wd"
+         species_master(sp_WNH4) % wd_string =  "VN=WNH4_wd; ON=WNH4; VD=Wet deposition of NH4+; VS=row;VB=p0"
+
+         species_master(sp_CAT) % wd_name   =  "CAT"
+         species_master(sp_CAT) % wd_lname  =  "CAT_wd"
+         species_master(sp_CAT) % wd_string =  "VN=CAT_wd; ON=CAT; VD=Wet deposition of base cations; VS=row;VB=p0"
+
+         species_master(sp_HCO3) % wd_name   =  "HCO3"
+         species_master(sp_HCO3) % wd_lname  =  "HCO3_wd"
+         species_master(sp_HCO3) % wd_string =  "VN=HCO3_wd; ON=HCO3; VD=Wet deposition of HCO3(-); VS=row;VB=p0"
+
+         species_master(sp_HION) % wd_name   =  "HION"
+         species_master(sp_HION) % wd_lname  =  "HION_wd"
+         species_master(sp_HION) % wd_string =  "VN=HION_wd; ON=HION; VD=Wet deposition of H(+); VS=row;VB=p0"
+
+         species_master(sp_SSLT) % wd_name   =  "SSLT"
+         species_master(sp_SSLT) % wd_lname  =  "SSLT_wd"
+         species_master(sp_SSLT) % wd_string =  "VN=SSLT_wd; ON=SSLT; VD=Wet deposition of sea-salt; VS=row;VB=p0"
+
+         species_master(sp_OCBN) % wd_name   =  "OCBN"
+         species_master(sp_OCBN) % wd_lname  =  "OCBN_wd"
+         species_master(sp_OCBN) % wd_string =  "VN=OCBN_wd; ON=OCBN; VD=Wet deposition of secondary organic carbon; VS=row;VB=p0"
+
+         species_master(sp_WH2O) % wd_name   =  "WH2O"
+         species_master(sp_WH2O) % wd_lname  =  "WH2O_wd"
+         species_master(sp_WH2O) % wd_string =  "VN=WH2O_wd; ON=WH2O; VD=Wet deposition of aerosol water; VS=row;VB=p0"
+
+         species_master(sp_DUST) % wd_name   =  "DUST"
+         species_master(sp_DUST) % wd_lname  =  "DUST_wd"
+         species_master(sp_DUST) % wd_string =  "VN=DUST_wd; ON=DUST; VD=Wet deposition of crustal material; VS=row;VB=p0"
+
+         species_master(sp_BLC) % wd_name   =  "BLC"
+         species_master(sp_BLC) % wd_lname  =  "BLC_wd"
+         species_master(sp_BLC) % wd_string =  "VN=BLC_wd; ON=BLC; VD=Wet deposition of black carbon; VS=row;VB=p0"
+
+         species_master(sp_PCBN) % wd_name   =  "PCBN"
+         species_master(sp_PCBN) % wd_lname  =  "PCBN_wd"
+         species_master(sp_PCBN) % wd_string =  "VN=PCBN_wd; ON=PCBN; VD=Wet deposition of primary organic carbon; VS=row;VB=p0"
+
+      end subroutine pkg_diag_wet_metainit
+
+end module mach_pkg_diag_mod
+

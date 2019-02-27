@@ -1,0 +1,275 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_hetv_corrhno3.ftn90
+! Creation       : P. Makar,  V. Bouchet,  A. Nenes,  S. Gravel,  B. Pabla,  S. Menard
+! Description    : Heterogeneous chemistry solver for hno3 correction.  Based on algorithm's
+!                  in Nenes et al's ISORROPIA solver, recoded to vectorize over the
+!                  gridpoint dimension.  All input arrays are of length npts (total
+!                  number of gridpoints submitted from the calling code.  The
+!                  subsection of each 1-D array between index ns and ne (inclusive)
+!                  has been pre-sorted, and contains the gridpoint data that must
+!                  be solved using the HNO3 algorithm.  Operations within this
+!                  subroutine therefore take place over array bounds from ns to ne.
+!
+!                  Units on input are moles/kg air.
+!
+! Extra info     : Athanasios Nenes, Mail Code 210-41, Dept. of Chemical Engineering,
+!                  California Institute of Technology, Pasadena, Ca., 91125, USA
+!                  nenes@its.caltech.edu
+!
+!                  The conditions for which this case is called are as follows:
+!                        tats <  2.0, All relative humidities
+!
+!                  This subroutine is called as a correction on earlier calculations,
+!                  and determines the extent to which HNO3g may dissolve into the
+!                  acid aerosols (if they have sufficient liquid water).
+!
+!                  The reactions representing this case are as follows(bracketed numbers
+!                  indicate that the solution is done in stages, as numbered):
+!
+!                     HNO3eq <=> Heq + NO3eq , kNO3
+!                  The system of equations to be solved in this case are as follows:
+!
+!                     kHNO3 (HNO3eq) - (Heq)(SO4eq) = 0,
+!                     Heq = Hbefore + del
+!                     NO3eq = NO3before + del
+!                     HNO3eq = HNO3before - del
+!
+!                  ...where "del" represents the moles/kg H2O of HNO3 that dissolves to the
+!                 aerosol phase, "eq" represents the equilibrium solution, and "before"
+!                  represents the starting values before the correction is made.  Note
+!                  that NO3before is assumed to be zero in the actual implementation.
+!
+!                  The solution to the system of equations:
+!
+!                     del = 0.5 * ( - (Hbefore + kHNO3) +
+!                           sqrt( (Hbefore + khno3)^2 + 4 (kHNO3 * HNO3before) ) )
+!
+! Arguments  IN
+!
+!            OUT
+!
+!=============================================================================
+!
+!!if_on
+subroutine mach_hetv_corrhno3(npts, nr, ns, ne, so4, no3, nh4, hso4, hno3, h, t, tc, aw, &
+                    k0, p1, p2, rho, lwn, lwnmin, tstd )
+!!if_off
+   use mach_hetv_headers_mod, only: mach_hetv_water, mach_hetv_activity
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: nr
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: ns
+   integer(kind=4), intent   (in) :: ne
+   real(kind=8),    intent   (in) :: lwnmin
+   real(kind=8),    intent   (in) :: tstd
+   real(kind=8),    intent   (in) :: k0(nr)
+   real(kind=8),    intent   (in) :: p1(nr)
+   real(kind=8),    intent   (in) :: p2(nr)
+   real(kind=8),    intent(inout) :: so4  (npts)
+   real(kind=8),    intent(inout) :: no3  (npts)
+   real(kind=8),    intent(inout) :: nh4  (npts)
+   real(kind=8),    intent(inout) :: hso4 (npts)
+   real(kind=8),    intent(inout) :: hno3 (npts)
+   real(kind=8),    intent(inout) :: h    (npts)
+   real(kind=8),    intent   (in) :: t    (npts)
+   real(kind=8),    intent   (in) :: tc   (npts)
+   real(kind=8),    intent   (in) :: aw   (npts)
+   real(kind=8),    intent   (in) :: rho  (npts)
+   real(kind=8),    intent  (out) :: lwn  (npts)
+!!if_off
+!
+!  Local variables:
+!
+   integer(kind=4) :: i
+   real(kind=8), parameter :: rg = 8.3144d0 / 1.01325D+05  !gas constant, atm->Pa
+
+!  Workspace arrays:
+   real(kind=8), dimension(npts) :: del
+   real(kind=8), dimension(npts) :: oh, g_h_no3, g_h_hso4, g_nh4_hso4
+   real(kind=8), dimension(npts) :: g_nh42_so4, g_h_oh, g_nh4_oh
+   real(kind=8), dimension(npts) :: g_nh4_no3, g_h2_so4, g_nh43_hso42
+   real(kind=8), dimension(npts) :: lwo
+   real(kind=8), dimension(npts) :: g0_h_no3, g0_h2_so4, g0_h_hso4,       &
+                                    g0_nh4_no3, g0_nh42_so4, g0_nh4_hso4
+   real(kind=8), dimension(npts) :: so4b, no3b, nh4b, hso4b, hb, ohb
+!  arrays for reaction rates:
+   real(kind=8), dimension(npts) :: khno3, kh2o
+!  Local variables that may be used in the solution:
+   character(len = 20), parameter    :: method = 'KM'
+   external qqexit
+
+!  Array dimensioning check:
+   if(ns < 1 .or. ns > npts .or. ne > npts .or. ne < ns) then
+      write(0, *) '### Error in mach_hetv_corrhno3 ###'
+      write(0, *) '### ns ne npts: ',ns,ne,npts,'  ###'
+      write(0, *) '# Error in array bounds in hno3 correction'
+      write(0, *) '###         ABORT         ###'
+      call qqexit(1)
+   end if
+
+!   Initial guess for liquid water content (will be replaced in calculations to follow:
+   do i=ns, ne
+      lwo(i) = 1.d0
+   end do
+
+!  No iteration required; single calculation.
+!  Calculate liquid water, based on current ion concentration.
+   call mach_hetv_water(npts, ns, ne, so4, h, no3, nh4, hso4, aw, lwo, lwn)
+
+!  (2)  Calculate new concentrations of ions and
+!  other phases; multiply old concentration by
+!  ratio of old to new liquid water contents
+   do i = ns, ne
+      hno3(i) = max(hno3(i) * lwo(i) / max(lwn(i), lwnmin), lwnmin)
+      so4(i)  = max(so4(i)  * lwo(i) / max(lwn(i), lwnmin), lwnmin)
+      h(i)    = max(h(i)    * lwo(i) / max(lwn(i), lwnmin), lwnmin)
+      no3(i)  = max(no3(i)  * lwo(i) / max(lwn(i), lwnmin), lwnmin)
+      nh4(i)  = max(nh4(i)  * lwo(i) / max(lwn(i), lwnmin), lwnmin)
+      hso4(i) = max(hso4(i) * lwo(i) / max(lwn(i), lwnmin), lwnmin)
+   end do
+!  Update liquid water content
+   do i = ns, ne
+      lwo(i) = lwn(i)
+   end do
+
+!  Calculate rates for Equilibrium constants
+   do i = ns, ne
+!  1:  HNO3(g_eq) <=> HNO3(aq)
+!  2:  HNO3(aq) <=> H+ + NO3-
+!  Net  HNO3(g_eq) <=> H+ + NO3- : khno3=k1*k2
+      khno3(i) = ( k0(1) * exp( p1(1) * (tstd / t(i) - 1.d+00)                   &
+               + p2(1) * (1.d+00 + log( tstd / t(i) ) - tstd / t(i) )  )) *      &
+                 ( k0(2) * exp( p1(2) * (tstd / t(i) - 1.d+00)                   &
+               + p2(2) * (1.d+00 + log( tstd / t(i) ) - tstd / t(i) )  ))
+   end do
+
+!  Calculate OH concentration for activity coefficient calculations
+   do i = ns, ne
+      kh2o(i) = k0(10) * exp( p1(10) * (tstd / t(i)-1.d+00)                      &
+              + p2(10) * (1.d+00 + log( tstd / t(i) ) - tstd / t(i) )  )
+
+      if(h(i) > 0.d0) then
+         oh(i) = aw(i) * kh2o(i) / h(i) * 0.5 *                                   &
+               ( 1.d0 + dble(sign(1., real(h(i)) - 2. * 1.e-30)) )                &
+               + 1.d-30 * 0.5 * ( 1.d0 + dble(sign(1., 2. * 1.e-30 - real(h(i)))) )
+      else
+         oh(i) = 0.d0
+      end if
+   end do
+
+!  Prior to calculating activity coefficients, check to see if the aerosol is
+!  dry (in which case lwn will be <= the minimum value of 1D-9).
+!  For the activity coefficient calculation which follows, these "low water"
+!  cases have their molar values replaced by a single bogus set of ion
+!  concentrations.  This is to allow the activity coefficient calculation to
+!  proceed without division by zero problems.  Later in this routine, the
+!  HNO3 calculation is only performed for those gridpoints with liquid water contents
+!  greater than lwnmin; the use of bogus values here does not affect later code.
+
+   do i = ns, ne
+      if(lwn(i) <= lwnmin) then
+         so4b(i)  = 2.D0
+         nh4b(i)  = 3.D0
+         hb(i)    = 0.D0
+         hso4b(i) = 0.D0
+         no3b(i)  = 0.D0
+         ohb(i)   = 0.D0
+      else
+         so4b(i)  = so4(i)
+         nh4b(i)  = nh4(i)
+         hb(i)    = h(i)
+         hso4b(i) = hso4(i)
+         no3b(i)  = no3(i)
+         ohb(i)   = oh(i)
+      end if
+   end do
+
+!  Calculate activity coefficients
+   call mach_hetv_activity (method, npts, ns, ne, hb, hso4b, nh4b, no3b, so4b, ohb, g_h_no3,   &
+                           g_h_hso4, g_nh4_hso4, g_nh42_so4, g_h_oh, g_nh4_oh, g_nh4_no3,      &
+                           g_h2_so4, g_nh43_hso42, g0_h_no3, g0_h2_so4, g0_h_hso4, g0_nh4_no3, &
+                           g0_nh42_so4, g0_nh4_hso4, tc)
+
+!  Factor activity coefficients into equilibrium constants
+!  to simplify calculations.
+!  *  Conversion factors:
+!  *
+!  *        atmospheres -> moles/kg H2O:
+!  *
+!  *   atmospheres *1.01325E5(kg m^-1 s^-2 /atm) /
+!  *    { 8.3144 (kg m^2 s^-2 mol^-1 K^-1) * T (K) * Lw (kg H2O/kg air)
+!  *          * rho (kg air/m3 air)  }    =  moles/(kg H2O)
+!  *
+!  *        atmospheres^-1 -> (moles/kg H2O)^-1 :
+!  *
+!  *         1          8.3144 * T * Lw * rho     kg H2O
+!  *   ------------- * ----------------------  = --------
+!  *   atmospheres      1.01325E5                 moles
+
+      do i = ns, ne
+! 1, 2:  HNO3(g_eq) <=> HNO3(aq) <=> H+ + NO3-
+! k1: Original units (moles HNO3(aq)/kg H2O)/(atm HNO3(g)), but
+! gas is already in moles/(kg H2O); multiply by (R T Lwn rho).
+! k2: Divide by the square of the HNO3 activity coefficient
+         khno3(i) = khno3(i) * rg * t(i) * lwn(i) * rho(i) / (g_h_no3(i) * g_h_no3(i))
+      end do
+
+!   Solve system of equations.
+   do i = ns, ne
+      del(i) = 0.d0
+      if(lwn(i) > lwnmin) then
+         del(i) = 0.5d0 * ( - (h(i) + khno3(i)) + sqrt( (h(i) + khno3(i)) * (h(i) + khno3(i)) &
+                 + 4.d0 * khno3(i) * hno3(i)) )
+      end if
+      del(i) = min(hno3(i), del(i))
+      del(i) = max(del(i), 0.0d0)
+   end do
+   do i = ns, ne
+      hno3(i) = hno3(i) - del(i)
+      h(i)    = h(i) + del(i)
+      no3(i)  = del(i)
+   end do
+
+!  Convert values back to moles/kg air from moles/kg water by multiplying by the liquid water content:
+   do i = ns, ne
+      hno3(i)  = hno3(i)  * lwn(i)
+      so4(i)   = so4(i)   * lwn(i)
+      h(i)     = h(i)     * lwn(i)
+      no3(i)   = no3(i)   * lwn(i)
+      nh4(i)   = nh4(i)   * lwn(i)
+      hso4(i)  = hso4(i)  * lwn(i)
+   end do
+
+   return
+end

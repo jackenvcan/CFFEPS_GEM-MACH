@@ -1,0 +1,125 @@
+!begin trap head
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : linoz_headers_mod.ftn90
+! Creation       : S Gravel
+! Description    : Modules defining explicit interfaces for linoz subroutines
+!
+! Extra info     :
+!
+!============================================================================
+
+module mach_linoz_headers_mod
+   interface
+!end trap head
+
+subroutine linoz_litcoeff( )
+end subroutine linoz_litcoeff
+
+subroutine linoz_main(busdyn    , busper     , busvol     , &
+                     busdyn_size, busper_size, busvol_size, &
+                     metvar2d, metvar3d, &
+                     slab_index, step)
+        
+   use chm_metvar_mod    , only : SIZE_MV2D,SIZE_MV3D
+   use chm_ptopo_grid_mod, only : chm_ni,chm_nk
+   integer(kind=4), intent   (in) :: busvol_size
+   integer(kind=4), intent   (in) :: busper_size
+   integer(kind=4), intent   (in) :: busdyn_size
+   real   (kind=4), intent(inout) :: busdyn(busdyn_size)
+   real   (kind=4), intent(inout) :: busvol(busvol_size)
+   real   (kind=4), intent   (in) :: busper(busper_size)
+   real   (kind=4), intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real   (kind=4), intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+   integer(kind=4), intent   (in) :: slab_index
+   integer(kind=4), intent   (in) :: step
+end subroutine linoz_main
+
+      subroutine linoz_tend (o3, ch4, f11, f12, n2o, noy, temp, colo3           , &
+                             c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12  , & 
+                             c13, c14                                           , &
+                             o3_new, ch4_new, f11_new, f12_new                  , &
+                             n2o_new, noy_new                                     )
+   real(kind=4), intent (in)   :: o3,n2o,ch4,f11,f12,noy
+   real(kind=4), intent (in)   :: temp,colo3 
+   real(kind=4), intent (in)   :: c1,c2,c3,c4,c5,c6,c7,c8,c9,c10,c11,c12,c13,c14
+   real(kind=4), intent(out)   :: o3_new,n2o_new,ch4_new,f11_new,f12_new,noy_new
+end subroutine linoz_tend
+
+subroutine mach_gas_strato(busdyn     , busvol     , &
+                           busdyn_size, busvol_size, &
+                           metvar3d, metvar2d                   , &
+                           rho, step, lino3_new ) 
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_metvar_mod    , only: SIZE_MV2D,SIZE_MV3D
+   integer(kind=4), intent(in)    :: step
+   integer(kind=4), intent(in)    :: busdyn_size
+   integer(kind=4), intent(in)    :: busvol_size
+   real   (kind=4), intent(in)    :: busdyn   (busdyn_size)
+   real   (kind=4), intent(inout) :: busvol   (busvol_size)
+   real   (kind=4), intent(in)    :: metvar2d (chm_ni,         SIZE_MV2D)
+   real   (kind=4), intent(in)    :: metvar3d (chm_ni, chm_nk, SIZE_MV3D)
+   real   (kind=4), intent(in)    :: rho      (chm_ni, chm_nk)  !kg/m3
+   real   (kind=4), intent(out)   :: lino3_new(chm_ni ,chm_nk)  !ug /kg
+end subroutine mach_gas_strato
+
+subroutine mach_linoz_interp (z, coeff14, ylat, imonth, ilon)
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use linoz_mod         , only: jpcoeff
+   integer(kind=4), intent   (in) :: ilon
+   integer(kind=4), intent   (in) :: imonth
+   real   (kind=4), intent   (in) :: ylat
+   real   (kind=4), intent   (in) :: z     (chm_ni, chm_nk)        !z in meters ASL
+   real   (kind=4), intent  (out) :: coeff14(chm_ni,chm_nk,jpcoeff)
+end subroutine mach_linoz_interp
+
+subroutine mach_linoz_xcol( o3_vmr, p_low, p_up, o3_col)
+  real(kind=4), intent   (in) :: o3_vmr        ! mole/mole vmr of O3
+  real(kind=4), intent   (in) :: p_low, p_up   ! pressure (Pa) at layer interfaces
+  real(kind=4), intent(inout) :: o3_col        ! D.U. of O3
+end subroutine mach_linoz_xcol
+
+subroutine mach_strato_xcol( x_vmr, p_low, p_up, x_col)
+  real(kind=4), intent   (in) :: x_vmr                      ! mole/mole vmr 
+  real(kind=4), intent   (in) :: p_low, p_up                ! pressure (Pa) at layer interfaces
+  real(kind=4), intent(inout) :: x_col                      ! 1E+15 (Peta) molecules /cm2
+end subroutine mach_strato_xcol
+
+subroutine mach_strato_tend (o3, temp, colo3,  &
+                             c1, c2, c3, c4, c5, c6, c7, o3_new )
+   real(kind=4), intent (in)  :: temp,colo3
+   real(kind=4), intent (in)  :: o3, c1, c2, c3, c4, c5, c6, c7
+   real(kind=4), intent(out)  :: o3_new
+end subroutine mach_strato_tend
+
+end interface
+end module mach_linoz_headers_mod

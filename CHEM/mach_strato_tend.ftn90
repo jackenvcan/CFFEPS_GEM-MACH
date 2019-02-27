@@ -1,0 +1,95 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+!**s/p mach_strato_tend
+!
+!!if_on
+subroutine mach_strato_tend (o3, temp, colo3,  &
+                             c1, c2, c3, c4, c5, c6, c7, o3_new )
+!!if_off
+!      o3 :     Ozone ug / kg
+!      o3_new:  Updated Ozone ug / kg 
+!      colo3:   Column ozone (D.U.)
+!      c1 : o3c
+!      c2 : temp
+!      c3 : colo3
+!      c4 : P-L
+!      c5 : d(P-L)/dO3
+!      c6 : d(P-L)/dT
+!      c7 : d(P-L)/dcolo3
+
+   use chm_utils_mod,      only: chm_timestep, global_debug, chm_lun_out
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_consphychm_mod, only: mwt_air
+   use chm_species_info_mod
+   use chm_species_idx_mod
+
+   implicit none
+!
+!  Declaration of subroutine arguments
+!
+!!if_on
+   real(kind=4), intent (in)  :: temp,colo3
+   real(kind=4), intent (in)  :: o3, c1, c2, c3, c4, c5, c6, c7
+   real(kind=4), intent(out)  :: o3_new
+!!if_off
+!
+!  Declaration of local variables.
+!
+   logical(kind=4)  :: local_dbg
+   real(kind=4)     :: tau, fss
+   real(kind=4)     :: c50
+
+!
+   local_dbg = (.false. .or. global_debug)
+   ! local_dbg = (.true.)
+
+   if(local_dbg) then
+      write (chm_lun_out, *) 'ENTER mach_strato_tend'
+   end if
+
+
+   if(local_dbg) then
+      write (chm_lun_out, *) 'in mach_strato_tend'
+      write (chm_lun_out, *) 'chm_ni, chm_ni, chm_nk '    , chm_ni, chm_ni, chm_nk
+   end if
+
+!     Fix for preventing division by 0 originating from horizontal 
+!     interpolation (JDG,march 2010)
+
+      if (c5 .le. 0.) c50 = min(c5,-1.E-19)
+      if (c5 .gt. 0.) c50 = max(c5, 1.E-19)
+
+      tau= -1./c50
+
+      fss = c1 + (c4 + c6*(temp-c2) + c7*(colo3-c3))*tau  !vmr
+      fss = fss*( species_master(sp_O3) % mol_wt / mwt_air)*1.0E+9                 !ug /kg 
+
+      o3_new = o3 + (fss-o3)*(1.-exp(-chm_timestep/tau))  !ug/kg
+
+   if(local_dbg) then
+       write (chm_lun_out, *) 'o3, o3_new (ug/kg) =', o3, o3_new, fss, tau
+   end if
+
+  if (local_dbg) then
+     write (chm_lun_out, *) 'EXIT mach_strato_tend'
+  endif
+
+return
+end subroutine mach_strato_tend

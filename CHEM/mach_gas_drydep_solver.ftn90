@@ -1,0 +1,417 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet / Project : GEM-MACH
+! Fichier / File   : mach_gas_drydep_solver.ftn90
+! Creation         : A. Robichaud - Dec 2002
+! Description      : new scheme for dry deposition of gas based on multiple
+!                    resistance approach and single-layer "big leaf" approach
+!                    (mostly based on work of WESELEY (1989,1996), ZHANG et al.
+!                    2002 and ROBICHAUD, 1991 and 1994).
+!
+! Extra Info       : Modified by Bin He, Modify for thread safety - Oct 2003
+!
+!                    Modified by A. Kallaur, M. Moran, P.A. Beaulieu, A. Robichaud for GEM-MACH - Feb 2008
+!
+!                    For a good review of dry deposition modeling, see
+!                    JACOBSON, 1999, "Fundamentals of Atmospheric Modeling",
+!                    WESELEY and HICKS, 2000, "Atmospheric Environment" or
+!                    Seinfeld and Pandis, 1998 "Atmospheric Chemistry and Physics".
+!
+!
+!
+! Arguments:  IN
+!
+!    ni       -> length of gripdt row to work on
+!
+!    sp_i     -> Index of species into physical constants tables
+!                alpha, beta, hstar, fzero
+!
+!    species  -> Unique species identifier (integer)
+!
+!    metvar2d(:, MV2D_ILMO)  -> Inverse of Monin-Obukhov length
+!
+!    metvar2d(:, MV2D_TSURF)   -> Surface temperature (K)
+!                NOTE: Two choices here:
+!                      1) Take TSURF; averaged skin Temp from PHY (ISBA)
+!                      2) Take TT(1) 1st level model temp
+!                      In discussion with B. Bilodeau Nov 22 2007, he mentioned
+!                      that the most appropriate option is 1).
+!
+!    metvar2d(:, MV2D_UE) -> Surface friction velocity (m/s) taken from Phyvar(UE)
+!
+!    metvar2d(i, MV2D_QDIAG)        -> Specific humidity
+!
+!    metvar2d(:, MV2D_FLUSOLIS)-> Downwards visible solar flux
+!                Phyvar(FLUSOLIS)  (W/m2)
+!
+!    metvar2d(:, MV2D_RAINRATE) -> Precipitation rate (m/s)
+!                Phyvar (U1 or RAINRATE from volatile bus)
+!
+!      season -> Seasonal categories
+!                  1  midsummer with lush vegetation
+!                  2  autumn with cropland before harvest
+!                  3  later autumn after frost, no snow
+!                  4  winter, snow on ground and subfreezing
+!                  5  transitional spring with partially green short annuals
+!
+!         lfu -> Land Form Use
+!                CHEMVar(LAND_USE_15) from Chemical permanent bus
+!                Derived from the CMC26 category data set into 15 category
+!                set in subroutine "mach_landuse"
+!
+!    metvar2d(:, MV2D_SNODP)  -> Snow depth (m)
+!                PhyVar(SD)
+!
+!    metvar2d(:,MV2D_PPLUS)   -> Surface presssure (Pa)
+!                PhyVar(2p -> pplus from Dyn bus)
+!
+! Arguments:     OUT
+!    VD       -> Deposition velocity for specie "species"   (m/s)
+!
+! AERO_RESIST -> Aerodynamic resistance for species "species" (s/m)
+!
+! DIFF_RESIST -> Molecular diffusion resistance for species "species" (s/m)
+!
+! SURF_RESIST -> Total surface resistance for species "species" (s/m)
+!
+!============================================================================!
+!
+!!if_on
+subroutine mach_gas_drydep_solver(VD         , AERO_RESIST, DIFF_RESIST,     &
+                                  SURF_RESIST, season     , lfu        ,     &
+                                  metvar2d, species    , sp_i                )
+   use chm_metvar_mod,        only: SIZE_MV2D
+   use mach_gas_chemicbi_mod, only: lucprm
+   use chm_ptopo_grid_mod,    only: chm_ni
+!!if_off
+   use chm_metvar_mod,        only: MV2D_UE,    MV2D_ILMO,       MV2D_PPLUS,    &
+                                    MV2D_TSURF, MV2D_FLUSOLIS,  MV2D_RAINRATE, &
+                                    MV2D_SNODP, MV2D_QDIAG 
+   use chm_utils_mod,         only: chm_lun_out, global_debug
+   use chm_consphychm_mod,    only: karman, tcdk
+   use mach_gas_drydep_mod
+   use chm_species_info_mod,  only: species_master
+   use chm_species_idx_mod,   only: sp_SO4, sp_O3
+   implicit none
+!!if_on
+   integer(kind=4), intent (in) :: species
+   integer(kind=4), intent (in) :: sp_i
+   real(kind=4),    intent(out) :: vd         (chm_ni)
+   real(kind=4),    intent (in) :: aero_resist(chm_ni,lucprm)
+   real(kind=4),    intent(out) :: diff_resist(chm_ni)
+   real(kind=4),    intent(out) :: surf_resist(chm_ni,lucprm)
+   real(kind=4),    intent (in) :: season     (chm_ni)
+   real(kind=4),    intent (in) :: lfu        (chm_ni,lucprm)
+   real(kind=4),    intent (in) :: metvar2d   (chm_ni,SIZE_MV2D)
+!!if_off
+!
+!  Local variables
+!
+   real(kind=4)    :: ilmob, kst, ksqp, ksde, ksca, ksx
+   real(kind=4)    :: psurf, tsurf, humr
+   real(kind=4)    :: sat_h2o_pressure, srad, b7, de, tl
+   real(kind=4)    :: th, t0, rcut, rsx, rconv, rexp
+   real(kind=4)    :: rsoil, rcan, iuss, lain, laid, rnsinv
+   real(kind=4)    :: rinvrcx, precip, lai, rmx, vdf, rmx1
+   real(kind=4)    :: wst, dh2odx, schmidt_num, expts
+   real(kind=4)    :: ustar, rrt
+   integer(kind=4) :: i, j
+   integer(kind=4) :: isnow, iprec, isea, nlus, print_index
+   logical(kind=4) :: local_dbg
+! Local constants
+   real(kind=4), parameter :: max_ilmob = 100.
+
+!  Code for dry deposition of gaseous species begins here
+
+   local_dbg = (.false. .or. global_debug)
+
+   if (local_dbg) then
+      write(chm_lun_out, *) ' Begin mach_gas_drydep_solver:'
+   end if
+
+   isnow = 0
+   iprec = 0
+
+!  Molecular diffusivity of gas  with respect to H2O
+   dh2odx = sqrt(2.608 / (1.0 + 28.9644 / species_master(species) % mol_wt))
+   schmidt_num     = 0.84 * dh2odx
+
+  !  Initialize 
+   vd = 0.0
+   diff_resist = 0.0
+   surf_resist = 0.0
+
+
+!  Before beginning main loop over domain and land-use
+!  categories, check if specie number is SO4.
+!  If so, VD is calculated and return
+!  to calling subroutine.
+
+   if (species == sp_SO4) then
+      do i = 1, chm_ni
+
+         ilmob = sign(min(abs(metvar2d(i, MV2D_ILMO)),max_ilmob), metvar2d(i, MV2D_ILMO))
+         ustar    = metvar2d(i, MV2D_UE)
+
+         ! For sulfates use formulation parametrization
+         ! from walcek et al. (1986)
+
+         ! stable case
+         if (ilmob >= 0.0) then
+            vd(i) = ustar / 500.0
+         ! unstable case
+         else
+            vd(i) = (ustar / 500.0) * (1.0 + exp(-0.667 * log(-300.0 * ilmob)))
+         end if
+      end do
+      return
+   end if
+
+! Begin main loop over Domain
+
+   do i = 1, chm_ni
+      psurf = metvar2d(i, MV2D_PPLUS)
+
+! Converting from Kelvin to Celsius for dry deposition equations.
+! Also, set a lower limit of -60C for temperature to prevent model 
+! crashing over Antartica which happened in the global version 
+
+      tsurf = max(metvar2d(i, MV2D_TSURF) - tcdk, -60.)
+      srad  = metvar2d(i, MV2D_FLUSOLIS)
+      if (srad < 26.76) then
+         srad = 26.76
+      end if
+      ustar = max(metvar2d(i, MV2D_UE), 0.001)
+      rrt   = metvar2d(i, MV2D_RAINRATE)
+
+      isnow    = 0
+      isea     = nint(season(i))
+
+      ! Check for snow depth at particular grid point, and
+      ! override Season value if there is.
+      if (metvar2d(i, MV2D_SNODP)  > 0.005) then
+         isnow = 1
+         isea  = 4
+         expts   = 1000.0 * exp(-tsurf - 4.0)
+      end if
+
+      ! sat_h2o_pressure from GILL (in millibar)
+      sat_h2o_pressure = max(10.0 ** ((0.7859 + 0.03477 * tsurf) / (1.0 + 0.00412 * tsurf)), 1.0) !mb
+
+      humr = min(psurf * .01 * metvar2d(i, MV2D_QDIAG) / (0.622 * sat_h2o_pressure), 1.0) ! (pa-->mb)
+
+      diff_resist(i) = 2.0 * exp(0.6667 * log(schmidt_num / prandtl)) / (karman * (ustar + 0.001))
+
+      if (diff_resist(i) > 9999.0) diff_resist(i) =  9999.0
+
+
+      b7  = ao * log(log(srad)) - bo
+
+      de  = (1.0 - humr) * sat_h2o_pressure ! de: in millibar
+
+    ! Jarvis scheme for water vapor
+    ! ksqp = correction for solar flux, kst: correction for temp.,
+    ! ksde = correction for humidity (vapor pressure),
+    ! ksca = correction for CO2
+
+      ksqp = co * log(srad) - dzero
+      if (ksqp < 0.0) ksqp = 0.0
+
+      ! Jacobson  scheme for ksqp (isimple =1 for testing purposes. Default is 0)
+      if (isimple == 1) ksqp = 1.0 / ( 1.0 + (200.0 / (srad + 0.1)) * (200.0 / (srad + 0.1)))
+
+      ksde = 1.0 - 0.03 * de 
+      if (ksde < 0.0) ksde = 0.0
+
+      ksca = 1.0 - b7 * cco2
+      if (cco2 < 100.0) ksca = 1.0
+      if (cco2 > 1000.0) ksca = 0.0
+
+      ! leaf mesophyl resistance
+      if (hstar(sp_i) >= 0.0 .and. fzero(sp_i) >= 0.0) then
+         rmx1 = 1.0 / (hstar(sp_i) / 3000.0 + 100.0 * fzero(sp_i))
+      else
+         rmx1 = 0.0
+      end if
+
+      ! resistance of gases to buoyant convection
+      rconv = 100.0 * (1.0 + 1000.0 / (srad + 10.0))
+
+      ! check if precipitation is present
+      iprec  = 0
+      wst    = 0.0
+      precip = 3.6E06 * rrt
+      if (precip > 1.0) iprec = 1
+      if ((iprec == 1) .or. (humr >= 0.95)) wst=0.5
+
+      ! loop over all LUC (Land Use Categories)
+      do nlus = 1, lucprm
+
+         if (lfu(i, nlus) < 0.01) then
+            cycle
+         end if
+
+         tl  = tmin(nlus)
+         th  = tmax(nlus)
+         t0  = topt(nlus)
+
+         if ((tsurf > tl) .and. (tsurf < th)) then
+            kst = ((tsurf - tl) * (th - tsurf) / ((t0 - tl) * (th - t0))) ** b4
+         else
+            kst = 0.0
+         end if
+
+         ! total correction factor for stomatal conductance
+         ksx = max(ksqp * kst * ksde * ksca, 0.0001)
+
+         if (species == sp_O3) then  ! Ozone case
+
+            if ((ksx <= 0.0) .or. (ksx > 1.5)) then
+               write(chm_lun_out, *) 'Ozone ksx( ',i,' )= ',ksx
+            end if
+
+         end if
+
+         ! final stomatal resistance for gas "sp_i"
+         rsx = rsmin(nlus, isea) / ksx
+
+         ! correction rsx, rcut and rmx scaled by LAI (ValMartin et al, GRL, 2014)
+         ! LAI from a look up table and add up very small value to avoid division by zero
+         lai = max(laindex(nlus, isea),1.0E-6)
+
+         ! stomatal resistance
+         rsx = min((rsx * dh2odx / lai),9999.0)
+         ! mesophyl resistance
+         rmx = rmx1 / lai
+         ! cuticular resistance
+         if (hstar(sp_i) >= 0.0 .and. fzero(sp_i) >= 0.0) then
+            rcut = rcutd(nlus, isea) / (lai * (1.0E-5 * hstar(sp_i) + fzero(sp_i)))
+         else
+            rcut = 9999.0
+         end if
+
+         ! resistance on leaves, twigs,bark and other exposed surfaces (WESELEY)
+         if ((hstar(sp_i) >= 0.0) .and. (fzero(sp_i) >= 0.0)) then
+            rexp = 1.0 / (1.0E-5 * hstar(sp_i) / rexpso2(nlus, isea) + fzero(sp_i) / rexpo3(nlus, isea))
+         else
+            rexp = 9999.0
+         end if
+
+         ! soil resistance from AURAMS
+         rsoil = 1.0 / (alpha(sp_i) / rgdso2(nlus, isea) + beta(sp_i) / rgdo3(nlus, isea))
+
+         ! canopy resistance (sometimes called rac: areodynamic canopy resis.)
+         rcan = rcanp(nlus, isea)
+
+         ! total surface resistance (see JACOBSON 1999, WESELEY 1989)
+         rinvrcx = (1.0 - wst) / (rsx + rmx) + 1.0 / rcut + 1.0 / (rconv + rexp) + 1.0 / (rcan + rsoil)
+
+         ! this part is only for ozone: new scheme for non-stomatal for ozone
+         ! ref. ZHANG et al., Atmos. Env., 36, 2002.
+         ! however if inew=1 treat all gases with this scheme
+
+         ! the following is from ZHANG. et AL. (2002), Atmospheric Env.
+         ! if rain or dew is present, switch to another equation (see, ZHANG
+         ! et al., 2002).
+         if ((insz == 1) .and. ((species == sp_O3) .or. (inew == 1))) then
+
+            lai = max(laindex(nlus, isea),1.0E-6)
+            if ((lai > 0.001) .and. (lai < 10.0)) then
+
+               iuss = 1.0 / (ustar * ustar)
+               lain = exp(0.25 * log(lai))
+               laid = 1.0 / lain
+
+               if ((iprec == 1) .or. (humr >= 0.95)) then
+                  ! for wet canopies
+                  rcut=rcut / 20
+                  rnsinv = 1.0 / (rcan * iuss * lain + rsoil) + sqrt(lai) * ustar / rcut
+               else
+                  ! for dry canopies
+                  rnsinv = 1.0 / (rcan * iuss * lain + rsoil) + 1.0 / (rcut * exp(-0.03 * 100 * humr) * laid / ustar)
+               end if
+
+               rinvrcx = (1.0 - wst) / rsx + rnsinv
+
+            end if
+
+         end if
+
+         ! adjustment for snow (see Robichaud, 1991)
+         if (isnow == 1) then  
+            rinvrcx = 1.0 / (rcut + expts) + 1.0 / (rconv + rexp + expts) + 1.0 / (rcan + rsoil + expts)
+         end if
+
+         surf_resist(i, nlus) = 1.0 / rinvrcx
+         if (surf_resist(i, nlus) < 0.0) surf_resist(i, nlus) = 0.0
+         if (surf_resist(i, nlus) > 9999.0) surf_resist(i, nlus) =  9999.0
+
+         ! dry deposition for gas "sp_i" for one LUC
+
+         vdf= 1.0 / (aero_resist(i, nlus) + diff_resist(i) + surf_resist(i, nlus))
+
+         if (vdf < 0.0) then
+            write(chm_lun_out, *) '>Warning'
+            write(chm_lun_out, *) '>Dry deposition speed is negative at i = ', i
+            vdf = 0.0
+         end if
+
+         ! special cases (see: WESELEY and HICKS, 2000, Atmospheric Env.)
+         ! where current scheme does not work well
+         if (species == sp_O3) then
+
+            if ((nlus == 13) .and. (isnow == 0)) then
+               vdf = 3.0E-4 ! original values was vdf = 1.0E-4
+            else if (nlus == 14)  then
+               vdf = 3.0E-4
+            else if ((nlus == 9) .and. (isnow == 0)) then
+               vdf = 1.5E-3
+            end if
+
+         end if
+
+         vd(i) = vd(i) + lfu(i, nlus) * vdf
+
+         if (vd(i) > 0.1) then
+            vd(i) = 0.1
+         endif
+
+      end do  ! loop over all land use categories
+
+   end do  ! loop over grid point row
+
+   if (local_dbg) then
+      write(chm_lun_out, *) 'mach_gas_drydep_solver EXIT'
+   end if
+
+   return
+
+end subroutine mach_gas_drydep_solver

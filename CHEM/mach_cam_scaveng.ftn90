@@ -1,0 +1,470 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_cam_scaveng.ftn90
+! Creation       : S. Gong, W. Gong, A. DASTOOR, C. Stroud, S. Gravel and
+!                  B. Pabla for GEM-MACH, June 2008
+! Description    : Calculates below cloud scavenge processes of gas and particle
+!
+! Extra info     : - First version created by S. Gong Jun 05 1994 for CAM
+!                  - Vectorized the whole program and add working spaces.
+!                    (S. Gong, Jan 19, 1996)
+!                  - Separate from incloud processes to deal the below-cloud
+!                    scavenging name changed from wetrem to scaveng.
+!                    (S. Gong, Dec 20, 1998)
+!                  - Added averaging for fractional cloud cover and
+!                    evaporatrion modification. also changed the objective
+!                    to in and below cloud rain scavenging.
+!                    (A. Dastoor, Apr 25, 2001)
+!                  - 1. added the subroutine for calculating CC2D
+!                       (code supplied by Ashu); and
+!                    2. added scavenging of soluble gases and the
+!                       accumulation of surface wet fluxes (additional to
+!                       the fluxes due to cloud-to-rain conversion).
+!                      (W. Gong, May 2001)
+!                 - Split aerosol OC into primary and secondary
+!                   components !cs>>> (C. Stroud, Aug 2004)
+!
+! Arguments:  IN
+!
+!                throw   -> Temperature
+!                cf      -> 3d cloud fraction
+!                evpfac  -> evap. of strat. precip (consun)
+!                lev     -> chm_nk + 1
+!                il1     -> minimum index for chm_ni
+!                il2     -> maximum index for chm_ni
+!                shj     -> Local mid-layer sigma value
+!                pressg  -> Grid row of surface pressure [Pa]
+!                pdepv   -> gravitational settling velocity
+!                qr      -> rain water/snow
+!                rhsize  -> Unactivated ambient aerosol wet
+!                rhopF   -> final wet density
+!                dshj    -> Sigma difference of bottom and top of a layer
+!                pdiff   -> diffusion parameter
+!                tmin    -> minimum threshold value
+!                ntr     -> Total number of trace substances (gases and aerosols)
+!                thlev   -> Layer thickness [m]
+!                adt2    -> advection time step
+!                roarow  -> Air density (kg/m3)
+!                jlat    -> J Slice number
+!
+!             OUT
+!
+!                TS2     -> total so2 in column
+!                TS4     -> total so4 in column
+!                CLTS    -> column total S after rain scavenging
+!
+!             IN/OUT
+!
+!                CLS4    -> SO4 (bulk) column total after  rain scavenging
+!                XROW    -> tracers concentration
+!                GDREM   -> total removal tendency
+!                RTBCLD  -> Rain Scavenging
+!                WETFLX  -> Wet flux
+!                FLUX    -> H+ in rain fluxes (including cloud-to-rain conversion)
+!
+!============================================================================
+!
+!!if_on
+subroutine mach_cam_scaveng (throw, XROW, cf, evpfac, lev, il1, il2, shj, pressg, pdepv,  &
+                             qr, RTBCLD, rhsize, rhop, dshj, pdiff, tmin, ntr, thlev,     &
+                             adt2, GDREM, roarow, WETFLX, FLUX, jlat, TS2, TS4, CLTS, CLS4)
+   use chm_ptopo_grid_mod,      only: chm_ni, chm_nk
+   use mach_cam_utils_mod,      only: isize
+   use mach_cam_pre_mod,        only: nswdep
+!!if_off
+   use chm_consphychm_mod,      only: grav, mwt_air
+   use chm_species_idx_mod,     only: sp_SO2, sp_H2O2, sp_ROOH, sp_HNO3, sp_NH3, &
+                                      sp_SU, sp_SS, sp_OC, sp_NI, sp_AM, sp_CM, sp_EC, sp_PC
+   use chm_species_info_mod,    only: sm
+   use mach_aurams_headers_mod, only: mach_aurams_cldcv2d
+   use mach_cam_headers_mod,    only: mach_cam_rain
+   use mach_cam_pre_mod,        only: aeroname, iae1, icom
+   use mach_cam_pre_mod,        only: igs_SO2, igs_SO4, igs_H2O2, igs_ROOH, igs_HNO3, igs_NH3
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: il1
+   integer(kind=4), intent   (in) :: il2
+   integer(kind=4), intent   (in) :: ntr
+   integer(kind=4), intent   (in) :: lev
+   integer(kind=4), intent   (in) :: jlat
+   real(kind=4),    intent   (in) :: adt2
+   real(kind=4),    intent   (in) :: tmin
+   real(kind=4),    intent   (in) :: throw    (chm_ni,lev)
+   real(kind=4),    intent(inout) :: xrow     (chm_ni,lev,ntr)
+   real(kind=4),    intent   (in) :: cf       (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: evpfac   (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: shj      (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: pressg   (chm_ni)
+   real(kind=4),    intent   (in) :: pdepv    (chm_ni,chm_nk,isize)
+   real(kind=4),    intent   (in) :: qr       (chm_ni,chm_nk,2)
+   real(kind=4),    intent(inout) :: rtbcld   (chm_ni,chm_nk,ntr)
+   real(kind=4),    intent   (in) :: rhsize   (chm_ni,chm_nk,isize)
+   real(kind=4),    intent   (in) :: rhop     (chm_ni,chm_nk,isize)
+   real(kind=4),    intent   (in) :: dshj     (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: pdiff    (chm_ni,chm_nk,isize)
+   real(kind=4),    intent   (in) :: thlev    (chm_ni,chm_nk)
+   real(kind=4),    intent(inout) :: gdrem    (chm_ni,ntr,3)
+   real(kind=4),    intent   (in) :: roarow   (chm_ni,chm_nk)
+   real(kind=4),    intent(inout) :: wetflx   (chm_ni,nswdep)
+   real(kind=4),    intent(inout) :: flux     (chm_ni,nswdep,chm_nk,2)
+   real(kind=4),    intent  (out) :: ts2      (chm_ni,chm_nk,3,2)
+   real(kind=4),    intent  (out) :: ts4      (chm_ni,chm_nk,3,2)
+   real(kind=4),    intent  (out) :: clts     (chm_ni,4,2)
+   real(kind=4),    intent(inout) :: cls4     (chm_ni,4,2)
+!!if_off
+!
+! Local variables
+!
+   integer(kind=4)  :: nt
+   integer(kind=4)  :: i_sulfate, i_nitrate, i_ammonium
+   integer(kind=4)  :: l, i, kk, ii, ll, n, np1, np2, np3, np
+   integer(kind=4)  :: ip_wflx(icom)
+   real(kind=4)     :: smf1, ti, smf
+   real(kind=4)     :: b2, xold, rph, xnew, tend
+   real(kind=4)     :: rhso3(chm_ni), rhco3(chm_ni), cc2d(chm_ni, chm_nk)
+   real(kind=4)     :: mwt_aero(icom)
+   real(kind=4)     :: mwt_h2o2, mwt_rooh, mwt_hno3, mwt_nh3, mwt_so2, mwt_hso3, mwt_hco3
+   real(kind=4)     :: hso2, hco2, phco3, phso3
+   real(kind=4)     :: pxnew(chm_ni, chm_nk, 2)
+
+   b2       = 0.0
+   cc2d     = 0.0
+   hco2     = 0.0
+   hso2     = 0.0
+   mwt_aero = 0.0
+   phco3    = 0.0
+   phso3    = 0.0
+   pxnew    = 0.0
+   rhco3    = 0.0
+   rhso3    = 0.0
+   rph      = 0.0
+   smf      = 0.0
+   smf1     = 0.0
+   tend     = 0.0
+   ti       = 0.0
+   xnew     = 0.0
+   xold     = 0.0
+
+!  get gas molecular weight
+
+   mwt_h2o2 = sm(sp_H2O2) % mol_wt
+   mwt_rooh = sm(sp_ROOH) % mol_wt
+   mwt_hno3 = sm(sp_HNO3) % mol_wt
+   mwt_nh3  = sm(sp_NH3) % mol_wt
+   mwt_so2  = sm(sp_SO2) % mol_wt
+   mwt_hso3 = 81.067  !sm(??) % mol_wt   !GEM-MACH doesn't include this yet
+   mwt_hco3 = 61.017  !sm() % mol_wt     !GEM-MACH doesn't include this yet
+
+!  indirect addressing for wet flux (wetflx)
+   do nt = 1, icom
+      if (aeroname(nt) == 'SULPHATE') then
+         ip_wflx(nt) = 4
+!         mwt_aero(nt) = 96.0636
+         mwt_aero(nt) = sm(sp_SU) % mol_wt
+         i_sulfate = nt
+      end if
+      if (aeroname(nt) == 'SEA-SALT') then
+         ip_wflx(nt) = 10
+!         mwt_aero(nt) = 67.18
+         mwt_aero(nt) = sm(sp_SS) % mol_wt
+      end if
+      if (aeroname(nt) == 'OMCARBON') then
+         ip_wflx(nt) = 11
+!         mwt_aero(nt) = 132.1342   ! same as in mach_cam_aeroprop
+         mwt_aero(nt) = sm(sp_OC) % mol_wt
+      end if
+      if (aeroname(nt) == 'NITRATES') then
+         ip_wflx(nt) = 5
+!         mwt_aero(nt) = 62.005
+         mwt_aero(nt) = sm(sp_NI) % mol_wt
+         i_nitrate = nt
+      end if
+      if (aeroname(nt) == 'AMMONIUM') then
+         ip_wflx(nt) = 6
+!         mwt_aero(nt) = 18.0385
+         mwt_aero(nt) = sm(sp_AM) % mol_wt
+         i_ammonium = nt
+      end if
+      if (aeroname(nt) == 'SOILDUST') then
+         ip_wflx(nt) = 13
+!         mwt_aero(nt) = 60.08
+         mwt_aero(nt) = sm(sp_CM) % mol_wt
+      end if
+      if (aeroname(nt) == 'BLCARBON') then
+         ip_wflx(nt) = 14
+!         mwt_aero(nt) = 12.0211
+         mwt_aero(nt) = sm(sp_EC) % mol_wt
+      end if
+      if (aeroname(nt) == 'PMCARBON') then
+         ip_wflx(nt) = 15
+!         mwt_aero(nt) = 132.1342   ! same as in mach_cam_aeroprop
+         mwt_aero(nt) = sm(sp_PC) % mol_wt
+      end if
+   end do
+
+!  calculate CC2D ("2D" cloud cover at a given level)
+   call mach_aurams_cldcv2d(CC2D, cf)
+
+!  sum up precipitation [stratiform only]
+   smf   = 1.0e-04
+   smf1  = 1.0e-15
+   pxnew = 0.0
+   do l = 1, chm_nk
+      do i = il1, il2
+         pxnew(i, l, 1) = max(qr(i, l, 1) + qr(i, l, 2), 0.0) /  &
+                                           (cc2d(i, l) + 1.0e-03)
+      end do
+   end do
+
+!  in and below cloud removal of particles by rain/snow scavenging
+
+   do kk = 1, chm_nk
+      do ii = 1, chm_ni
+         ts4(ii, kk, 3, 1) = 0.0
+         ts4(ii, kk, 3, 2) = 0.0
+      end do
+   end do
+
+!  SO2, SO4 (bulk) and column total S before rain scavenging; (mole/m3 and mole/m2, respectively)
+   do ii = 1, chm_ni
+      clts(ii, 3, 1) = wetflx(ii, 4) + wetflx(ii, 1)
+   end do
+   do kk = 1, chm_nk
+      do ii = 1, chm_ni
+         ts2(ii, kk, 3, 1) = xrow(ii, kk + 1, igs_SO2) * 1000.0 * roarow(ii, kk) / 64.0
+      end do
+   end do
+   do ll = iae1, iae1 + isize - 1
+      do kk = 1, chm_nk
+         do ii = 1, chm_ni
+            ts4(ii, kk, 3, 1) = ts4(ii, kk, 3, 1) + xrow(ii, kk + 1, ll) * 1000.0 * roarow(ii, kk) / 96.0
+         end do
+      end do
+   end do
+   do kk = 1, chm_nk
+      do ii = 1, chm_ni
+         clts(ii, 3, 1) = clts(ii, 3, 1) + (ts2(ii, kk, 3, 1) + ts4(ii, kk, 3, 1) + xrow(ii, kk + 1, igs_SO4) *  &
+                          1000.0 * roarow(ii, kk) / 98.0) * thlev(ii, kk)
+         cls4(ii, 3, 1) = cls4(ii, 3, 1) + ts4(ii, kk, 3, 1) * thlev(ii, kk)
+      end do
+   end do
+
+   CALL mach_cam_rain(THROW, PXNEW, RHSIZE, PDEPV, PRESSG, SHJ, ROAROW, PDIFF,   &
+                      XROW, RTBCLD, RHOP, CF, CC2D, NTR, LEV, IL1, IL2, ADT2)
+
+!  PXNEW(I, L, 2) now contains average rain fall velocity field.
+!  evaluate H+ in rain fluxes (including cloud-to-rain conversion)
+   do i = 1, chm_ni
+      rhco3(i) = 0.0
+      rhso3(i) = 0.0
+   end do
+   do l = 1, chm_nk
+      do i = 1, chm_ni
+         flux(i, 9, l, 1) = flux(i, 9, l, 1) + 1000.0 * roarow(i, l) * adt2 *      &
+                            (-1.0 * rtbcld(i, l, igs_HNO3) / mwt_hno3                 &
+                            + rtbcld(i, l, igs_NH3) / mwt_nh3) / (cc2d(i, l) + smf)
+      end do
+   end do
+   do n = 1, isize
+      np1 = isize * (i_sulfate - 1) + n + (iae1 - 1)
+      np2 = isize * (i_nitrate - 1) + n + (iae1 - 1)
+      np3 = isize * (i_ammonium - 1) + n + (iae1 - 1)
+      do l = 1, chm_nk
+         do i = 1, chm_ni
+            flux(i, 9, l, 1) = flux(i, 9, l, 1) + 1000.0 * roarow(i, l) * adt2 *   &
+                               (-2.0 * rtbcld(i, l, np1) / mwt_aero(i_sulfate)     &
+                              - rtbcld(i, l, np2) / mwt_aero(i_nitrate)            &
+                              + rtbcld(i, l, np3) / mwt_aero(i_ammonium))          &
+                              / (cc2d(i, l) + smf)
+         end do
+      end do
+   end do
+
+!  Equilibrium scavenging of SO2 and CO2:
+   do l = 1, chm_nk
+      do i = 1, chm_ni
+!  equivalent Henry's Law coefficients (incorporating dissociation constant)
+!  (Same as in mach_incld_upaqr1) for SO2 and CO2
+         ti = 1.0 / throw(i, l + 1)
+         hso2 = 10.0 ** (-10.65 + 1410.0 * ti) * 10.0 ** (-4.84 + 870.0 * ti)
+         hco2 = 10.0 ** (-10.66 + 760.0 * ti + 58000.0 * ti * ti) * 10.0 ** (-14.25 +  &
+                5190.0 * ti - 850000.0 * ti * ti)
+!  unit conversion factor (MOLAR to ppm)
+!  (mwt_air/rho_air/rho_water*RWC*1.E+06, where rho_air in kg/m3 and
+!  RWC in kg_water/m3_air and rho_water=1000. (kg/m3))
+!  note: assuming QR in kg m-2 s-1
+         b2 = mwt_air * pxnew(i, l, 1) / (pxnew(i, l, 2) + smf) / roarow(i, l) * 1000.0
+
+!  Equilibrium scavenging of CO2 and SO2:
+!  CO2 (using tracer position iae1-1 for rtbcld and gdrem)
+         xold = 340.0e-06 * 44.01 / mwt_air
+         phco3 = rhco3(i) * grav / dshj(i, l) / pressg(i) / (cc2d(i, l) + smf)
+         rph = flux(i, 9, l, 1) * pxnew(i, l, 2) / (pxnew(i, l, 1) + smf1)
+         rph = max(2.5e-06, rph)
+         xnew = xold - (b2 * hco2 * xold - phco3 * rph) / (rph + b2 * hco2)
+         tend = min((xnew - xold) / adt2, 0.0)
+         rtbcld(i, l, iae1 - 1) = rtbcld(i, l, iae1 - 1) + tend
+         rtbcld(i, l, iae1 - 1) = rtbcld(i, l, iae1 - 1) * cc2d(i, l)
+         rhco3(i) = (rhco3(i) - rtbcld(i, l, iae1 - 1) * adt2                     &
+                    * dshj(i, l) * pressg(i) / grav) * (1.0 - evpfac(i, l))
+! SO2
+         xold = xrow(i, l + 1, igs_SO2)
+         phso3 = rhso3(i) * grav / dshj(i, l) / pressg(i) / (cc2d(i, l) + smf)
+! update H+ after scavenging of CO2:
+         rph = (flux(i, 9, l, 1) + 1000.0 * roarow(i, l) * adt2 *                 &
+                rtbcld(i, l, iae1 - 1) / mwt_hco3 / (cc2d(i, l) + smf))           &
+                * pxnew(i, l, 2) / (pxnew(i, l, 1) + smf1)
+! temporarily skip CO2 scavenging
+         rph = max(2.5e-06, rph)
+         xnew = xold - (b2 * hso2 * xold - phso3 * rph) / (rph + b2 * hso2)
+         tend = min((xnew - xold) / adt2, 0.0)
+         xrow(i, l + 1, igs_SO2) = max(xold + tend * adt2, tmin)
+         rtbcld(i, l, igs_SO2) = rtbcld(i, l, igs_SO2) + tend
+         xrow(i, l + 1, igs_SO2) = xrow(i, l + 1, igs_SO2) * cc2d(i, l) + xold * (1.0 - cc2d(i, l))
+         rtbcld(i, l, igs_SO2) = rtbcld(i, l, igs_SO2) * cc2d(i, l)
+         rhso3(i) = (rhso3(i) - rtbcld(i, l, igs_SO2) * adt2 * dshj(i, l) * pressg(i) / grav) * (1.0 - evpfac(i, l))
+      end do
+   end do
+
+!  add ground removal
+   do nt = 1, icom
+      do n = 1, isize
+         np = isize * (nt - 1) + n + (iae1 - 1)
+         do l = 1, chm_nk
+            do i = il1, il2
+               if (xrow(i, l + 1, np) > tmin) then
+!  note gdrem and rtbcld are negative
+                  gdrem(i, np, 2) = gdrem(i, np, 2) + rtbcld(i, l, np) * dshj(i, l) * pressg(i) / grav
+                  xrow(i, l + 1, np) = xrow(i, l + 1, np) - gdrem(i, np, 2) * evpfac(i, l) &
+                                     * adt2 * grav / (dshj(i, l) * pressg(i))
+                  gdrem(i, np, 2) = gdrem(i, np, 2) * (1 - evpfac(i, l))
+               end if
+            end do
+         end do
+      end do
+   end do
+
+!  To account for scavenging of soluble gases (Note that the evaporated nitrate and ammonia,
+!  originally scavenged from gas phase HNO3 and NH3 are put back into gas phase. It could
+!  be argued that they could all, or partly, be in aerosol phase. Also note that gas phase CO2
+!  is not updated since its high base value being held at 340 ppm.)
+   do l = 1, chm_nk
+      do i = il1, il2
+! SO2/HSO3
+         if (xrow(i, l + 1, igs_SO2) > tmin) then
+            gdrem(i, igs_SO2, 2) = gdrem(i, igs_SO2, 2) + rtbcld(i, l, igs_SO2) *  dshj(i, l) * pressg(i) / grav
+            xrow(i, l + 1, igs_SO2) = xrow(i, l + 1, igs_SO2) - gdrem(i, igs_SO2, 2) * evpfac(i, l) &
+                                 * adt2 * grav / (dshj(i, l) * pressg(i)) * mwt_so2 / mwt_hso3
+            gdrem(i, igs_SO2, 2) = gdrem(i, igs_SO2, 2) * (1 - evpfac(i, l))
+         end if
+! H2O2
+         if (xrow(i, l + 1, igs_H2O2) > tmin) then
+            gdrem(i, igs_H2O2, 2) = gdrem(i, igs_H2O2, 2) + rtbcld(i, l, igs_H2O2) * dshj(i, l) * pressg(i) / grav
+            xrow(i, l + 1, igs_H2O2) = xrow(i, l + 1, igs_H2O2) - gdrem(i, igs_H2O2, 2) * evpfac(i, l) &
+                                  * adt2 * grav / (dshj(i, l) * pressg(i))
+            gdrem(i, igs_H2O2, 2) = gdrem(i, igs_H2O2, 2) * (1 - evpfac(i, l))
+         end if
+! ROOH
+         if (xrow(i, l + 1, igs_ROOH) > tmin) then
+            gdrem(i, igs_ROOH, 2) = gdrem(i, igs_ROOH, 2) + rtbcld(i, l, igs_ROOH) * dshj(i, l) * pressg(i) / grav
+            xrow(i, l + 1, igs_ROOH) = xrow(i, l + 1, igs_ROOH) - gdrem(i, igs_ROOH, 2) * evpfac(i, l) &
+                                  * adt2 * grav / (dshj(i, l) * pressg(i))
+            gdrem(i, igs_ROOH, 2) = gdrem(i, igs_ROOH, 2) * (1 - evpfac(i, l))
+         end if
+! HNO3
+         if (xrow(i, l + 1, igs_HNO3) > tmin) then
+            gdrem(i, igs_HNO3, 2) = gdrem(i, igs_HNO3, 2) + rtbcld(i, l, igs_HNO3) * dshj(i, l) * pressg(i) / grav
+            xrow(i, l + 1, igs_HNO3) = xrow(i, l + 1, igs_HNO3) - gdrem(i, igs_HNO3, 2) * evpfac(i, l) &
+                                  * adt2 * grav / (dshj(i, l) * pressg(i))
+            gdrem(i, igs_HNO3, 2) = gdrem(i, igs_HNO3, 2) * (1 - evpfac(i, l))
+         end if
+! NH3
+         if (xrow(i, l + 1, igs_NH3) > tmin) then
+            gdrem(i, igs_NH3, 2) = gdrem(i, igs_NH3, 2) + rtbcld(i, l, igs_NH3) * dshj(i, l) * pressg(i) / grav
+            xrow(i, l + 1, igs_NH3) = xrow(i, l + 1, igs_NH3) - gdrem(i, igs_NH3, 2) * evpfac(i, l) &
+                                 * adt2 * grav / (dshj(i, l) * pressg(i))
+            gdrem(i, igs_NH3, 2) = gdrem(i, igs_NH3, 2) * (1 - evpfac(i, l))
+         end if
+! HCO3
+         gdrem(i, iae1 - 1, 2) = gdrem(i, iae1 - 1, 2) + rtbcld(i, l, iae1 - 1) * dshj(i, l) * pressg(i) / grav
+         gdrem(i, iae1 - 1, 2) = gdrem(i, iae1 - 1, 2) * (1 - evpfac(i, l))
+      end do
+   end do
+!  Combine fluxes (surface) with the fluxes from cloud-to-rain; (moles m-2 for adt2, positive)
+   do nt = 1, icom
+      ii = ip_wflx(nt)
+      do n = 1, isize
+         np = isize * (nt - 1) + n + (iae1 - 1)
+         do i = 1, chm_ni
+            wetflx(i, ii) = wetflx(i, ii) - gdrem(i, np, 2) * adt2 * 1000.0 / mwt_aero(nt)
+         end do
+      end do
+   end do
+   do i = 1, chm_ni
+      wetflx(i, 1) = wetflx(i, 1) - gdrem(i, igs_SO2, 2)  * adt2 * 1000.0 / mwt_hso3
+      wetflx(i, 2) = wetflx(i, 2) - gdrem(i, igs_H2O2, 2) * adt2 * 1000.0 / mwt_h2o2
+      wetflx(i, 3) = wetflx(i, 3) - gdrem(i, igs_ROOH, 2) * adt2 * 1000.0 / mwt_rooh
+      wetflx(i, 5) = wetflx(i, 5) - gdrem(i, igs_HNO3, 2) * adt2 * 1000.0 / mwt_hno3
+      wetflx(i, 6) = wetflx(i, 6) - gdrem(i, igs_NH3, 2)  * adt2 * 1000.0 / mwt_nh3
+      wetflx(i, 8) = wetflx(i, 8) - gdrem(i, iae1 - 1, 2) * adt2 * 1000.0 / mwt_hco3
+!  wet flux of h+ from charge balence:
+      wetflx(i, 9) = wetflx(i, 1) + 2.0 * wetflx(i, 4) + wetflx(i, 5) &
+                   - wetflx(i, 6) + wetflx(i, 8) - wetflx(i, 7)
+      wetflx(i, 9) = max(wetflx(i, 9), 0.0)
+      end do
+
+!  SO2, SO4 (bulk) and column total S after rain scavenging; (mole/m3 and mole/m2, respectively)
+   do ii = 1, chm_ni
+      clts(ii, 3, 2) = wetflx(ii, 4) + wetflx(ii, 1)
+   end do
+   do kk = 1, chm_nk
+      do ii = 1, chm_ni
+         ts2(ii, kk, 3, 2) = xrow(ii, kk + 1, igs_SO2) * 1000.0 * roarow(ii, kk) / 64.0
+      end do
+   end do
+   do ll = iae1, iae1 + isize - 1
+      do kk = 1, chm_nk
+         do ii = 1, chm_ni
+            ts4(ii, kk, 3, 2) = ts4(ii, kk, 3, 2) + xrow(ii, kk + 1, ll) * 1000.0 * roarow(ii, kk) / 96.0
+         end do
+      end do
+   end do
+   do kk = 1, chm_nk
+      do ii = 1, chm_ni
+         clts(ii, 3, 2) = clts(ii, 3, 2) +  (ts2(ii, kk, 3, 2) + ts4(ii, kk, 3, 2) + xrow(ii, kk + 1, igs_SO4) *  &
+                          1000.0 * roarow(ii, kk) / 98.0) * thlev(ii, kk)
+         cls4(ii, 3, 2) = cls4(ii, 3, 2) + ts4(ii, kk, 3, 2) * thlev(ii, kk)
+      end do
+   end do
+
+   return
+end

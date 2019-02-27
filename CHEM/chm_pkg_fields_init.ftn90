@@ -1,0 +1,217 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : chm_pkg_fields_init.ftn90
+! Creation       : H. Landry, Feb 2008
+! Description    : Launch the initialization of different packages depending
+!                  on the values read from the gem_settings.nml file
+!
+!
+!============================================================================
+!
+!!if_on
+logical function chm_pkg_fields_init()
+!!if_off
+   use chm_nml_mod,             only: chm_model_s      , chm_pkg_gas_s    , chm_pkg_pm_s    , &
+                                      chm_debug_2d_i   , chm_debug_3d_i                     , &
+                                      chm_diag_drydep_L, chm_diag_wetdep_L, chm_diag_accum_L, &
+                                      chm_diag_colum_L 
+   use chm_utils_mod,           only: chm_lun_out, global_debug, MAX_DEBUG_VAR
+   use chm_species_info_mod,    only: nb_species, sm, species_master, zero_fields, print_all_species_info
+   use mach_pkg_adom2_mod,      only: pkg_adom2_idxinit, pkg_adom2_metainit
+   use mach_pkg_cam2bins_mod,   only: pkg_cam2bins_idxinit, pkg_cam2bins_metainit
+   use mach_pkg_cam12bins_mod,  only: pkg_cam12bins_idxinit, pkg_cam12bins_metainit
+   use mach_pkg_misc_mod,       only: pkg_misc_idxinit, pkg_misc_metainit
+   use mach_pkg_debug_mod,      only: pkg_debug_idxinit, pkg_debug_metainit
+   use mach_pkg_linoz_mod,      only: pkg_linoz_idxinit, pkg_linoz_metainit
+#if defined(MACH_TENDENCIES)
+   use mach_pkg_tendencies_mod, only: pkg_tendencies_metainit
+#endif
+   use mach_pkg_diag_mod,       only: pkg_diag_wet_idxinit,  &
+                                      pkg_diag_dry_metainit, &
+                                      pkg_diag_wet_metainit, &
+                                      pkg_diag_acc_metainit, &
+                                      pkg_diag_col_idxinit,  &
+                                      pkg_diag_col_metainit
+   implicit none
+!
+! Local variables
+!
+   integer(kind=4) :: tmp
+   integer(kind=4) :: nb_fields                  
+   integer(kind=4) :: istat
+   logical(kind=4) :: local_dbg
+!
+! Begin Code
+!
+   local_dbg           = (.false. .or. global_debug)
+   chm_pkg_fields_init = .true.
+   nb_fields           = 0
+!
+! Misc package always included
+!
+   tmp = pkg_misc_idxinit(nb_fields)
+!
+!  Temporary exit -> A. Kallaur, Jan 21 2011
+!
+!   nb_species = nb_fields
+!   print *,"SACHA: Temp. exit after pkg_misc_idxinit in  chm_pkg_fields_init"
+!   return
+!
+! Debug package
+!
+   if ((chm_debug_2d_i >= 0) .or. (chm_debug_3d_i >= 0 )) then
+      if (chm_debug_2d_i > MAX_DEBUG_VAR .or. chm_debug_3d_i > MAX_DEBUG_VAR) then
+         write(0, *) '### Error in chm_pkg_fields_init ###'
+         write(0, *) '# A maximum of ', MAX_DEBUG_VAR, ' debug '
+         write(0, *) '# variables is allowed for 2D and 3D (32 total)'
+         write(0, *) '# You asked for ', chm_debug_2d_i, ' 2D and ', chm_debug_3d_i, ' 3D'
+         write(0, *) '###         ABORT         ###'
+         chm_pkg_fields_init = .false.
+         return
+      end if
+      tmp = pkg_debug_idxinit(nb_fields, chm_debug_2d_i, chm_debug_3d_i)
+    else
+       write(0, *) '### Error in chm_pkg_fields_init ###'
+       write(0, *) '# You asked for a negative number of debug variables'
+       write(0, *) '# chm_debug_2d_i = ', chm_debug_2d_i, ', chm_debug_3d_i ', chm_debug_3d_i
+       write(0, *) '###         ABORT         ###'
+       chm_pkg_fields_init = .false.
+       return
+   end if
+
+select case (chm_model_s)
+   case ('MACH') 
+
+!     Gas package
+      select case (chm_pkg_gas_s)
+         case ('ADOM2')
+            tmp = pkg_adom2_idxinit(nb_fields)
+         case ('NIL')
+            continue
+         case default
+            write(0, *) '### Error in chm_pkg_fields_init ###'
+            write(0, *) '# GAS fields package unknown: ', chm_pkg_gas_s
+            write(0, *) '###         ABORT         ###'
+            chm_pkg_fields_init = .false.
+            return
+      end select
+!
+!    Particule package
+      select case (chm_pkg_pm_s)
+         case ('CAM2BINS')
+            if ((chm_pkg_gas_s == 'NIL' )) tmp = pkg_adom2_idxinit(nb_fields) ! CAM requires all the gas species
+            tmp = pkg_cam2bins_idxinit(nb_fields)
+         case ('CAM12BINS')
+            if ((chm_pkg_gas_s == 'NIL' )) tmp = pkg_adom2_idxinit(nb_fields) ! CAM requires all the gas species
+            tmp = pkg_cam12bins_idxinit(nb_fields)
+         case ('GOCART_SO2','NIL')
+            continue
+         case default
+            write(0, *) '### Error in chm_pkg_fields_init ###'
+            write(0, *) '# PM fields package unknown: ', chm_pkg_pm_s
+            write(0, *) '###         ABORT         ###'
+            chm_pkg_fields_init = .false.
+            return
+      end select
+
+!    Diagnostic for wet deposition
+      if (chm_diag_wetdep_L) then
+         tmp = pkg_diag_wet_idxinit(nb_fields)
+      end if
+!
+   case ('LINOZ') 
+      tmp = pkg_linoz_idxinit(nb_fields) 
+   case default
+      write(0, *) '###         ABORT                           ###'
+      write(0, *) '###         CHEMICAL PACKAGE UNKNOWN        ###'
+      chm_pkg_fields_init = .false.
+      return 
+end select 
+
+      if (chm_diag_colum_L) then
+         tmp = pkg_diag_col_idxinit(nb_fields) 
+      end if
+
+   nb_species = nb_fields
+   allocate (species_master(nb_species),stat = istat)
+   sm => species_master ! a shorter alias to species_master
+   call zero_fields(species_master, nb_species)
+!
+!  TODO deallocate this monster somewhere!!!
+!
+   call pkg_misc_metainit()
+   if ((chm_debug_2d_i > 0) .or. (chm_debug_3d_i > 0 )) then
+      call pkg_debug_metainit(chm_debug_2d_i, chm_debug_3d_i)
+   end if
+!
+select case (chm_model_s)
+   case ('MACH')
+      if (chm_pkg_gas_s == 'ADOM2') then
+         call pkg_adom2_metainit()
+      end if
+      if (chm_pkg_pm_s == 'CAM2BINS') then
+         if ((chm_pkg_gas_s == 'NIL' )) call pkg_adom2_metainit() ! CAM requires all the gas species
+         call pkg_cam2bins_metainit()
+      else if (chm_pkg_pm_s == 'CAM12BINS') then
+         call pkg_cam12bins_metainit()
+      end if
+      if (chm_diag_drydep_L) then
+         call pkg_diag_dry_metainit()
+      end if 
+      if (chm_diag_wetdep_L) then
+         call pkg_diag_wet_metainit()
+      end if
+#if defined(MACH_TENDENCIES)
+! This function HAS to be called at the end of any process that wants its tendency to be computed
+      call pkg_tendencies_metainit()
+#endif
+   case ('LINOZ')
+      call pkg_linoz_metainit()
+   case default
+      write(0, *) '###         ABORT                           ###'
+      write(0, *) '###         CHEMICAL PACKAGE UNKNOWN        ###'
+      chm_pkg_fields_init = .false.
+      return 
+end select
+
+      if (chm_diag_colum_L) then
+         call pkg_diag_col_metainit()
+         if (chm_diag_accum_L) then
+            call pkg_diag_acc_metainit()
+         end if
+      end if
+
+   if (local_dbg) then
+      call print_all_species_info(chm_lun_out)
+   end if
+
+end function chm_pkg_fields_init

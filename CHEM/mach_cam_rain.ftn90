@@ -1,0 +1,214 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_cam_rain.ftn90
+! Creation       : S. Gong, W. Gong, S. Gravel and B. Pabla for GEM-MACH, June 2008
+! Description    : Scavenging calculation by rain and snow
+!
+! Extra info     : - First version created by S. Gong Jul 08 1994 for CAM
+!                    Using scheme of Slinn (1977) - Water, Air, and Soil Pollution 7(1977)
+!                  - Vectorized the whole program and add someworking spaces. (S. Gong, Dec 19, 1996)
+!                  - Adding scavenging of gases (W. Gong, May 2001)
+!
+! Arguments:  IN
+!                 t        -> Temperature (K)
+!                 qr       -> rain water/snow
+!                 rhsize   -> Wet radius
+!                 pdepv    -> gravitational settling velocity
+!                 pressg   -> Grid row of surface pressure [Pa]
+!                 shj      -> Local mid-layer sigma value
+!                 roarow   -> Air density (kg/m3)
+!                 pdiff    -> diffusion parameter
+!                 rhop     -> Final wet density
+!                 cf       -> 3d cloud fraction
+!                 cc2d     -> 2d cloud cover above
+!                 ntr      -> Total number of trace substances (gases and aerosols)
+!                 lev      -> chm_nk + 1
+!                 il1      -> minimum index for chm_ni
+!                 il2      -> maximum index for chm_ni
+!                 adt2     -> Advection time step (s)
+!
+!             IN/OUT
+!                 rtbcld   -> Rain Scavenging
+!                 qr       -> rain water/snow
+!                 xrow     -> tracers concentration
+!
+!============================================================================
+!
+!!if_on
+subroutine mach_cam_rain (t, QR, rhsize, pdepv, pressg, shj, roarow, pdiff,     &
+                          XROW, RTBCLD, rhop, cf, cc2d, ntr, lev, il1, il2, adt2)
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   use mach_cam_utils_mod,   only: isize
+!!if_off
+   use mach_cam_headers_mod, only: mach_cam_cas
+   use chm_consphychm_mod,   only: t1s
+   use mach_cam_pre_mod,     only: icom, iae1
+   use mach_cam_pre_mod,     only: igs_H2O2, igs_ROOH, igs_HNO3, igs_NH3
+   implicit none
+!!if_on
+   integer(kind=4), intent   (in) :: lev
+   integer(kind=4), intent   (in) :: ntr
+   integer(kind=4), intent   (in) :: il1
+   integer(kind=4), intent   (in) :: il2
+   real(kind=4),    intent   (in) :: adt2
+   real(kind=4),    intent   (in) :: t     (chm_ni,lev)
+   real(kind=4),    intent(inout) :: qr    (chm_ni,chm_nk,2)
+   real(kind=4),    intent   (in) :: rhsize(chm_ni,chm_nk,isize)
+   real(kind=4),    intent   (in) :: pdepv (chm_ni,chm_nk,isize)
+   real(kind=4),    intent   (in) :: pressg(chm_ni)
+   real(kind=4),    intent   (in) :: shj   (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: roarow(chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: pdiff (chm_ni,chm_nk,isize)
+   real(kind=4),    intent(inout) :: xrow  (chm_ni,lev,ntr)
+   real(kind=4),    intent(inout) :: rtbcld(chm_ni,chm_nk,ntr)
+   real(kind=4),    intent   (in) :: rhop  (chm_ni,chm_nk,isize)
+   real(kind=4),    intent   (in) :: cf    (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: cc2d  (chm_ni,chm_nk)
+!!if_off
+!
+! Local variables
+!
+   integer(kind=4)         :: l, i, n, nn, np
+   real(kind=4)            :: tl, rrm, xold, xnew, tmin, dm, tend
+   real(kind=4)            :: rscavg(chm_ni, chm_nk, 4)
+   real(kind=4), parameter :: bcrain = 0.5, bcsnow = 0.15
+   real(kind=4)            :: colef(chm_ni, chm_nk, isize)
+   real(kind=4)            :: wetdep(chm_ni, chm_nk, isize)
+
+   colef    = 0.0
+   dm       = 0.0
+   rrm      = 0.0
+   rscavg   = 0.0
+   tend     = 0.0
+   tl       = 0.0
+   xnew     = 0.0
+   xold     = 0.0
+
+!
+!  Rain scavenging
+!
+!  call to compute collection efficientcy coefficients as well as the scavenging
+!  rates for soluble gases
+
+!  minimum tendency for below cloud scavenging:
+   tmin = 0.0
+   call mach_cam_cas(T, COLEF, rscavg, RHOP, ROAROW, RHSIZE, PRESSG, QR(:, :, 1), &
+                     LEV, IL1, IL2, QR(:, :, 2), PDIFF, PDEPV, SHJ)
+
+!  Note QR(I, L, 2) now contains fall velocity at a given grid,
+!  and passed back to SCAVENG to be used for equilibrium scavenging
+!  of SO2 and CO2. (wg/June/2001)
+   wetdep = 0.0
+   do l = 1, chm_nk
+      do i = il1, il2
+         if (qr(i, l, 1) > 1.0e-15) then
+            tl = t(i, l + 1) - t1s
+            if (tl > 0.0) then
+!  rain scavenging rate
+!  the unit of qr is mm s-1
+!  (or, maybe in kg m-2 s-1? but could be m s-1! need to confirm - wg)
+!  the 1.0e-3 converts it into m s-1
+                rrm = 0.35 * (qr(i, l, 1) * 3600.0) ** 0.25 * 1.0e-3
+                do n = 1, isize
+                    wetdep(i, l, n) = bcrain * qr(i, l, 1) * 1.0e-3 * colef(i, l, n) / rrm
+                enddo
+            else
+!  for snow scavenging, the dnesity of snow is set as 1/10 of liquid water.
+!  the factor 1.0e-2 in the wetdepcalculation takes this into account plus the unit change
+!  into m s-1
+               if (tl <= 0.0 .and. tl >= -8.0) dm = 3.8e-5                 !characteristic length!
+!  steller snow scavenging
+               if (tl < -8.0 .and. tl >= -25.0) dm = 2.7e-5
+!  graupel scavenging
+               if (tl < -25.0) dm = 1.4e-4
+               do n = 1, isize
+                  wetdep(i, l, n) = bcsnow * qr(i, l, 1) * 1.0e-2 * colef(i, l, n) / dm
+               enddo
+            end if
+         endif
+      end do
+   end do
+
+!  add the rain scavenging tendency
+   do nn = 1, icom
+      do n = 1, isize
+         np = isize * (nn - 1) + n + (iae1 - 1)
+         do l = 1, chm_nk
+            do i = il1, il2
+               xold = xrow(i, l + 1, np)
+               xnew = xold * exp(-adt2 * wetdep(i, l, n))
+               tend = min((xnew - xold) / adt2, 0.0)
+               rtbcld(i, l, np) = (rtbcld(i, l, np) + tend ) * cc2d(i, l)
+               xnew= max(xold + tend * adt2, tmin)
+               xrow(i, l + 1, np) = xnew * cc2d(i, l) + xold * (1.0 - cc2d(i, l))
+            end do
+         end do
+      end do
+   end do
+
+!  scavenging of soluble gas (H2O2, RooH, HNO3, NH3)
+
+   do l = 1, chm_nk
+      do i = il1, il2
+! h2o2
+         xold = xrow(i, l + 1, igs_H2O2)
+         xnew = xold * exp(-adt2 * rscavg(i, l, 1))
+         tend = min((xnew - xold) / adt2, 0.0)
+         rtbcld(i, l, igs_H2O2) = (rtbcld(i, l, igs_H2O2) + tend ) * cc2d(i, l)
+         xnew = max(xnew, tmin)
+         xrow(i, l + 1, igs_H2O2) = xnew * cc2d(i, l) + xold * (1.0 - cc2d(i, l))
+! rooh
+         xold = xrow(i, l + 1, igs_ROOH)
+         xnew = xold * exp(-adt2 * rscavg(i, l, 2))
+         tend = min((xnew - xold) / adt2, 0.0)
+         rtbcld(i, l, igs_ROOH) = (rtbcld(i, l, igs_ROOH) + tend) * cc2d(i, l)
+         xnew = max(xnew, tmin)
+         xrow(i, l + 1, igs_ROOH) = xnew * cc2d(i, l) + xold * (1.0 - cc2d(i, l))
+! hno3
+         xold = xrow(i, l + 1, igs_HNO3)
+         xnew = xold * exp(-adt2 * rscavg(i, l, 3))
+         tend = min((xnew - xold) / adt2, 0.0)
+         rtbcld(i, l, igs_HNO3) = (rtbcld(i, l, igs_HNO3) + tend) * cc2d(i, l)
+         xnew = max(xnew, tmin)
+         xrow(i, l + 1, igs_HNO3) = xnew * cc2d(i, l) + xold * (1.0 - cc2d(i, l))
+! nh3
+         xold = xrow(i, l + 1, igs_NH3)
+         xnew = xold * exp(-adt2 * rscavg(i, l, 4))
+         tend = min((xnew - xold) / adt2, 0.0)
+         rtbcld(i, l, igs_NH3) = (rtbcld(i, l, igs_NH3) + tend) * cc2d(i, l)
+         xnew = max(xnew, tmin)
+         xrow(i, l + 1, igs_NH3) = xnew * cc2d(i, l) + xold * (1.0 - cc2d(i, l))
+      end do
+   end do
+
+   return
+end

@@ -1,0 +1,340 @@
+!begin trap head
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_incld_headers_mod.ftn90
+! Creation       : H. Landry, Juillet 2008
+! Description    : Modules defining explicit interfaces for
+!                  mach in cloud subroutines
+!
+! Extra info     :
+!
+!============================================================================
+
+module mach_incld_headers_mod
+   interface
+!end trap headces
+
+subroutine mach_incld_concmp (t, C, r, b, nleft, nright, nptsnz)
+   integer(kind=4), intent   (in) :: nptsnz
+   integer(kind=4), intent   (in) :: nleft
+   integer(kind=4), intent   (in) :: nright
+   real(kind=4),    intent   (in) :: t(nptsnz,5)
+   real(kind=4),    intent(inout) :: c(nptsnz,12)
+   real(kind=4),    intent   (in) :: r(nptsnz,25)
+   real(kind=4),    intent   (in) :: b(nptsnz,5)
+end subroutine mach_incld_concmp
+
+subroutine mach_incld_diffun (kk, ng, gaz_conc, PG, DG, CDG, naq, AQ, PAQ, DAQ, CDAQ, Q,   &
+                   ideriv, baq, pgscav, tempk, tempi, rtemp, raq, psacw, rad1              )
+   use mach_cam_utils_mod,     only: maxnsg, maxcnz, maxnsaq
+   integer(kind=4), intent   (in) :: kk
+   integer(kind=4), intent   (in) :: ng
+   integer(kind=4), intent   (in) :: naq
+   integer(kind=4), intent   (in) :: ideriv
+   real(kind=4),    intent   (in) :: q(3)
+   real(kind=4),    intent   (in) :: baq(5, 2)
+   real(kind=4),    intent(inout) :: raq(25, 2)
+   real(kind=4),    intent(inout) :: pgscav  (maxnsg, 2, maxcnz)
+   real(kind=4),    intent   (in) :: gaz_conc(maxnsg)
+   real(kind=4),    intent  (out) :: pg      (maxnsg)
+   real(kind=4),    intent  (out) :: dg      (maxnsg)
+   real(kind=4),    intent  (out) :: cdg     (maxnsg)
+   real(kind=4),    intent   (in) :: tempk   (maxcnz)
+   real(kind=4),    intent   (in) :: tempi   (maxcnz)
+   real(kind=4),    intent   (in) :: rtemp   (maxcnz)
+   real(kind=4),    intent   (in) :: psacw   (maxcnz)
+   real(kind=4),    intent   (in) :: rad1    (maxcnz)
+   real(kind=4),    intent  (out) :: paq     (maxnsaq, 2)
+   real(kind=4),    intent  (out) :: daq     (maxnsaq, 2)
+   real(kind=4),    intent  (out) :: cdaq    (maxnsaq, 2)
+   real(kind=4),    intent(inout) :: aq      (maxnsaq, 2)
+end subroutine mach_incld_diffun
+
+subroutine mach_incld_dochem (ng, GVEC, naq, AQVEC, qvec, tin, tout, idrf,          &
+                   NSTEP, IINDEX, bvec, pgscavvec, tempkvec, tempivec, rtempvec,     &
+                   raqvec, psacwvec, rad1vec, npts, n1, n2, n3, nptsnz              )
+   use mach_cam_utils_mod,     only: maxnsg, maxcnz, maxnsaq
+
+   integer(kind=4), intent   (in)  :: ng, naq, idrf, npts, n1, n2, n3
+   integer(kind=4), intent   (in)  :: nptsnz
+   real(kind=4),    intent   (in)  :: tin, tout
+   integer(kind=4), intent  (out)  :: nstep, iindex
+   real(kind=4),    intent   (in)  :: qvec     (nptsnz, 3)
+   real(kind=4),    intent   (in)  :: bvec     (nptsnz, 5, 2)
+   real(kind=4),    intent   (in)  :: pgscavvec(nptsnz, maxnsg, 2)
+   real(kind=4),    intent   (in)  :: tempkvec (nptsnz)
+   real(kind=4),    intent   (in)  :: tempivec (nptsnz)
+   real(kind=4),    intent   (in)  :: rtempvec (nptsnz)
+   real(kind=4),    intent   (in)  :: raqvec   (nptsnz, 25, 2)
+   real(kind=4),    intent   (in)  :: psacwvec (nptsnz)
+   real(kind=4),    intent   (in)  :: rad1vec  (nptsnz)
+   real(kind=4),   intent (inout)  :: gvec     (nptsnz, maxnsg)
+   real(kind=4),   intent (inout)  :: aqvec    (nptsnz, maxnsaq, 2)
+end subroutine mach_incld_dochem
+
+subroutine mach_incld_fff (FNEW, t, c, r, b, nptsnz, nleft, nright)
+   
+   integer(kind=4), intent (in) :: nptsnz
+   real(kind=4),    intent(out) :: fnew(nptsnz)
+   real(kind=4),    intent (in) :: t(nptsnz,5)
+   real(kind=4),    intent (in) :: c(nptsnz)
+   real(kind=4),    intent (in) :: r(nptsnz,25)
+   real(kind=4),    intent (in) :: b(nptsnz,5)
+   integer(kind=4), intent (in) :: nleft
+   integer(kind=4), intent (in) :: nright
+end subroutine mach_incld_fff
+
+subroutine mach_incld_findh (T, C, R, B, nleft, nright, nptsnz)
+   integer(kind=4), intent   (in) :: nptsnz
+   integer(kind=4), intent   (in) :: nleft
+   integer(kind=4), intent   (in) :: nright
+   real(kind=4),    intent(inout) :: t(nptsnz,5)
+   real(kind=4),    intent(inout) :: c(nptsnz,12)
+   real(kind=4),    intent(inout) :: r(nptsnz,25)
+   real(kind=4),    intent(inout) :: b(nptsnz,5)
+end subroutine mach_incld_findh
+
+subroutine mach_incld_funeq (y, c, b, nleft, nright, nptsnz)
+   integer(kind=4), intent (in)  :: nptsnz, nleft, nright
+   real(kind=4),    intent (in)  :: b(nptsnz, 5)
+   real(kind=4),    intent (in)  :: c(nptsnz, 12)
+   real(kind=4),    intent(out)  :: y(nptsnz, 5)
+end subroutine mach_incld_funeq
+
+subroutine mach_incld_intrqf (naq, aq, ppaq, ddaq, ccdaq, q, f13, ideriv, temp)
+   use mach_cam_utils_mod, only:maxnsaq
+   integer(kind=4), intent (in) :: naq
+   integer(kind=4), intent (in) :: ideriv
+   real(kind=4),    intent (in) :: temp
+   real(kind=4),    intent (in) :: f13
+   real(kind=4),    intent (in) :: q(3)
+   real(kind=4),    intent (in) :: aq(maxnsaq,2)
+   real(kind=4),    intent(out) :: ppaq(maxnsaq,2)
+   real(kind=4),    intent(out) :: ddaq(maxnsaq,2)
+   real(kind=4),    intent(out) :: ccdaq(maxnsaq,2)
+end subroutine mach_incld_intrqf
+
+subroutine mach_incld_intsca_il (kk, n1, n2, ng, n3, n4, naq, nstep, ideriv, IMIN,         &
+                     KITER, DT, GAZ_CONC, AQ, q, b, PGSCAV, tempk, tempi, rtemp,           &
+                     raq, psacw, rad1                                                      )
+   use mach_cam_utils_mod,     only: maxnsg, maxcnz, maxnsaq
+   integer(kind=4), intent   (in) :: kk
+   integer(kind=4), intent   (in) :: n1
+   integer(kind=4), intent   (in) :: n2
+   integer(kind=4), intent   (in) :: ng
+   integer(kind=4), intent   (in) :: n3
+   integer(kind=4), intent   (in) :: n4
+   integer(kind=4), intent   (in) :: naq
+   integer(kind=4), intent   (in) :: nstep
+   integer(kind=4), intent   (in) :: ideriv
+   integer(kind=4), intent  (out) :: imin
+   integer(kind=4), intent  (out) :: kiter
+   real(kind=4),    intent(inout) :: dt
+   real(kind=4),    intent(inout) :: gaz_conc(maxnsg)
+   real(kind=4),    intent(inout) :: aq(maxnsaq,2)
+   real(kind=4),    intent   (in) :: q(3)
+   real(kind=4),    intent   (in) :: b(5,2)
+   real(kind=4),    intent(inout) :: pgscav(maxnsg,2,maxcnz)
+   real(kind=4),    intent   (in) :: tempk(maxcnz)
+   real(kind=4),    intent   (in) :: tempi(maxcnz)
+   real(kind=4),    intent   (in) :: rtemp(maxcnz)
+   real(kind=4),    intent(inout) :: raq(25,2)
+   real(kind=4),    intent   (in) :: psacw(maxcnz)
+   real(kind=4),    intent   (in) :: rad1(maxcnz)
+end subroutine mach_incld_intsca_il
+
+subroutine mach_incld_main(GAZ_CONC, AEROCON, Q_BIN, tempk, psacw, RAD1, rcrit, roarow, npts, nptsnz, ipos_g, &
+                           rad1_bulk, ibulk, jlat, CLD_CHM, adt2, FLUX, fctr, AERONUM)
+   use chm_ptopo_grid_mod,     only: chm_ni, chm_nk
+   use mach_cam_utils_mod,     only: maxnsg, maxnsp, maxns, maxnsaq, isize
+   use mach_cam_pre_mod,       only: nswdep
+   integer(kind=4), intent   (in) :: nptsnz
+   integer(kind=4), intent   (in) :: npts
+   integer(kind=4), intent   (in) :: ibulk
+   integer(kind=4), intent   (in) :: jlat
+   real(kind=4),    intent   (in) :: adt2
+   integer(kind=4), intent   (in) :: ipos_g   (maxnsg)
+   real(kind=4),    intent(inout) :: gaz_conc (npts,maxns,chm_nk)
+   real(kind=4),    intent(inout) :: aerocon  (npts,maxnsp,chm_nk,isize)
+   real(kind=4),    intent(inout) :: q_bin    (npts,3,chm_nk,isize)
+   real(kind=4),    intent   (in) :: tempk    (npts,chm_nk)
+   real(kind=4),    intent   (in) :: psacw    (npts,chm_nk)
+   real(kind=4),    intent(inout) :: rad1     (npts,chm_nk,isize)
+   real(kind=4),    intent   (in) :: rcrit    (npts,chm_nk)
+   real(kind=4),    intent   (in) :: roarow   (npts,chm_nk)
+   real(kind=4),    intent   (in) :: rad1_bulk(npts,chm_nk)
+   real(kind=4),    intent  (out) :: cld_chm  (npts,chm_nk,7)
+   real(kind=4),    intent  (out) :: flux     (npts,nswdep,chm_nk,2)
+   real(kind=4),    intent   (in) :: fctr     (npts,chm_nk)
+   real(kind=4),    intent(inout) :: aeronum  (npts,chm_nk,isize)
+end subroutine mach_incld_main
+
+subroutine mach_incld_rates (ng, gaz_conc, DG, PG, CDG, naq, aq1, DAQ1, PAQ1, CDAQ1, r1, b1,     &
+                  aq2, daq2, paq2, cdaq2, r2, b2, q1, q2, ideriv                                 )
+   integer(kind=4), intent (in) :: naq
+   integer(kind=4), intent (in) :: ng
+   integer(kind=4), intent (in) :: ideriv
+   real(kind=4),    intent (in) :: q1
+   real(kind=4),    intent (in) :: q2
+   real(kind=4),    intent (in) :: b1      (5)
+   real(kind=4),    intent (in) :: b2      (5)
+   real(kind=4),    intent (in) :: r1      (25)
+   real(kind=4),    intent (in) :: r2      (25)
+   real(kind=4),    intent(out) :: dg      (ng)
+   real(kind=4),    intent(out) :: pg      (ng)
+   real(kind=4),    intent(out) :: cdg     (ng)
+   real(kind=4),    intent (in) :: aq1     (naq)
+   real(kind=4),    intent(out) :: daq1    (naq)
+   real(kind=4),    intent(out) :: paq1    (naq)
+   real(kind=4),    intent(out) :: cdaq1   (naq)
+   real(kind=4),    intent (in) :: aq2     (naq)
+   real(kind=4),    intent(out) :: daq2    (naq)
+   real(kind=4),    intent(out) :: paq2    (naq)
+   real(kind=4),    intent(out) :: cdaq2   (naq)
+   real(kind=4),    intent (in) :: gaz_conc(ng+1)
+end subroutine mach_incld_rates
+
+subroutine mach_incld_shift3d_aero (icheck1, N1, N2, N3, JGRID,                                 &
+                         gaz_conc, aq, q, pgscav, tempk, tempi, rtemp, psacw, rad1, nptsnz, fctr)
+   use mach_cam_utils_mod, only: maxnsg, maxnsaq
+              integer(kind=4), intent   (in) :: nptsnz
+              integer(kind=4), intent   (in) :: icheck1(nptsnz)
+              integer(kind=4), intent  (out) :: n1
+              integer(kind=4), intent  (out) :: n2
+              integer(kind=4), intent  (out) :: n3
+              integer(kind=4), intent  (out) :: jgrid   (nptsnz)
+              real(kind=4),    intent(inout) :: gaz_conc(nptsnz,maxnsg)
+              real(kind=4),    intent(inout) :: aq      (nptsnz,maxnsaq,2)
+              real(kind=4),    intent(inout) :: q       (nptsnz,3)
+              real(kind=4),    intent(inout) :: pgscav  (nptsnz,maxnsg,2)
+              real(kind=4),    intent(inout) :: tempk   (nptsnz)
+              real(kind=4),    intent(inout) :: tempi   (nptsnz)
+              real(kind=4),    intent(inout) :: rtemp   (nptsnz)
+              real(kind=4),    intent(inout) :: psacw   (nptsnz)
+              real(kind=4),    intent(inout) :: rad1    (nptsnz)
+              real(kind=4),    intent(inout) :: fctr    (nptsnz)
+end subroutine mach_incld_shift3d_aero
+
+subroutine mach_incld_soleq (b, GAZ_CONC, aq1, q1, q2, t, ti, rt, pgscav, rad1, nptsnz, n1, n2, n3)
+   use mach_cam_utils_mod,     only: maxnsg, maxnsaq
+   integer(kind=4), intent   (in) :: nptsnz
+   integer(kind=4), intent   (in) :: n1
+   integer(kind=4), intent   (in) :: n2
+   integer(kind=4), intent   (in) :: n3
+   real(kind=4),    intent(inout) :: b       (nptsnz,5,2)
+   real(kind=4),    intent(inout) :: gaz_conc(nptsnz,maxnsg)
+   real(kind=4),    intent(inout) :: aq1     (nptsnz,maxnsaq)
+   real(kind=4),    intent   (in) :: q1      (nptsnz)
+   real(kind=4),    intent   (in) :: q2      (nptsnz)
+   real(kind=4),    intent   (in) :: t       (nptsnz)
+   real(kind=4),    intent   (in) :: ti      (nptsnz)
+   real(kind=4),    intent   (in) :: rt      (nptsnz)
+   real(kind=4),    intent(inout) :: pgscav  (nptsnz,maxnsg,2)
+   real(kind=4),    intent   (in) :: rad1    (nptsnz)
+end subroutine mach_incld_soleq
+
+subroutine mach_incld_steady (X, b)
+   use mach_cam_utils_mod, only: maxnsaq
+   real(kind=4), intent   (in) :: b(5)
+   real(kind=4), intent(inout) :: x(maxnsaq)
+end subroutine mach_incld_steady
+
+subroutine mach_incld_steady1 (X, b, nptsnz)
+   use mach_cam_utils_mod, only: maxnsaq
+   integer(kind=4), intent  (in) :: nptsnz
+   real(kind=4),    intent  (in) :: b(nptsnz,5,2)
+   real(kind=4),   intent(inout) :: x(nptsnz,maxnsaq,2)
+end subroutine mach_incld_steady1
+
+subroutine mach_incld_upaqr (AQ, PGSCAV, q1, q2, rad1, t, ti, rtw, itask, inew, R, b, gaz_conc)
+   use mach_cam_utils_mod, only: maxnsg, maxnsaq
+   real(kind=4),    intent   (in) :: q1
+   real(kind=4),    intent   (in) :: q2
+   real(kind=4),    intent   (in) :: rad1
+   real(kind=4),    intent   (in) :: t
+   real(kind=4),    intent   (in) :: ti
+   real(kind=4),    intent   (in) :: rtw
+   integer(kind=4), intent   (in) :: itask
+   integer(kind=4), intent   (in) :: inew
+   real(kind=4),    intent   (in) :: b       (5,2)
+   real(kind=4),    intent   (in) :: gaz_conc(maxnsg)
+   real(kind=4),    intent  (out) :: r       (25,2)
+   real(kind=4),    intent(inout) :: aq      (maxnsaq,2)
+   real(kind=4),    intent(inout) :: pgscav  (maxnsg,2)
+end subroutine mach_incld_upaqr
+
+subroutine mach_incld_upaqr1(AQ, PGSCAV, q1, q2, rad1, t, ti, rtw, R, b, gaz_conc, nptsnz, n1, n2, n3)
+   use mach_cam_utils_mod, only: maxnsg, maxnsaq
+   integer(kind=4), intent   (in) :: nptsnz
+   integer(kind=4), intent   (in) :: n1
+   integer(kind=4), intent   (in) :: n2
+   integer(kind=4), intent   (in) :: n3
+   real(kind=4),    intent(inout) :: aq      (nptsnz,maxnsaq,2)
+   real(kind=4),    intent(inout) :: pgscav  (nptsnz,maxnsg,2)
+   real(kind=4),    intent   (in) :: q1      (nptsnz)
+   real(kind=4),    intent   (in) :: q2      (nptsnz)
+   real(kind=4),    intent   (in) :: rad1    (nptsnz)
+   real(kind=4),    intent   (in) :: t       (nptsnz)
+   real(kind=4),    intent   (in) :: ti      (nptsnz)
+   real(kind=4),    intent   (in) :: rtw     (nptsnz)
+   real(kind=4),    intent  (out) :: r       (nptsnz,25,2)
+   real(kind=4),    intent   (in) :: b       (nptsnz,5,2)
+   real(kind=4),    intent   (in) :: gaz_conc(nptsnz,maxnsg)
+end subroutine mach_incld_upaqr1
+
+subroutine mach_incld_upaqr2(AQ, PGSCAV, q1, q2, rad1, t, ti, rtw, R, b, gaz_conc, nleft, nright, nptsnz, n2, n3)
+   use mach_cam_utils_mod, only: maxnsg, maxnsaq
+   integer(kind=4), intent   (in) :: nptsnz
+   integer(kind=4), intent   (in) :: nleft
+   integer(kind=4), intent   (in) :: nright
+   integer(kind=4), intent   (in) :: n2
+   integer(kind=4), intent   (in) :: n3
+   real(kind=4),    intent(inout) :: aq      (nptsnz,maxnsaq)
+   real(kind=4),    intent(inout) :: pgscav  (nptsnz,maxnsg,2)
+   real(kind=4),    intent   (in) :: q1      (nptsnz)
+   real(kind=4),    intent   (in) :: q2      (nptsnz)
+   real(kind=4),    intent   (in) :: rad1    (nptsnz)
+   real(kind=4),    intent   (in) :: t       (nptsnz)
+   real(kind=4),    intent   (in) :: ti      (nptsnz)
+   real(kind=4),    intent   (in) :: rtw     (nptsnz)
+   real(kind=4),    intent  (out) :: r       (nptsnz,25,2)
+   real(kind=4),    intent   (in) :: b       (nptsnz,5,2)
+   real(kind=4),    intent   (in) :: gaz_conc(nptsnz,maxnsg)
+end subroutine mach_incld_upaqr2
+
+real function mach_incld_fn_dtnew (delt,k)
+   integer(kind=4), intent(in) :: k
+   real(kind=4),    intent(in) :: delt
+end function mach_incld_fn_dtnew
+
+end interface
+end module mach_incld_headers_mod

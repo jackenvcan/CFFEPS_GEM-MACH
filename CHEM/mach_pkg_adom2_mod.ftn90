@@ -1,0 +1,752 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_pkg_adom2_mod.ftn90
+! Creation       : H. Landry, Dec. 2007
+! Description    : Defines the indices initialisation s/r and the meta info of
+!                  fields that are part of the ADOM2 gas package
+!
+!
+!============================================================================
+
+module mach_pkg_adom2_mod
+   use chm_nml_mod,          only: chm_seaflux_s, chm_get_ae_emis_l, chm_get_be_emis_l, chm_pkg_gas_s, &
+                                   chm_get_mj_emis_l, chm_htap_emis_l, chm_mono_s, chm_mass_s 
+   use chm_utils_mod,        only: pre_increment
+   use chm_species_idx_mod
+   use chm_species_info_mod, only: species_master
+   save
+
+   contains
+!============================================================================
+! Name           : pkg_adom2_idxinit
+!
+! Description    : Initialize the indices of ADOM2 package.  Starts with
+!                  the index passed as a dummy argument.
+!
+! Arguments:  IN/OUT
+!                idx  -> index to start from
+!============================================================================
+      integer(kind=4) function pkg_adom2_idxinit(idx)
+         implicit none
+
+         integer(kind=4), intent(inout) :: idx ! the index from where to start
+
+         integer(kind=4) start_index, nb_fields
+
+
+! Please keep alphabetical order
+
+         start_index = idx
+
+         sp_ALD2 = pre_increment(idx)
+         sp_ALKA = pre_increment(idx)
+         sp_ALKE = pre_increment(idx)
+         sp_AROM = pre_increment(idx)
+         sp_BZO  = pre_increment(idx)
+         sp_C3H8 = pre_increment(idx)
+         sp_CO   = pre_increment(idx)
+         sp_CRES = pre_increment(idx)
+         sp_CRG1 = pre_increment(idx)
+         sp_CRG2 = pre_increment(idx)
+         sp_DIAL = pre_increment(idx)
+         sp_EBMO = pre_increment(idx)
+         sp_EBVO = pre_increment(idx)
+         sp_ETHE = pre_increment(idx)
+         sp_H2O2 = pre_increment(idx)
+         sp_HCHO = pre_increment(idx)
+         sp_HNO3 = pre_increment(idx)
+         sp_HNO4 = pre_increment(idx)
+         sp_HO2  = pre_increment(idx)
+         sp_HONO = pre_increment(idx)
+         sp_ISOP = pre_increment(idx)
+         sp_MCO3 = pre_increment(idx)
+         sp_MEK  = pre_increment(idx)
+         sp_MGLY = pre_increment(idx)
+         sp_N2O5 = pre_increment(idx)
+         sp_NH3  = pre_increment(idx)
+         sp_NO   = pre_increment(idx)
+         sp_NO2  = pre_increment(idx)
+         sp_NO3  = pre_increment(idx)
+         sp_NOy  = pre_increment(idx)
+         sp_NWOC = pre_increment(idx)
+         sp_O    = pre_increment(idx)
+         sp_O3   = pre_increment(idx)
+         sp_OH   = pre_increment(idx)
+         sp_OSD  = pre_increment(idx)
+         sp_PAN  = pre_increment(idx)
+         sp_R2O2 = pre_increment(idx)
+         sp_RNO3 = pre_increment(idx)
+         sp_RO2  = pre_increment(idx)
+         sp_RO2N = pre_increment(idx)
+         sp_RO2R = pre_increment(idx)
+         sp_ROOH = pre_increment(idx)
+         sp_SO2  = pre_increment(idx)
+         sp_SO4  = pre_increment(idx)
+         sp_TOLU = pre_increment(idx)
+!
+         nb_fields = idx - start_index
+         pkg_adom2_idxinit = nb_fields
+
+      end function pkg_adom2_idxinit
+
+
+!============================================================================
+! Name           : pkg_adom2_metainit
+!
+! Description    : Initialize the meta information for each species
+!
+! Arguments:  None
+!============================================================================
+      subroutine pkg_adom2_metainit()
+         implicit none
+!
+!        local variable
+         character(len = 21) :: tr_prop_s
+
+         tr_prop_s = ',min=0'
+         select case (chm_mono_s)
+           case ('CLIP') 
+             tr_prop_s = trim(tr_prop_s)//',mono=1'
+           case ('ILMC') 
+             tr_prop_s = trim(tr_prop_s)//',mono=2'
+           case ('NIL')
+             continue
+         end select
+         select case (chm_mass_s)
+           case ('BC') 
+             tr_prop_s = trim(tr_prop_s)//',mass=1'
+           case ('NIL')
+         end select
+
+         species_master(sp_SO2) % dyn_name    =  'TSO2'
+         species_master(sp_SO2) % dyn_lname   =  'TR/TSO2:P'
+         species_master(sp_SO2) % dyn_string  =  'VN=TR/TSO2:P'//trim(tr_prop_s)//' ; ON=TSO2 ; VD=AURAMS SPECIES SO2 ; VS=SLC;VB=D1'
+         species_master(sp_SO2) % out_name    =  'S2'
+         species_master(sp_SO2) % out_lname   =  'sp_SO2_S2'
+         species_master(sp_SO2) % out_string  =  'VN=sp_SO2_S2; ON=S2; VD=Sulfate (ppb)     ; VS=SLC;VB=V1'
+         species_master(sp_SO2) % vd_name     =  'VSO2'
+         species_master(sp_SO2) % vd_lname    =  'SO2_vd'
+         species_master(sp_SO2) % vd_string   =  'VN=SO2_vd; ON=VSO2; VD=SO2 deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_SO2) % rb_name     =  'S2RB'
+         species_master(sp_SO2) % rb_lname    =  'SO2_rb'
+         species_master(sp_SO2) % rb_string   =  'VN=SO2_rb; ON=S2RB; VD=SO2 molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_SO2) % rc_name     =  'S2RC'
+         species_master(sp_SO2) % rc_lname    =  'SO2_rc'
+         species_master(sp_SO2) % rc_string   =  'VN=SO2_rc; ON=S2RC; VD=SO2 total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_SO2) % mol_wt      =  64.00
+
+         species_master(sp_SO4) % dyn_name    =  'TSO4'
+         species_master(sp_SO4) % dyn_lname   =  'TR/TSO4:P'
+         species_master(sp_SO4) % dyn_string  =  'VN=TR/TSO4:P'//trim(tr_prop_s)//'; ON=TSO4; VD=AURAMS SPECIES SO4 ; VS=SLC;VB=D1'
+         species_master(sp_SO4) % vd_name     =  'VSO4'
+         species_master(sp_SO4) % vd_lname    =  'SO4_vd'
+         species_master(sp_SO4) % vd_string   =  'VN=SO4_vd; ON=VSO4; VD=SO4 deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_SO4) % rb_name     =  'S4RB'
+         species_master(sp_SO4) % rb_lname    =  'SO4_rb'
+         species_master(sp_SO4) % rb_string   =  'VN=SO4_rb; ON=S4RB; VD=SO4 molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_SO4) % rc_name     =  'S4RC'
+         species_master(sp_SO4) % rc_lname    =  'SO4_rc'
+         species_master(sp_SO4) % rc_string   =  'VN=SO4_rc; ON=S4RC; VD=SO4 total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_SO4) % mol_wt      =  96.00
+
+         species_master(sp_NO) % dyn_name     =  'TNO'
+         species_master(sp_NO) % dyn_lname    =  'TR/TNO:P'
+         species_master(sp_NO) % dyn_string   =  'VN=TR/TNO:P'//trim(tr_prop_s)//'; ON=TNO; VD=AURAMS SPECIES NO ; VS=SLC;VB=D1'
+         species_master(sp_NO) % out_name     =  'NO'
+         species_master(sp_NO) % out_lname    =  'sp_NO_NO'
+         species_master(sp_NO) % out_string   =  'VN=sp_NO_NO; ON=NO; VD=Nitrogen oxyde (ppb)     ; VS=SLC;VB=V1'
+         species_master(sp_NO) % vd_name      =  'VNO'
+         species_master(sp_NO) % vd_lname     =  'NO_vd'
+         species_master(sp_NO) % vd_string    =  'VN=NO_vd; ON=VNO; VD=NO deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_NO) % rb_name      =  'NORB'
+         species_master(sp_NO) % rb_lname     =  'NO_rb'
+         species_master(sp_NO) % rb_string    =  'VN=NO_rb; ON=NORB; VD=NO molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_NO) % rc_name      =  'NORC'
+         species_master(sp_NO) % rc_lname     =  'NO_rc'
+         species_master(sp_NO) % rc_string    =  'VN=NO_rc; ON=NORC; VD=NO total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_NO) % mol_wt       =  30.00
+
+         species_master(sp_NO2) % dyn_name    =  'TNO2'
+         species_master(sp_NO2) % dyn_lname   =  'TR/TNO2:P'
+         species_master(sp_NO2) % dyn_string  =  'VN=TR/TNO2:P'//trim(tr_prop_s)//' ; ON=TNO2 ; VD=AURAMS SPECIES NO2 ; VS=SLC;VB=D1'
+         species_master(sp_NO2) % out_name    =  'N2'
+         species_master(sp_NO2) % out_lname   =  'sp_NO2_N2'
+         species_master(sp_NO2) % out_string  =  'VN=sp_NO2_N2; ON=N2; VD=Nitrogene Dioxide (ppb)     ; VS=SLC;VB=V1'
+         species_master(sp_NO2) % vd_name     =  'VNO2'
+         species_master(sp_NO2) % vd_lname    =  'NO2_vd'
+         species_master(sp_NO2) % vd_string   =  'VN=NO2_vd; ON=VNO2; VD=NO2 deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_NO2) % rb_name     =  'N2RB'
+         species_master(sp_NO2) % rb_lname    =  'NO2_rb'
+         species_master(sp_NO2) % rb_string   =  'VN=NO2_rb; ON=N2RB; VD=NO2 molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_NO2) % rc_name     =  'N2RC'
+         species_master(sp_NO2) % rc_lname    =  'NO2_rc'
+         species_master(sp_NO2) % rc_string   =  'VN=NO2_rc; ON=N2RC; VD=NO2 total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_NO2) % mol_wt      =  46.00
+
+         species_master(sp_O3) % dyn_name     =  'TO3'
+         species_master(sp_O3) % dyn_lname    =  'TR/TO3:P'
+         species_master(sp_O3) % dyn_string   =  'VN=TR/TO3:P'//trim(tr_prop_s)//'; ON=TO3; VD=AURAMS SPECIES O3  (ug/kg)     ; VS=SLC;VB=D1'
+         species_master(sp_O3) % out_name     =  'O3'
+         species_master(sp_O3) % out_lname    =  'cnchO3'
+         species_master(sp_O3) % out_string   =  'VN=cnchO3; ON=O3; VD=Ozone (ppb)     ; VS=SLC;VB=V1'
+         species_master(sp_O3) % vd_name      =  'VO3'
+         species_master(sp_O3) % vd_lname     =  'O3_vd'
+         species_master(sp_O3) % vd_string    =  'VN=O3_vd; ON=VO3; VD=O3 deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_O3) % rb_name      =  'O3RB'
+         species_master(sp_O3) % rb_lname     =  'O3_rb'
+         species_master(sp_O3) % rb_string    =  'VN=O3_rb; ON=O3RB; VD=O3 molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_O3) % rc_name      =  'O3RC'
+         species_master(sp_O3) % rc_lname     =  'O3_rc'
+         species_master(sp_O3) % rc_string    =  'VN=O3_rc; ON=O3RC; VD=O3 total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_O3) % mol_wt       =  48.00
+
+         species_master(sp_H2O2) % dyn_name   =  'TH22'
+         species_master(sp_H2O2) % dyn_lname  =  'TR/TH22:P'
+         species_master(sp_H2O2) % dyn_string =  'VN=TR/TH22:P'//trim(tr_prop_s)//'; ON=TH22; VD=AURAMS SPECIES H2O2     ; VS=SLC;VB=D1'
+         species_master(sp_H2O2) % vd_name    =  'VH22'
+         species_master(sp_H2O2) % vd_lname   =  'H2O2_vd'
+         species_master(sp_H2O2) % vd_string  =  'VN=H2O2_vd; ON=VH22; VD=H2O2 deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_H2O2) % rb_name    =  'H2RB'
+         species_master(sp_H2O2) % rb_lname   =  'H2O2_rb'
+         species_master(sp_H2O2) % rb_string  =  'VN=H2O2_rb; ON=H2RB; VD=H2O2 molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_H2O2) % rc_name    =  'H2RC'
+         species_master(sp_H2O2) % rc_lname   =  'H2O2_rc'
+         species_master(sp_H2O2) % rc_string  =  'VN=H2O2_rc; ON=H2RC; VD=H2O2 total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_H2O2) % mol_wt     =  34.00
+
+         species_master(sp_HNO3) % dyn_name   =  'THN3'
+         species_master(sp_HNO3) % dyn_lname  =  'TR/THN3:P'
+         species_master(sp_HNO3) % dyn_string =  'VN=TR/THN3:P'//trim(tr_prop_s)//'; ON=THN3; VD=AURAMS SPECIES HNO3     ; VS=SLC;VB=D1'
+         species_master(sp_HNO3) % vd_name    =  'VHN3'
+         species_master(sp_HNO3) % vd_lname   =  'HNO3_vd'
+         species_master(sp_HNO3) % vd_string  =  'VN=HNO3_vd; ON=VHN3; VD=HNO3 deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_HNO3) % rb_name    =  'H3RB'
+         species_master(sp_HNO3) % rb_lname   =  'HNO3_rb'
+         species_master(sp_HNO3) % rb_string  =  'VN=HNO3_rb; ON=H3RB; VD=HNO3 molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_HNO3) % rc_name    =  'H3RC'
+         species_master(sp_HNO3) % rc_lname   =  'HNO3_rc'
+         species_master(sp_HNO3) % rc_string  =  'VN=HNO3_rc; ON=H3RC; VD=HNO3 total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_HNO3) % mol_wt     =  63.00
+
+         species_master(sp_PAN) % dyn_name    =  'TPAN'
+         species_master(sp_PAN) % dyn_lname   =  'TR/TPAN:P'
+         species_master(sp_PAN) % dyn_string  =  'VN=TR/TPAN:P'//trim(tr_prop_s)//' ; ON=TPAN ; VD=AURAMS SPECIES PAN      ; VS=SLC;VB=D1'
+         species_master(sp_PAN) % vd_name     =  'VPAN'
+         species_master(sp_PAN) % vd_lname    =  'PAN_vd'
+         species_master(sp_PAN) % vd_string   =  'VN=PAN_vd; ON=VPAN; VD=PAN deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_PAN) % rb_name     =  'PARB'
+         species_master(sp_PAN) % rb_lname    =  'PAN_rb'
+         species_master(sp_PAN) % rb_string   =  'VN=PAN_rb; ON=PARB; VD=PAN molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_PAN) % rc_name     =  'PARC'
+         species_master(sp_PAN) % rc_lname    =  'PAN_rc'
+         species_master(sp_PAN) % rc_string   =  'VN=PAN_rc; ON=PARC; VD=PAN total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_PAN) % mol_wt      =  121.00
+
+         species_master(sp_C3H8) % dyn_name   =  'TC38'
+         species_master(sp_C3H8) % dyn_lname  =  'TR/TC38:P'
+         species_master(sp_C3H8) % dyn_string =  'VN=TR/TC38:P'//trim(tr_prop_s)//'; ON=TC38; VD=AURAMS SPECIES C3H8     ; VS=SLC;VB=D1'
+         species_master(sp_C3H8) % vd_name    =  'VC38'
+         species_master(sp_C3H8) % vd_lname   =  'C3H8_vd'
+         species_master(sp_C3H8) % vd_string  =  'VN=C3H8_vd; ON=VC38; VD=C3H8 deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_C3H8) % rb_name    =  'C3RB'
+         species_master(sp_C3H8) % rb_lname   =  'C3H8_rb'
+         species_master(sp_C3H8) % rb_string  =  'VN=C3H8_rb; ON=C3RB; VD=C3H8 molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_C3H8) % rc_name    =  'C3RC'
+         species_master(sp_C3H8) % rc_lname   =  'C3H8_rc'
+         species_master(sp_C3H8) % rc_string  =  'VN=C3H8_rc; ON=C3RC; VD=C3H8 total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_C3H8) % mol_wt     =  44.09
+
+         species_master(sp_ALKA) % dyn_name   =  'TA3'
+         species_master(sp_ALKA) % dyn_lname  =  'TR/TA3:P'
+         species_master(sp_ALKA) % dyn_string =  'VN=TR/TA3:P'//trim(tr_prop_s)//'; ON=TA3; VD=AURAMS SPECIES ALKA     ; VS=SLC;VB=D1'
+         species_master(sp_ALKA) % vd_name    =  'VA3'
+         species_master(sp_ALKA) % vd_lname   =  'ALKA_vd'
+         species_master(sp_ALKA) % vd_string  =  'VN=ALKA_vd; ON=VA3; VD=ALKA deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_ALKA) % rb_name    =  'A3RB'
+         species_master(sp_ALKA) % rb_lname   =  'ALKA_rb'
+         species_master(sp_ALKA) % rb_string  =  'VN=ALKA_rb; ON=A3RB; VD=ALKA molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_ALKA) % rc_name    =  'A3RC'
+         species_master(sp_ALKA) % rc_lname   =  'ALKA_rc'
+         species_master(sp_ALKA) % rc_string  =  'VN=ALKA_rc; ON=A3RC; VD=ALKA total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_ALKA) % mol_wt     =  93.43
+
+         species_master(sp_ETHE) % dyn_name   =  'TETH'
+         species_master(sp_ETHE) % dyn_lname  =  'TR/TETH:P'
+         species_master(sp_ETHE) % dyn_string =  'VN=TR/TETH:P'//trim(tr_prop_s)//'; ON=TETH; VD=AURAMS SPECIES ETHE     ; VS=SLC;VB=D1'
+         species_master(sp_ETHE) % vd_name    =  'VETH'
+         species_master(sp_ETHE) % vd_lname   =  'ETHE_vd'
+         species_master(sp_ETHE) % vd_string  =  'VN=ETHE_vd; ON=VETH; VD=ETHE deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_ETHE) % rb_name    =  'ETRB'
+         species_master(sp_ETHE) % rb_lname   =  'ETHE_rb'
+         species_master(sp_ETHE) % rb_string  =  'VN=ETHE_rb; ON=ETRB; VD=ETHE molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_ETHE) % rc_name    =  'ETRC'
+         species_master(sp_ETHE) % rc_lname   =  'ETHE_rc'
+         species_master(sp_ETHE) % rc_string  =  'VN=ETHE_rc; ON=ETRC; VD=ETHE total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_ETHE) % mol_wt     =  28.05
+
+         species_master(sp_ALKE) % dyn_name   =  'TA2'
+         species_master(sp_ALKE) % dyn_lname  =  'TR/TA2:P'
+         species_master(sp_ALKE) % dyn_string =  'VN=TR/TA2:P'//trim(tr_prop_s)//'; ON=TA2; VD=AURAMS SPECIES ALKE     ; VS=SLC;VB=D1'
+         species_master(sp_ALKE) % vd_name    =  'VA2'
+         species_master(sp_ALKE) % vd_lname   =  'ALKE_vd'
+         species_master(sp_ALKE) % vd_string  =  'VN=ALKE_vd; ON=VA2; VD=ALKE deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_ALKE) % rb_name    =  'A2RB'
+         species_master(sp_ALKE) % rb_lname   =  'ALKE_rb'
+         species_master(sp_ALKE) % rb_string  =  'VN=ALKE_rb; ON=A2RB; VD=ALKE molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_ALKE) % rc_name    =  'A2RC'
+         species_master(sp_ALKE) % rc_lname   =  'ALKE_rc'
+         species_master(sp_ALKE) % rc_string  =  'VN=ALKE_rc; ON=A2RC; VD=ALKE total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_ALKE) % mol_wt     =  57.30
+
+         species_master(sp_TOLU) % dyn_name   =  'TTOL'
+         species_master(sp_TOLU) % dyn_lname  =  'TR/TTOL:P'
+         species_master(sp_TOLU) % dyn_string =  'VN=TR/TTOL:P'//trim(tr_prop_s)//'; ON=TTOL; VD=AURAMS SPECIES TOLU     ; VS=SLC;VB=D1'
+         species_master(sp_TOLU) % vd_name    =  'VTOL'
+         species_master(sp_TOLU) % vd_lname   =  'TOLU_vd'
+         species_master(sp_TOLU) % vd_string  =  'VN=TOLU_vd; ON=VTOL; VD=TOLU deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_TOLU) % rb_name    =  'TLRB'
+         species_master(sp_TOLU) % rb_lname   =  'TOLU_rb'
+         species_master(sp_TOLU) % rb_string  =  'VN=TOLU_rb; ON=TLRB; VD=TOLU molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_TOLU) % rc_name    =  'TLRC'
+         species_master(sp_TOLU) % rc_lname   =  'TOLU_rc'
+         species_master(sp_TOLU) % rc_string  =  'VN=TOLU_rc; ON=TLRC; VD=TOLU total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_TOLU) % mol_wt     =  92.13
+
+         species_master(sp_AROM) % dyn_name   =  'TARO'
+         species_master(sp_AROM) % dyn_lname  =  'TR/TARO:P'
+         species_master(sp_AROM) % dyn_string =  'VN=TR/TARO:P'//trim(tr_prop_s)//'; ON=TARO; VD=AURAMS SPECIES AROM     ; VS=SLC;VB=D1'
+         species_master(sp_AROM) % vd_name    =  'VARO'
+         species_master(sp_AROM) % vd_lname   =  'AROM_vd'
+         species_master(sp_AROM) % vd_string  =  'VN=AROM_vd; ON=VARO; VD=AROM deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_AROM) % rb_name    =  'ARRB'
+         species_master(sp_AROM) % rb_lname   =  'AROM_rb'
+         species_master(sp_AROM) % rb_string  =  'VN=AROM_rb; ON=ARRB; VD=AROM molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_AROM) % rc_name    =  'ARRC'
+         species_master(sp_AROM) % rc_lname   =  'AROM_rc'
+         species_master(sp_AROM) % rc_string  =  'VN=AROM_rc; ON=ARRC; VD=AROM total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_AROM) % mol_wt     =  117.97
+
+         species_master(sp_HCHO) % dyn_name   =  'THCH'
+         species_master(sp_HCHO) % dyn_lname  =  'TR/THCH:P'
+         species_master(sp_HCHO) % dyn_string =  'VN=TR/THCH:P'//trim(tr_prop_s)//'; ON=THCH; VD=AURAMS SPECIES HCHO     ; VS=SLC;VB=D1'
+         species_master(sp_HCHO) % vd_name    =  'VHCH'
+         species_master(sp_HCHO) % vd_lname   =  'HCHO_vd'
+         species_master(sp_HCHO) % vd_string  =  'VN=HCHO_vd; ON=VHCH; VD=HCHO deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_HCHO) % rb_name    =  'HCRB'
+         species_master(sp_HCHO) % rb_lname   =  'HCHO_rb'
+         species_master(sp_HCHO) % rb_string  =  'VN=HCHO_rb; ON=HCRB; VD=HCHO molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_HCHO) % rc_name    =  'HCRC'
+         species_master(sp_HCHO) % rc_lname   =  'HCHO_rc'
+         species_master(sp_HCHO) % rc_string  =  'VN=HCHO_rc; ON=HCRC; VD=HCHO total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_HCHO) % mol_wt     =  30.03
+
+         species_master(sp_ALD2) % dyn_name   =  'TALD'
+         species_master(sp_ALD2) % dyn_lname  =  'TR/TALD:P'
+         species_master(sp_ALD2) % dyn_string =  'VN=TR/TALD:P'//trim(tr_prop_s)//'; ON=TALD; VD=AURAMS SPECIES ALD2     ; VS=SLC;VB=D1'
+         species_master(sp_ALD2) % vd_name    =  'VALD'
+         species_master(sp_ALD2) % vd_lname   =  'ALD2_vd'
+         species_master(sp_ALD2) % vd_string  =  'VN=ALD2_vd; ON=VALD; VD=ALD2 deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_ALD2) % rb_name    =  'ADRB'
+         species_master(sp_ALD2) % rb_lname   =  'ALD2_rb'
+         species_master(sp_ALD2) % rb_string  =  'VN=ALD2_rb; ON=ADRB; VD=ALD2 molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_ALD2) % rc_name    =  'ADRC'
+         species_master(sp_ALD2) % rc_lname   =  'ALD2_rc'
+         species_master(sp_ALD2) % rc_string  =  'VN=ALD2_rc; ON=ADRC; VD=ALD2 total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_ALD2) % mol_wt     =  44.05
+
+         species_master(sp_MEK) % dyn_name    =  'TMEK'
+         species_master(sp_MEK) % dyn_lname   =  'TR/TMEK:P'
+         species_master(sp_MEK) % dyn_string  =  'VN=TR/TMEK:P'//trim(tr_prop_s)//' ; ON=TMEK ; VD=AURAMS SPECIES MEK      ; VS=SLC;VB=D1'
+         species_master(sp_MEK) % vd_name     =  'VMEK'
+         species_master(sp_MEK) % vd_lname    =  'MEK_vd'
+         species_master(sp_MEK) % vd_string   =  'VN=MEK_vd; ON=VMEK; VD=MEK deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_MEK) % rb_name     =  'MKRB'
+         species_master(sp_MEK) % rb_lname    =  'MEK_rb'
+         species_master(sp_MEK) % rb_string   =  'VN=MEK_rb; ON=MKRB; VD=MEK molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_MEK) % rc_name     =  'MKRC'
+         species_master(sp_MEK) % rc_lname    =  'MEK_rc'
+         species_master(sp_MEK) % rc_string   =  'VN=MEK_rc; ON=MKRC; VD=MEK total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_MEK) % mol_wt      =  72.10
+
+         species_master(sp_MGLY) % dyn_name   =  'TMGL'
+         species_master(sp_MGLY) % dyn_lname  =  'TR/TMGL:P'
+         species_master(sp_MGLY) % dyn_string =  'VN=TR/TMGL:P'//trim(tr_prop_s)//'; ON=TMGL; VD=AURAMS SPECIES MGLY     ; VS=SLC;VB=D1'
+         species_master(sp_MGLY) % vd_name    =  'VMGL'
+         species_master(sp_MGLY) % vd_lname   =  'MGLY_vd'
+         species_master(sp_MGLY) % vd_string  =  'VN=MGLY_vd; ON=VMGL; VD=MGLY deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_MGLY) % rb_name    =  'MGRB'
+         species_master(sp_MGLY) % rb_lname   =  'MGLY_rb'
+         species_master(sp_MGLY) % rb_string  =  'VN=MGLY_rb; ON=MGRB; VD=MGLY molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_MGLY) % rc_name    =  'MGRC'
+         species_master(sp_MGLY) % rc_lname   =  'MGLY_rc'
+         species_master(sp_MGLY) % rc_string  =  'VN=MGLY_rc; ON=MGRC; VD=MGLY total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_MGLY) % mol_wt     =  72.00
+
+         species_master(sp_DIAL) % dyn_name   =  'TDIA'
+         species_master(sp_DIAL) % dyn_lname  =  'TR/TDIA:P'
+         species_master(sp_DIAL) % dyn_string =  'VN=TR/TDIA:P'//trim(tr_prop_s)//'; ON=TDIA; VD=AURAMS SPECIES DIAL     ; VS=SLC;VB=D1'
+         species_master(sp_DIAL) % vd_name    =  'VDIA'
+         species_master(sp_DIAL) % vd_lname   =  'DIAL_vd'
+         species_master(sp_DIAL) % vd_string  =  'VN=DIAL_vd; ON=VDIA; VD=DIAL deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_DIAL) % rb_name    =  'DIRB'
+         species_master(sp_DIAL) % rb_lname   =  'DIAL_rb'
+         species_master(sp_DIAL) % rb_string  =  'VN=DIAL_rb; ON=DIRB; VD=DIAL molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_DIAL) % rc_name    =  'DIRC'
+         species_master(sp_DIAL) % rc_lname   =  'DIAL_rc'
+         species_master(sp_DIAL) % rc_string  =  'VN=DIAL_rc; ON=DIRC; VD=DIAL total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_DIAL) % mol_wt     =  84.00
+
+         species_master(sp_ROOH) % dyn_name   =  'TROO'
+         species_master(sp_ROOH) % dyn_lname  =  'TR/TROO:P'
+         species_master(sp_ROOH) % dyn_string =  'VN=TR/TROO:P'//trim(tr_prop_s)//'; ON=TROO; VD=AURAMS SPECIES ROOH     ; VS=SLC;VB=D1'
+         species_master(sp_ROOH) % vd_name    =  'VROO'
+         species_master(sp_ROOH) % vd_lname   =  'ROOH_vd'
+         species_master(sp_ROOH) % vd_string  =  'VN=ROOH_vd; ON=VROO; VD=ROOH deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_ROOH) % rb_name    =  'RHRB'
+         species_master(sp_ROOH) % rb_lname   =  'ROOH_rb'
+         species_master(sp_ROOH) % rb_string  =  'VN=ROOH_rb; ON=RHRB; VD=ROOH molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_ROOH) % rc_name    =  'RHRC'
+         species_master(sp_ROOH) % rc_lname   =  'ROOH_rc'
+         species_master(sp_ROOH) % rc_string  =  'VN=ROOH_rc; ON=RHRC; VD=ROOH total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_ROOH) % mol_wt     =  62.00
+
+         species_master(sp_CRES) % dyn_name   =  'TCRE'
+         species_master(sp_CRES) % dyn_lname  =  'TR/TCRE:P'
+         species_master(sp_CRES) % dyn_string =  'VN=TR/TCRE:P'//trim(tr_prop_s)//'; ON=TCRE; VD=AURAMS SPECIES CRES     ; VS=SLC;VB=D1'
+         species_master(sp_CRES) % vd_name    =  'VCRE'
+         species_master(sp_CRES) % vd_lname   =  'CRES_vd'
+         species_master(sp_CRES) % vd_string  =  'VN=CRES_vd; ON=VCRE; VD=CRES deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_CRES) % rb_name    =  'CRRB'
+         species_master(sp_CRES) % rb_lname   =  'CRES_rb'
+         species_master(sp_CRES) % rb_string  =  'VN=CRES_rb; ON=CRRB; VD=CRES molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_CRES) % rc_name    =  'CRRC'
+         species_master(sp_CRES) % rc_lname   =  'CRES_rc'
+         species_master(sp_CRES) % rc_string  =  'VN=CRES_rc; ON=CRRC; VD=CRES total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_CRES) % mol_wt     =  108.13
+
+         species_master(sp_HONO) % dyn_name   =  'THON'
+         species_master(sp_HONO) % dyn_lname  =  'TR/THON:P'
+         species_master(sp_HONO) % dyn_string =  'VN=TR/THON:P'//trim(tr_prop_s)//'; ON=THON; VD=AURAMS SPECIES HONO     ; VS=SLC;VB=D1'
+         species_master(sp_HONO) % vd_name    =  'VHON'
+         species_master(sp_HONO) % vd_lname   =  'HONO_vd'
+         species_master(sp_HONO) % vd_string  =  'VN=HONO_vd; ON=VHON; VD=HONO deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_HONO) % rb_name    =  'HNRB'
+         species_master(sp_HONO) % rb_lname   =  'HONO_rb'
+         species_master(sp_HONO) % rb_string  =  'VN=HONO_rb; ON=HNRB; VD=HONO molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_HONO) % rc_name    =  'HNRC'
+         species_master(sp_HONO) % rc_lname   =  'HONO_rc'
+         species_master(sp_HONO) % rc_string  =  'VN=HONO_rc; ON=HNRC; VD=HONO total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_HONO) % mol_wt     =  47.00
+
+         species_master(sp_RNO3) % dyn_name   =  'TRN3'
+         species_master(sp_RNO3) % dyn_lname  =  'TR/TRN3:P'
+         species_master(sp_RNO3) % dyn_string =  'VN=TR/TRN3:P'//trim(tr_prop_s)//'; ON=TRN3; VD=AURAMS SPECIES RNO3     ; VS=SLC;VB=D1'
+         species_master(sp_RNO3) % vd_name    =  'VRN3'
+         species_master(sp_RNO3) % vd_lname   =  'RNO3_vd'
+         species_master(sp_RNO3) % vd_string  =  'VN=RNO3_vd; ON=VRN3; VD=RNO3 deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_RNO3) % rb_name    =  'R3RB'
+         species_master(sp_RNO3) % rb_lname   =  'RNO3_rb'
+         species_master(sp_RNO3) % rb_string  =  'VN=RNO3_rb; ON=R3RB; VD=RNO3 molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_RNO3) % rc_name    =  'R3RC'
+         species_master(sp_RNO3) % rc_lname   =  'RNO3_rc'
+         species_master(sp_RNO3) % rc_string  =  'VN=RNO3_rc; ON=R3RC; VD=RNO3 total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_RNO3) % mol_wt     =  121.00
+
+         species_master(sp_ISOP) % dyn_name   =  'TISO'
+         species_master(sp_ISOP) % dyn_lname  =  'TR/TISO:P'
+         species_master(sp_ISOP) % dyn_string =  'VN=TR/TISO:P'//trim(tr_prop_s)//'; ON=TISO; VD=AURAMS SPECIES ISOP     ; VS=SLC;VB=D1'
+         species_master(sp_ISOP) % vd_name    =  'VISO'
+         species_master(sp_ISOP) % vd_lname   =  'ISOP_vd'
+         species_master(sp_ISOP) % vd_string  =  'VN=ISOP_vd; ON=VISO; VD=ISOP deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_ISOP) % rb_name    =  'IORB'
+         species_master(sp_ISOP) % rb_lname   =  'ISOP_rb'
+         species_master(sp_ISOP) % rb_string  =  'VN=ISOP_rb; ON=IORB; VD=ISOP molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_ISOP) % rc_name    =  'IORC'
+         species_master(sp_ISOP) % rc_lname   =  'ISOP_rc'
+         species_master(sp_ISOP) % rc_string  =  'VN=ISOP_rc; ON=IORC; VD=ISOP total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_ISOP) % mol_wt     =  68.11
+
+         species_master(sp_HO2) % dyn_name    =  'THO2'
+         species_master(sp_HO2) % dyn_lname   =  'TR/THO2:P'
+         species_master(sp_HO2) % dyn_string  =  'VN=TR/THO2:P'//trim(tr_prop_s)//' ; ON=THO2 ; VD=AURAMS SPECIES HO2      ; VS=SLC;VB=D1'
+         species_master(sp_HO2) % vd_name     =  'VHO2'
+         species_master(sp_HO2) % vd_lname    =  'HO2_vd'
+         species_master(sp_HO2) % vd_string   =  'VN=HO2_vd; ON=VHO2; VD=HO2 deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_HO2) % rb_name     =  'HORB'
+         species_master(sp_HO2) % rb_lname    =  'HO2_rb'
+         species_master(sp_HO2) % rb_string   =  'VN=HO2_rb; ON=HORB; VD=HO2 molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_HO2) % rc_name     =  'HORC'
+         species_master(sp_HO2) % rc_lname    =  'HO2_rc'
+         species_master(sp_HO2) % rc_string   =  'VN=HO2_rc; ON=HORC; VD=HO2 total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_HO2) % mol_wt      =  33.00
+
+         species_master(sp_RO2) % dyn_name    =  'TRO2'
+         species_master(sp_RO2) % dyn_lname   =  'TR/TRO2:P'
+         species_master(sp_RO2) % dyn_string  =  'VN=TR/TRO2:P'//trim(tr_prop_s)//' ; ON=TRO2 ; VD=AURAMS SPECIES RO2      ; VS=SLC;VB=D1'
+         species_master(sp_RO2) % vd_name     =  'VRO2'
+         species_master(sp_RO2) % vd_lname    =  'RO2_vd'
+         species_master(sp_RO2) % vd_string   =  'VN=RO2_vd; ON=VRO2; VD=RO2 deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_RO2) % rb_name     =  'RORB'
+         species_master(sp_RO2) % rb_lname    =  'RO2_rb'
+         species_master(sp_RO2) % rb_string   =  'VN=RO2_rb; ON=RORB; VD=RO2 molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_RO2) % rc_name     =  'RORC'
+         species_master(sp_RO2) % rc_lname    =  'RO2_rc'
+         species_master(sp_RO2) % rc_string   =  'VN=RO2_rc; ON=RORC; VD=RO2 total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_RO2) % mol_wt      =  61.00
+
+         species_master(sp_MCO3) % dyn_name   =  'TMC3'
+         species_master(sp_MCO3) % dyn_lname  =  'TR/TMC3:P'
+         species_master(sp_MCO3) % dyn_string =  'VN=TR/TMC3:P'//trim(tr_prop_s)//'; ON=TMC3; VD=AURAMS SPECIES MCO3     ; VS=SLC;VB=D1'
+         species_master(sp_MCO3) % vd_name    =  'VMC3'
+         species_master(sp_MCO3) % vd_lname   =  'MCO3_vd'
+         species_master(sp_MCO3) % vd_string  =  'VN=MCO3_vd; ON=VMC3; VD=MCO3 deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_MCO3) % rb_name    =  'MCRB'
+         species_master(sp_MCO3) % rb_lname   =  'MCO3_rb'
+         species_master(sp_MCO3) % rb_string  =  'VN=MCO3_rb; ON=MCRB; VD=MCO3 molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_MCO3) % rc_name    =  'MCRC'
+         species_master(sp_MCO3) % rc_lname   =  'MCO3_rc'
+         species_master(sp_MCO3) % rc_string  =  'VN=MCO3_rc; ON=MCRC; VD=MCO3 total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_MCO3) % mol_wt     =  75.00
+
+         species_master(sp_CO) % dyn_name     =  'TCO'
+         species_master(sp_CO) % dyn_lname    =  'TR/TCO:P'
+         species_master(sp_CO) % dyn_string   =  'VN=TR/TCO:P'//trim(tr_prop_s)//'; ON=TCO; VD=AURAMS SPECIES CO       ; VS=SLC;VB=D1'
+         species_master(sp_CO) % mol_wt       =  28.00
+
+         species_master(sp_NH3) % dyn_name    =  'TNH3'
+         species_master(sp_NH3) % dyn_lname   =  'TR/TNH3:P'
+         species_master(sp_NH3) % dyn_string  =  'VN=TR/TNH3:P'//trim(tr_prop_s)//' ; ON=TNH3 ; VD=AURAMS SPECIES NH3      ; VS=SLC;VB=D1'
+         species_master(sp_NH3) % vd_name     =  'VNH3'
+         species_master(sp_NH3) % vd_lname    =  'NH3_vd'
+         species_master(sp_NH3) % vd_string   =  'VN=NH3_vd; ON=VNH3; VD=NH3 deposition velocity (m/s); VS=ROW;VB=V1'
+         species_master(sp_NH3) % rb_name     =  'NHRB'
+         species_master(sp_NH3) % rb_lname    =  'NH3_rb'
+         species_master(sp_NH3) % rb_string   =  'VN=NH3_rb; ON=NHRB; VD=NH3 molecular diffusion resistance (s/m); VS=ROW;VB=V1'
+         species_master(sp_NH3) % rc_name     =  'NHRC'
+         species_master(sp_NH3) % rc_lname    =  'NH3_rc'
+         species_master(sp_NH3) % rc_string   =  'VN=NH3_rc; ON=NHRC; VD=NH3 total surface resistance (s/m); VS=ROW*15;VB=V1'
+         species_master(sp_NH3) % mol_wt      =  17.03
+
+         species_master(sp_OSD) % dyn_name    =  'TOSD'
+         species_master(sp_OSD) % dyn_lname   =  'TR/TOSD:P'
+         species_master(sp_OSD) % dyn_string  =  'VN=TR/TOSD:P'//trim(tr_prop_s)//' ; ON=TOSD ; VD=AURAMS SPECIES OSD ..rad; VS=SLC;VB=D1'
+
+         species_master(sp_O) % dyn_name      =  'TO'
+         species_master(sp_O) % dyn_lname     =  'TR/TO:P'
+         species_master(sp_O) % dyn_string    =  'VN=TR/TO:P'//trim(tr_prop_s)//'   ; ON=TO   ; VD=AURAMS SPECIES O        ; VS=SLC;VB=D1'
+
+         species_master(sp_NO3) % dyn_name    =  'TNO3'
+         species_master(sp_NO3) % dyn_lname   =  'TR/TNO3:P'
+         species_master(sp_NO3) % dyn_string  =  'VN=TR/TNO3:P'//trim(tr_prop_s)//' ; ON=TNO3 ; VD=AURAMS SPECIES NO3      ; VS=SLC;VB=D1'
+         species_master(sp_NO3) % mol_wt      =  62.00
+
+         species_master(sp_N2O5) % dyn_name   =  'TN25'
+         species_master(sp_N2O5) % dyn_lname  =  'TR/TN25:P'
+         species_master(sp_N2O5) % dyn_string =  'VN=TR/TN25:P'//trim(tr_prop_s)//'; ON=TN25; VD=AURAMS SPECIES N2O5     ; VS=SLC;VB=D1'
+
+         species_master(sp_HNO4) % dyn_name   =  'THN4'
+         species_master(sp_HNO4) % dyn_lname  =  'TR/THN4:P'
+         species_master(sp_HNO4) % dyn_string =  'VN=TR/THN4:P'//trim(tr_prop_s)//'; ON=THN4; VD=AURAMS SPECIES HNO4     ; VS=SLC;VB=D1'
+
+         species_master(sp_OH) % dyn_name     =  'TOH'
+         species_master(sp_OH) % dyn_lname    =  'TR/TOH:P'
+         species_master(sp_OH) % dyn_string   =  'VN=TR/TOH:P'//trim(tr_prop_s)//'  ; ON=TOH  ; VD=AURAMS SPECIES OH       ; VS=SLC;VB=D1'
+         species_master(sp_OH) % mol_wt       =  17.00
+
+         species_master(sp_RO2R) % dyn_name   =  'TR2R'
+         species_master(sp_RO2R) % dyn_lname  =  'TR/TR2R:P'
+         species_master(sp_RO2R) % dyn_string =  'VN=TR/TR2R:P'//trim(tr_prop_s)//'; ON=TR2R; VD=AURAMS SPECIES RO2R     ; VS=SLC;VB=D1'
+
+         species_master(sp_R2O2) % dyn_name   =  'TR22'
+         species_master(sp_R2O2) % dyn_lname  =  'TR/TR22:P'
+         species_master(sp_R2O2) % dyn_string =  'VN=TR/TR22:P'//trim(tr_prop_s)//'; ON=TR22; VD=AURAMS SPECIES R2O2     ; VS=SLC;VB=D1'
+
+         species_master(sp_RO2N) % dyn_name   =  'TR2N'
+         species_master(sp_RO2N) % dyn_lname  =  'TR/TR2N:P'
+         species_master(sp_RO2N) % dyn_string =  'VN=TR/TR2N:P'//trim(tr_prop_s)//'; ON=TR2N; VD=AURAMS SPECIES RO2N     ; VS=SLC;VB=D1'
+
+         species_master(sp_BZO) % dyn_name    =  'TBZO'
+         species_master(sp_BZO) % dyn_lname   =  'TR/TBZO:P'
+         species_master(sp_BZO) % dyn_string  =  'VN=TR/TBZO:P'//trim(tr_prop_s)//' ; ON=TBZO ; VD=AURAMS SPECIES BZO      ; VS=SLC;VB=D1'
+
+         species_master(sp_CRG1) % dyn_name   =  'TCR1'
+         species_master(sp_CRG1) % dyn_lname  =  'TR/TCR1:P'
+         species_master(sp_CRG1) % dyn_string =  'VN=TR/TCR1:P'//trim(tr_prop_s)//'; ON=TCR1; VD=AURAMS SPECIES CRG1     ; VS=SLC;VB=D1'
+
+         species_master(sp_CRG2) % dyn_name   =  'TCR2'
+         species_master(sp_CRG2) % dyn_lname  =  'TR/TCR2:P'
+         species_master(sp_CRG2) % dyn_string =  'VN=TR/TCR2:P'//trim(tr_prop_s)//'; ON=TCR2; VD=AURAMS SPECIES CRG2..rad; VS=SLC;VB=D1'
+
+         species_master(sp_NWOC) % vol_name   =  'NWOC'
+         species_master(sp_NWOC) % vol_lname  =  'newsoa'
+         species_master(sp_NWOC) % vol_string =  'VN=newsoa; ON=NWOC; VD=SOA CREATED IN TIMESTEP   ; VS=SLC;VB=V1'
+
+         species_master(sp_NOy)  % out_name    =  'NOY'
+         species_master(sp_NOy)  % out_lname   =  'NOY_vol_std'
+         species_master(sp_NOy)  % out_string  =  'VN=NOY_vol_std; ON=NOY; VD=NOy (ppb); VS=SLC;VB=v1'
+!
+!  Case where area emissions option is set
+!  
+         if (chm_get_ae_emis_l .and. (chm_pkg_gas_s == 'ADOM2')) then
+            species_master(sp_SO2) % ae_name     =  'ESO2'
+            species_master(sp_SO2) % ae_lname    =  'sp_SO2_ESO2'
+            species_master(sp_SO2) % ae_string   =  'VN=sp_SO2_ESO2; ON=ESO2; VD=AREA EMISS  SO2(g/s); VS=ROW;VB=p1'
+! exclude so4 for HTAP simulations
+            if (.not. chm_htap_emis_l) then
+              species_master(sp_SO4) % ae_name     =  'ESO4'
+              species_master(sp_SO4) % ae_lname    =  'sp_SO4_ESO4'
+              species_master(sp_SO4) % ae_string   =  'VN=sp_SO4_ESO4; ON=ESO4; VD=AREA EMISS  SO4(g/s); VS=ROW;VB=p1'
+            endif 
+            species_master(sp_NO) % ae_name      =  'ENO'
+            species_master(sp_NO) % ae_lname     =  'sp_NO_ENO'
+            species_master(sp_NO) % ae_string    =  'VN=sp_NO_ENO; ON=ENO; VD=AREA EMISS  NO(g/s); VS=ROW;VB=p1'
+            species_master(sp_NO2) % ae_name     =  'ENO2'
+            species_master(sp_NO2) % ae_lname    =  'sp_NO2_ENO2'
+            species_master(sp_NO2) % ae_string   =  'VN=sp_NO2_ENO2; ON=ENO2; VD=AREA EMISS  NO2(g/s); VS=ROW;VB=p1'
+            species_master(sp_C3H8) % ae_name    =  'EC38'
+            species_master(sp_C3H8) % ae_lname   =  'sp_C3H8_EC38'
+            species_master(sp_C3H8) % ae_string  =  'VN=sp_C3H8_EC38; ON=EC38; VD=AREA EMISS  C3H8(g/s); VS=ROW;VB=p1'
+            species_master(sp_ALKA) % ae_name    =  'EA3'
+            species_master(sp_ALKA) % ae_lname   =  'sp_ALKA_EA3'
+            species_master(sp_ALKA) % ae_string  =  'VN=sp_ALKA_EA3; ON=EA3; VD=AREA EMISS  ALKANE(g/s); VS=ROW;VB=p1'
+            species_master(sp_ETHE) % ae_name    =  'EETH'
+            species_master(sp_ETHE) % ae_lname   =  'sp_ETHE_EETH'
+            species_master(sp_ETHE) % ae_string  =  'VN=sp_ETHE_EETH; ON=EETH; VD=AREA EMISS  ETHER(g/s); VS=ROW;VB=p1'
+            species_master(sp_ALKE) % ae_name    =  'EA2'
+            species_master(sp_ALKE) % ae_lname   =  'sp_ALKE_EA2'
+            species_master(sp_ALKE) % ae_string  =  'VN=sp_ALKE_EA2; ON=EA2; VD=AREA EMISS  ALKENE(g/s); VS=ROW;VB=p1'
+            species_master(sp_TOLU) % ae_name    =  'ETOL'
+            species_master(sp_TOLU) % ae_lname   =  'sp_TOLU_ETOL'
+            species_master(sp_TOLU) % ae_string  =  'VN=sp_TOLU_ETOL; ON=ETOL; VD=AREA EMISS  TOLUENE(g/s); VS=ROW;VB=p1'
+            species_master(sp_AROM) % ae_name    =  'EARO'
+            species_master(sp_AROM) % ae_lname   =  'sp_AROM_EARO'
+            species_master(sp_AROM) % ae_string  =  'VN=sp_AROM_EARO; ON=EARO; VD=AREA EMISS  AROMATIC(g/s); VS=ROW;VB=p1'
+            species_master(sp_HCHO) % ae_name    =  'EHCH'
+            species_master(sp_HCHO) % ae_lname   =  'sp_HCHO_EHCH'
+            species_master(sp_HCHO) % ae_string  =  'VN=sp_HCHO_EHCH; ON=EHCH; VD=AREA EMISS  HCHO(g/s); VS=ROW;VB=p1'
+            species_master(sp_ALD2) % ae_name    =  'EALD'
+            species_master(sp_ALD2) % ae_lname   =  'sp_ALD2_EALD'
+            species_master(sp_ALD2) % ae_string  =  'VN=sp_ALD2_EALD; ON=EALD; VD=AREA EMISS  ALD2(g/s); VS=ROW;VB=p1'
+            species_master(sp_MEK) % ae_name     =  'EMEK'
+            species_master(sp_MEK) % ae_lname    =  'sp_MEK_EMEK'
+            species_master(sp_MEK) % ae_string   =  'VN=sp_MEK_EMEK; ON=EMEK; VD=AREA EMISS  MEK(g/s); VS=ROW;VB=p1'
+            species_master(sp_CRES) % ae_name    =  'ECRE'
+            species_master(sp_CRES) % ae_lname   =  'sp_CRES_ECRE'
+            species_master(sp_CRES) % ae_string  =  'VN=sp_CRES_ECRE; ON=ECRE; VD=AREA EMISS  CRES(g/s); VS=ROW;VB=p1'
+            species_master(sp_HONO) % ae_name    =  'EHON'
+            species_master(sp_HONO) % ae_lname   =  'sp_HONO_EHON'
+            species_master(sp_HONO) % ae_string  =  'VN=sp_HONO_EHON; ON=EHON; VD=AREA EMISS  HONO(g/s); VS=ROW;VB=p1'
+! exclude isoprene for HTAP simulations
+            species_master(sp_ISOP) % ae_name    =  'EISO'
+            species_master(sp_ISOP) % ae_lname   =  'sp_ISOP_EISO'
+            species_master(sp_ISOP) % ae_string  =  'VN=sp_ISOP_EISO; ON=EISO; VD=AREA EMISS  ISOPRENE(g/s); VS=ROW;VB=p1'
+            species_master(sp_CO) % ae_name      =  'ECO'
+            species_master(sp_CO) % ae_lname     =  'sp_CO_ECO'
+            species_master(sp_CO) % ae_string    =  'VN=sp_CO_ECO; ON=ECO; VD=AREA EMISS  CO(g/s); VS=ROW;VB=p1'
+            species_master(sp_NH3) % ae_name     =  'ENH3'
+            species_master(sp_NH3) % ae_lname    =  'sp_NH3_ENH3'
+            species_master(sp_NH3) % ae_string   =  'VN=sp_NH3_ENH3; ON=ENH3; VD=AREA EMISS  NH3(g/s); VS=ROW;VB=p1'
+         endif
+!
+!  Case where biogenic emissions option is set
+!
+         if (chm_get_be_emis_l) then  
+            species_master(sp_NO) % be_name      =  'BPNO' ! Biogenic modulated rates (change every timestep)
+            species_master(sp_NO) % be_lname     =  'BIO_NO_per'
+            species_master(sp_NO) % be_string    =  'VN=BIO_NO_per; ON=BPNO; VD=EMISS AFTER BEIS3  NO(g); VS=ROW;VB=p1'
+            species_master(sp_ALKA) % be_name    =  'BPAA' ! Biogenic modulated rates (change every timestep)
+            species_master(sp_ALKA) % be_lname   =  'BIO_ALKA_per'
+            species_master(sp_ALKA) % be_string  =  'VN=BIO_ALKA_per; ON=BPAA; VD=EMISS AFTER BEIS3  ALKA(g); VS=ROW;VB=p1'
+            species_master(sp_ALKE) % be_name    =  'BPAE' ! Biogenic modulated rates (change every timestep)
+            species_master(sp_ALKE) % be_lname   =  'BIO_ALKE_per'
+            species_master(sp_ALKE) % be_string  =  'VN=BIO_ALKE_per; ON=BPAE; VD=EMISS AFTER BEIS3 ALKE(g); VS=ROW;VB=p1'
+            species_master(sp_ISOP) % be_name    =  'BPIO' ! Biogenic modulated rates (change every timestep)
+            species_master(sp_ISOP) % be_lname   =  'BIO_ISOP_per'
+            species_master(sp_ISOP) % be_string  =  'VN=BIO_ISOP_per; ON=BPIO; VD=EMISS AFTER BEIS3 ISOP(g); VS=ROW;VB=p1'
+            
+            species_master(sp_NO) % bse_name     =  'ESNO' ! Biogenic base rate for SUMMER (doesn't change through timestep)
+            species_master(sp_NO) % bse_lname    =  'sp_NO_ESNO'
+            species_master(sp_NO) % bse_string   =  'VN=sp_NO_ESNO; ON=ESNO; VD=Biogenic std summer emission NO(g); VS=ROW;VB=p1'
+            species_master(sp_ISOP) % bse_name   =  'ESIO' ! Biogenic base rate for SUMMER (doesn't change through timestep)
+            species_master(sp_ISOP) % bse_lname  =  'sp_ISOP_ESIO'
+            species_master(sp_ISOP) % bse_string =  'VN=sp_ISOP_ESIO; ON=ESIO; VD=BIO STD summer EMISS ISOP(g); VS=ROW;VB=p1'
+            species_master(sp_EBVO) % bse_name   =  'ESVO' ! Biogenic base rate for SUMMER (doesn't change through timestep)
+            species_master(sp_EBVO) % bse_lname  =  'sp_EBVO_ESVO'
+            species_master(sp_EBVO) % bse_string =  'VN=sp_EBVO_ESVO; ON=ESVO; VD=BIO STD summer EMISS VOC(g); VS=ROW;VB=p1'
+            species_master(sp_EBMO) % bse_name   =  'ESMO' ! Biogenic base rate for summer (doesn't change through timestep)
+            species_master(sp_EBMO) % bse_lname  =  'sp_EBMO_ESMO'
+            species_master(sp_EBMO) % bse_string =  'VN=sp_EBMO_ESMO; ON=ESMO; VD=BIO STD summer EMISS  MONO(g); VS=ROW;VB=p1'
+            
+            species_master(sp_NO) % bwe_name     =  'EWNO' ! Biogenic base rate for SUMMER (doesn't change through timestep)
+            species_master(sp_NO) % bwe_lname    =  'sp_NO_EWNO'
+            species_master(sp_NO) % bwe_string   =  'VN=sp_NO_EWNO; ON=EWNO; VD=Biogenic std winter emission NO(g); VS=ROW;VB=p1'
+            species_master(sp_ISOP) % bwe_name   =  'EWIO' ! Biogenic base rate for winter (doesn't change through timestep)
+            species_master(sp_ISOP) % bwe_lname  =  'sp_ISOP_EWIO'
+            species_master(sp_ISOP) % bwe_string =  'VN=sp_ISOP_EWIO; ON=EWIO; VD=BIO STD winter EMISS ISOP(g); VS=ROW;VB=p1'
+            species_master(sp_EBVO) % bwe_name   =  'EWVO' ! Biogenic base rate for winter (doesn't change through timestep)
+            species_master(sp_EBVO) % bwe_lname  =  'sp_EBVO_EWVO'
+            species_master(sp_EBVO) % bwe_string =  'VN=sp_EBVO_EWVO; ON=EWVO; VD=BIO STD winter EMISS VOC(g); VS=ROW;VB=p1'
+            species_master(sp_EBMO) % bwe_name   =  'EWMO' ! Biogenic base rate for winter (doesn't change through timestep)
+            species_master(sp_EBMO) % bwe_lname  =  'sp_EBMO_EWMO'
+            species_master(sp_EBMO) % bwe_string =  'VN=sp_EBMO_EWMO; ON=EWMO; VD=BIO STD winter EMISS  MONO(g); VS=ROW;VB=p1'
+         endif
+!
+!  Case where major point emissions option is set
+!
+         if (chm_get_mj_emis_l) then  
+            species_master(sp_SO2) % me_name     =  'ESO2'
+! exclude all but so2 for HTAP simulations
+            if (.not. chm_htap_emis_l) then
+              species_master(sp_SO4) % me_name     =  'ESO4'
+              species_master(sp_NO) % me_name      =  'ENO'
+              species_master(sp_NO2) % me_name     =  'ENO2'
+              species_master(sp_C3H8) % me_name    =  'EC38'
+              species_master(sp_ALKA) % me_name    =  'EA3'
+              species_master(sp_ETHE) % me_name    =  'EETH'
+              species_master(sp_ALKE) % me_name    =  'EA2'
+              species_master(sp_TOLU) % me_name    =  'ETOL'
+              species_master(sp_AROM) % me_name    =  'EARO'
+              species_master(sp_HCHO) % me_name    =  'EHCH'
+              species_master(sp_ALD2) % me_name    =  'EALD'
+              species_master(sp_MEK) % me_name     =  'EMEK'
+              species_master(sp_CRES) % me_name    =  'ECRE'
+              species_master(sp_ISOP) % me_name    =  'EISO'
+              species_master(sp_CO) % me_name      =  'ECO'
+              species_master(sp_NH3) % me_name     =  'ENH3'
+           endif
+         endif
+
+      end subroutine pkg_adom2_metainit
+
+end module mach_pkg_adom2_mod
+
+

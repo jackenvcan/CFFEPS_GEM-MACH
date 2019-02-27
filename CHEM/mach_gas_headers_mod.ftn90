@@ -1,0 +1,211 @@
+!begin trap head
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!============================================================================!
+!         Environnement Canada         |        Environment Canada           !
+!                                      |                                     !
+! - Service meteorologique du Canada   | - Meteorological Service of Canada  !
+! - Direction generale des sciences    | - Science and Technology Branch     !
+!   et de la technologie               |                                     !
+!============================================================================!
+!                            http://www.ec.gc.ca                             !
+!============================================================================!
+!
+! Projet/Project : GEM-MACH
+! Fichier/File   : mach_gas_headers_mod.ftn90
+! Creation       : H. Landry, Sept 2008
+! Description    : Modules defining explicit interfaces for mach subroutines
+!                  related to gas phase chemistry
+!
+! Extra info     :
+!
+!============================================================================
+
+module mach_gas_headers_mod
+   interface
+!end trap head
+
+subroutine mach_gas_chemi (BG, npt, nprcf)
+   integer(kind=4), intent (in) :: nprcf
+   integer(kind=4), intent (in) :: npt
+   real(kind=8),    intent(out) :: bg(npt,nprcf)
+end subroutine mach_gas_chemi
+
+subroutine mach_gas_drive(YG, nst, nsi, INDEX, zen, ig, jg, rgs, bgs, nreac_sa, nprcf_sa,      &
+                               ymings, ymin2gs, ymin3gs, hstarts, hsubs, hmaxs                 )
+   integer(kind=4), intent   (in) :: nprcf_sa
+   integer(kind=4), intent   (in) :: nreac_sa
+   integer(kind=4), intent   (in) :: nst
+   integer(kind=4), intent   (in) :: nsi
+   integer(kind=4), intent(inout) :: index
+   real(kind=4),    intent   (in) :: zen
+   integer(kind=4), intent   (in) :: ig
+   integer(kind=4), intent   (in) :: jg
+   real(kind=4),    intent   (in) :: ymings
+   real(kind=4),    intent   (in) :: ymin2gs
+   real(kind=4),    intent   (in) :: ymin3gs
+   real(kind=4),    intent   (in) :: hstarts
+   real(kind=4),    intent(inout) :: yg   (nst)
+   real(kind=4),    intent   (in) :: rgs  (nreac_sa)
+   real(kind=4),    intent   (in) :: bgs  (nprcf_sa)
+   real(kind=4),    intent   (in) :: hsubs(2)
+   real(kind=4),    intent   (in) :: hmaxs(2)
+end subroutine mach_gas_drive
+
+subroutine mach_gas_drydep_main(busper, busvol, busper_size, busvol_size, &
+                                metvar2d, deposited_species, nsp_depos    )
+   use chm_ptopo_grid_mod,    only: chm_ni, chm_nk
+   use chm_metvar_mod,        only: SIZE_MV2D 
+   integer(kind=4), intent   (in) :: nsp_depos
+   integer(kind=4), intent   (in) :: busvol_size
+   integer(kind=4), intent   (in) :: busper_size
+   real(kind=4),    intent   (in) :: busper           (busper_size)
+   real(kind=4),    intent(inout) :: busvol           (busvol_size)
+   real(kind=4),    intent   (in) :: metvar2d         (chm_ni,SIZE_MV2D)
+   integer(kind=4), intent   (in) :: deposited_species(nsp_depos)
+end subroutine mach_gas_drydep_main
+
+subroutine mach_gas_drydep_solver(VD         , AERO_RESIST, DIFF_RESIST,     &
+                                  SURF_RESIST, season     , lfu        ,     &
+                                  metvar2d, species    , sp_i                )
+   use chm_metvar_mod,        only: SIZE_MV2D
+   use mach_gas_chemicbi_mod, only: lucprm
+   use chm_ptopo_grid_mod,    only: chm_ni
+   integer(kind=4), intent (in) :: species
+   integer(kind=4), intent (in) :: sp_i
+   real(kind=4),    intent(out) :: vd         (chm_ni)
+   real(kind=4),    intent (in) :: aero_resist(chm_ni,lucprm)
+   real(kind=4),    intent(out) :: diff_resist(chm_ni)
+   real(kind=4),    intent(out) :: surf_resist(chm_ni,lucprm)
+   real(kind=4),    intent (in) :: season     (chm_ni)
+   real(kind=4),    intent (in) :: lfu        (chm_ni,lucprm)
+   real(kind=4),    intent (in) :: metvar2d   (chm_ni,SIZE_MV2D)
+end subroutine mach_gas_drydep_solver
+
+subroutine mach_gas_drydep_solver2(VD         , AERO_RESIST, DIFF_RESIST,     &
+                                  SURF_RESIST, season     , lfu        ,     &
+                                  metvar2d   , species    , sp_i             )
+   use chm_metvar_mod,        only: SIZE_MV2D
+   use mach_gas_chemicbi_mod, only: lucprm
+   use chm_ptopo_grid_mod,    only: chm_ni
+   integer(kind=4), intent (in) :: species
+   integer(kind=4), intent (in) :: sp_i
+   real(kind=4),    intent(out) :: vd         (chm_ni)
+   real(kind=4),    intent (in) :: aero_resist(chm_ni,lucprm)
+   real(kind=4),    intent(out) :: diff_resist(chm_ni)
+   real(kind=4),    intent(out) :: surf_resist(chm_ni,lucprm)
+   real(kind=4),    intent (in) :: season     (chm_ni)
+   real(kind=4),    intent (in) :: lfu        (chm_ni,lucprm)
+   real(kind=4),    intent (in) :: metvar2d   (chm_ni,SIZE_MV2D)
+end subroutine mach_gas_drydep_solver2
+
+subroutine mach_gas_drydep_stat(vd , aero_resist, diff_resist, surf_resist, season, lfu, &
+                                metvar2d, species                                        )
+   use chm_metvar_mod,        only: SIZE_MV2D
+   use mach_gas_chemicbi_mod, only: lucprm
+   use chm_ptopo_grid_mod,    only: chm_ni
+   integer(kind=4), intent(in) :: species
+   real(kind=4),    intent(in) :: vd         (chm_ni)
+   real(kind=4),    intent(in) :: aero_resist(chm_ni,lucprm)
+   real(kind=4),    intent(in) :: diff_resist(chm_ni)
+   real(kind=4),    intent(in) :: surf_resist(chm_ni,lucprm)
+   real(kind=4),    intent(in) :: season     (chm_ni)
+   real(kind=4),    intent(in) :: lfu        (chm_ni,lucprm)
+   real(kind=4),    intent(in) :: metvar2d   (chm_ni,SIZE_MV2D)
+end subroutine mach_gas_drydep_stat
+
+subroutine mach_gas_drydep_ra (AERO_RESIST, season, lfu , metvar2d )
+   use mach_gas_chemicbi_mod, only: lucprm
+   use chm_metvar_mod,        only: SIZE_MV2D 
+   use chm_ptopo_grid_mod,    only: chm_ni
+   real(kind=4), intent (in) :: metvar2d   (chm_ni,SIZE_MV2D)
+   real(kind=4), intent (in) :: season     (chm_ni)
+!  Land use and land use-dependant aerodynamic resistance - implicit conversion from the 1D vector
+   real(kind=4), intent (in) :: lfu        (chm_ni,lucprm)
+   real(kind=4), intent(out) :: aero_resist(chm_ni,lucprm)
+end subroutine mach_gas_drydep_ra
+
+subroutine mach_gas_drydep_ra2(AERO_RESIST, season, lfu , metvar2d )
+   use chm_metvar_mod,        only: SIZE_MV2D 
+   use mach_gas_chemicbi_mod, only: lucprm
+   use chm_ptopo_grid_mod,    only: chm_ni
+   real(kind=4), intent (in) :: metvar2d   (chm_ni,SIZE_MV2D)
+   real(kind=4), intent (in) :: season     (chm_ni)
+!  Land use and land use-dependant aerodynamic resistance - implicit conversion from the 1D vector
+   real(kind=4), intent (in) :: lfu        (chm_ni,lucprm)
+   real(kind=4), intent(out) :: aero_resist(chm_ni,lucprm)
+end subroutine mach_gas_drydep_ra2
+
+subroutine mach_gas_jcorr (rho, JC, metvar2d, metvar3d)
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use chm_metvar_mod,     only: SIZE_MV2D, SIZE_MV3D
+   real(kind=4),    intent(in) :: rho     (chm_ni,chm_nk)
+   real(kind=4), intent(inout) :: jc      (chm_ni,chm_nk)
+   real(kind=4),    intent(in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent(in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+end subroutine mach_gas_jcorr
+
+subroutine mach_gas_main(busdyn, busvol, busdyn_size, busvol_size, &
+                         step, metvar2d, metvar3d)
+   use chm_metvar_mod,       only: SIZE_MV2D, SIZE_MV3D
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   integer(kind=4), intent   (in) :: busvol_size
+   integer(kind=4), intent   (in) :: busdyn_size
+   integer(kind=4), intent   (in) :: step
+   real(kind=4),    intent(inout) :: busdyn  (busdyn_size)
+   real(kind=4),    intent(inout) :: busvol  (busvol_size)
+   real(kind=4),    intent   (in) :: metvar2d(chm_ni,SIZE_MV2D)
+   real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+end subroutine mach_gas_main
+
+subroutine mach_gas_soa_yield(busdyn, BUSVOL, busdyn_size, busvol_size, p2d, rho, tppmg, conv1, metvar3d, nst)
+   use chm_metvar_mod,       only: SIZE_MV3D
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   integer(kind=4), intent   (in) :: nst
+   integer(kind=4), intent   (in) :: busvol_size
+   integer(kind=4), intent   (in) :: busdyn_size
+   real(kind=4),    intent   (in) :: busdyn  (busdyn_size)
+   real(kind=4),    intent(inout) :: busvol  (busvol_size)
+   real(kind=4),    intent   (in) :: p2d     (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: rho     (chm_ni,chm_nk)
+   real(kind=4),    intent   (in) :: tppmg   (chm_ni*chm_nk,nst)
+   real(kind=4),    intent   (in) :: conv1   (chm_ni*chm_nk)
+   real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+end subroutine mach_gas_soa_yield
+
+subroutine mach_gas_uprate(zmount, zpres, sky, zen, cno, RG, BG, metvar3d, nreac, nprcf, npt)
+   use chm_metvar_mod,       only: SIZE_MV3D
+   use chm_ptopo_grid_mod,   only: chm_ni, chm_nk
+   integer(kind=4), intent   (in) :: npt
+   integer(kind=4), intent   (in) :: nprcf
+   integer(kind=4), intent   (in) :: nreac
+   real(kind=4),    intent   (in) :: zmount  (chm_ni)
+   real(kind=4),    intent   (in) :: zpres   (npt)
+   real(kind=4),    intent   (in) :: sky     (npt)
+   real(kind=4),    intent   (in) :: zen     (npt)
+   real(kind=4),    intent   (in) :: cno     (npt)
+   real(kind=8),    intent(inout) :: rg      (npt,nreac)
+   real(kind=8),    intent  (out) :: bg      (npt,nprcf)
+   real(kind=4),    intent   (in) :: metvar3d(chm_ni,chm_nk,SIZE_MV3D)
+end subroutine mach_gas_uprate
+
+end interface
+end module mach_gas_headers_mod

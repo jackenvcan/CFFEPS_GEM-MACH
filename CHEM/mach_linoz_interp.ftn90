@@ -1,0 +1,149 @@
+!---------------------------------- LICENCE BEGIN -------------------------------
+! GEM-MACH - Atmospheric chemistry library for the GEM numerical atmospheric model
+! Copyright (C) 2007-2013 - Air Quality Research Division &
+!                           National Prediction Operations division
+!                           Environnement Canada
+! This library is free software; you can redistribute it and/or
+! modify it under the terms of the GNU Lesser General Public
+! License as published by the Free Software Foundation; either
+! version 2.1 of the License, or (at your option) any later version.
+!
+! This library is distributed in the hope that it will be useful,
+! but WITHOUT ANY WARRANTY; without even the implied warranty of
+! MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+! Lesser General Public License for more details.
+!
+! You should have received a copy of the GNU Lesser General Public
+! License along with this library; if not, write to the Free Software
+! Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA  02110-1301  USA
+!---------------------------------- LICENCE END ---------------------------------
+
+!copyright (C) 2001  MSC-RPN COMM  %%%RPNPHY%%%
+!**s/p mach_linoz_interp
+!
+!!if_on
+subroutine mach_linoz_interp (z, coeff14, ylat, imonth, ilon)
+   use chm_ptopo_grid_mod, only: chm_ni, chm_nk
+   use linoz_mod         , only: jpcoeff
+!!if_off
+   use chm_utils_mod
+   use chm_consphychm_mod, only: grav
+   use chm_phyvar_mod
+   use linoz_mod         , only: jplev,jplat,jptime,coeff_table
+
+   implicit none
+!
+!  Declaration of subroutine arguments
+!
+!!if_on
+   integer(kind=4), intent   (in) :: ilon
+   integer(kind=4), intent   (in) :: imonth
+   real   (kind=4), intent   (in) :: ylat
+   real   (kind=4), intent   (in) :: z     (chm_ni, chm_nk)        !z in meters ASL
+   real   (kind=4), intent  (out) :: coeff14(chm_ni,chm_nk,jpcoeff)
+!!if_off
+!
+!  Declaration of local variables.
+!
+   logical(kind=4) :: local_dbg
+   integer(kind=4) :: i,j,n,k
+   real   (kind=4) :: coeff_table_2d(jplev,jplat)
+   real   (kind=4) :: zlatsrc       (jplev,jplat)
+   real   (kind=4) :: hrefl         (jplev)
+   real   (kind=4) :: posn1         (jplev)
+   real   (kind=4) :: coeff1        (jplev) 
+   real   (kind=4) :: zlatdst       (jplev)
+   real   (kind=4) :: zsrc          (jplev)
+   real   (kind=4) :: zlatl         (jplat)
+
+   real   (kind=4) :: posn2    (chm_nk)
+   real   (kind=4) :: ztmp     (chm_nk)
+   real   (kind=4) :: zdest    (chm_nk)
+   real   (kind=4) :: coeff141d(chm_nk,jpcoeff)
+
+   data zlatl/-85.,-75.,-65.,-55.,-45.,-35.,-25.,-15.,-5., &
+                5., 15., 25., 35., 45., 55., 65., 75., 85./
+
+   data hrefl /58.,56.,54.,52.,50.,48.,46.,44.,42.,40.,38., &
+          36.,34.,32.,30.,28.,26.,24.,22.,20.,18.,16.,14.,12.,10./
+
+!
+   local_dbg = (.false. .or. global_debug)
+
+   do k = 1,chm_nk
+      zdest(k)=1.e-3 * z(ilon,k)        !kilometers (z in meters ASL) 
+   end do
+
+   do k = 1,jplev
+      zsrc(k)=hrefl(k)
+   end do
+
+   do j = 1,jplat
+   do k = 1,jplev
+      zlatsrc(k,j)=zlatl(j)
+   end do
+   end do
+
+   do k = 1,jplev
+      zlatdst(k)=ylat
+   end do
+
+   if(local_dbg) then
+      write (chm_lun_out,*)'in mach_linoz_interp: zdest =',(zdest(k), k=1,chm_nk) 
+      write (chm_lun_out,*)'in mach_linoz_interp: zsrc  =',(hrefl(k), k=1,jplev) 
+      write (chm_lun_out,*)'in mach_linoz_interp: imonth =',imonth
+      do k=1,jplev
+         write (chm_lun_out,*)'in mach_linoz_interp: coeff_table=',(coeff_table(j,k,imonth,1), j=1,jplat)
+      enddo
+   end if
+
+! Find positoin in horisontal  
+  call interp1d_findpos (jplev, jplat, 1, jplev, jplev, zlatsrc, posn1, zlatdst)
+
+! Find position in vertical
+  call interp1d_findpos (1, jplev, chm_nk, 1, 1, zsrc, posn2, zdest)
+
+  do n=1,jpcoeff
+
+      do j=1,jplat
+      do k=1,jplev
+         coeff_table_2d(k,j)=coeff_table(j,k,imonth,n)
+      end do
+      end do
+
+! Horisontal interpolation (In:  coeff_table_2d(jplev,jplat)   Out: coeff1(jplev) )
+!
+      call interp1d_linear (jplev,jplat,1,jplev,jplev,zlatsrc,         &
+                   coeff_table_2d, ztmp, posn1, zlatdst, coeff1,       &
+                   ztmp,.false.,.false.,ztmp,ztmp)
+
+! Vertical interpolation  (In: coeff1(jplev)     Out: coeff141d(chm_nk,jpcoeff) )
+!
+      call interp1d_linear (1, jplev, chm_nk, 1, 1, zsrc,             &
+                   coeff1, ztmp, posn2, zdest, coeff141d(1,n),        &
+                   ztmp, .false., .false., ztmp, ztmp)
+
+      do k = 1,chm_nk
+         coeff14(ilon,k,n)=coeff141d(k,n)
+      end do
+
+      if(local_dbg .AND. n == 1) then
+!         write (chm_lun_out,*)'in mach_linoz_interp: table=  ',       &
+!                               (coeff_table_2d(k,jplat),k=1,jplev)
+!
+         write (chm_lun_out,*)'in mach_linoz_interp: jpcoeff, coeff1 =',       &
+                               n,  (coeff1(k)      ,k=1,jplev)
+
+         write (chm_lun_out,*)'in mach_linoz_interp: jpcoeff, coeff14=',        &
+                               n, (coeff141d(k,n)  ,k=1,chm_nk)
+      end if
+
+  end do !n=1,jpcoeff
+
+  if (local_dbg) then
+     write (chm_lun_out, *) 'EXIT mach_linoz_interp'
+  endif
+
+return
+end subroutine mach_linoz_interp
+
